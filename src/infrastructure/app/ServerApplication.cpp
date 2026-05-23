@@ -1,0 +1,272 @@
+#include "crawler/infrastructure/app/ServerApplication.h"
+#include "crawler/api/controllers/CrawlerController.h"
+#include "crawler/api/routing/CrawlerRoutes.h"
+#include "crawler/application/ports/parsing/MetadataParser.h"
+#include "crawler/application/ports/provider/IMusicProvider.h"
+#include "crawler/application/use_cases/CrawlerService.h"
+#include "crawler/application/use_cases/MiguPacmtokenService.h"
+#include "crawler/infrastructure/app/HttpClientOptionsFactory.h"
+#include "crawler/infrastructure/app/PersistenceAssembly.h"
+#include "crawler/infrastructure/app/RuntimeSettingsSnapshotFactory.h"
+#include "crawler/infrastructure/execution/asio/AsioAsyncRuntime.h"
+#include "crawler/infrastructure/execution/threading/ThreadPool.h"
+#include "crawler/infrastructure/http/client/AsioHttpClient.h"
+#include "crawler/infrastructure/http/client/AsyncHttpSongResourceContentFetcher.h"
+#include "crawler/infrastructure/http/client/HttpSongResourceContentFetcher.h"
+#include "crawler/infrastructure/http/server/DrogonHttpServer.h"
+#include "crawler/infrastructure/music/migu/parser/MiguParser.h"
+#include "crawler/infrastructure/music/migu/parser/MiguSongResourceParser.h"
+#include "crawler/infrastructure/music/migu/provider/MiguPacmtokenClient.h"
+#include "crawler/infrastructure/music/migu/provider/MiguAsyncSongResourceProvider.h"
+#include "crawler/infrastructure/music/migu/provider/MiguProvider.h"
+#include "crawler/infrastructure/music/migu/provider/MiguRuntimePacmtokenStore.h"
+#include "crawler/infrastructure/observability/logging/ConsoleDiagnosticsSink.h"
+#include "crawler/infrastructure/storage/filesystem/FileStorage.h"
+
+#include <algorithm>
+#include <chrono>
+#include <cstddef>
+#include <exception>
+#include <iostream>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <utility>
+
+namespace orchestrator::modules::crawler::infrastructure::app {
+
+namespace {
+
+// 简单的 URL 判断函数
+bool isUrl(std::string_view value)
+{
+    return value.rfind("http://", 0) == 0 || value.rfind("https://", 0) == 0;
+}
+
+} // namespace
+
+class ServerApplication::Impl {
+public:
+    explicit Impl(const Config &config) : config_(config)
+    {}
+
+    Config config_;
+
+    std::shared_ptr<execution::threading::ThreadPool> handler_worker_pool_;
+    std::shared_ptr<execution::threading::ThreadPool> batch_worker_pool_;
+    std::shared_ptr<execution::threading::ThreadPool> page_worker_pool_;
+    std::shared_ptr<execution::threading::ThreadPool> resource_worker_pool_;
+    std::shared_ptr<execution::threading::ThreadPool> parse_worker_pool_;
+    std::shared_ptr<execution::threading::ThreadPool> persistence_worker_pool_;
+
+    std::unique_ptr<music::persistence::sqlite::ConnectionPool> sqlite_pool_;
+    std::shared_ptr<music::persistence::mysql::MySqlConnectionPool> mysql_pool_;
+    std::shared_ptr<http::client::HttpClient> http_client_;
+    std::shared_ptr<http::client::AsioHttpClient> asio_http_client_;
+    std::shared_ptr<storage::filesystem::FileStorage> file_storage_;
+    std::shared_ptr<application::ports::MetadataParser> parser_;
+    std::shared_ptr<application::ports::SongResourceParser> song_resource_parser_;
+    std::shared_ptr<application::ports::IMusicProvider> music_provider_;
+    std::shared_ptr<application::ports::MiguPacmtokenStore> migu_pacmtoken_store_;
+    std::shared_ptr<application::ports::MiguPacmtokenRefresher> migu_pacmtoken_refresher_;
+    std::shared_ptr<application::ports::SongResourceContentFetcher> song_resource_content_fetcher_;
+    std::shared_ptr<application::ports::AsyncSongResourceProvider> async_song_resource_provider_;
+    std::shared_ptr<application::ports::AsyncSongResourceContentFetcher> async_song_resource_content_fetcher_;
+    std::shared_ptr<application::ports::AsyncRuntime> async_runtime_;
+    std::shared_ptr<application::ports::DiagnosticsSink> diagnostics_;
+
+    std::shared_ptr<application::ports::SongRepository> song_repository_;
+    std::shared_ptr<application::ports::SongSourceRepository> song_source_repository_;
+    std::shared_ptr<application::ports::SingerSourceRepository> singer_source_repository_;
+    std::shared_ptr<application::ports::SingerSourceSyncQueue> singer_source_sync_queue_;
+    std::shared_ptr<application::ports::AlbumSourceRepository> album_source_repository_;
+    std::shared_ptr<application::ports::AlbumRepository> album_repository_;
+    std::shared_ptr<application::ports::SingerRepository> singer_repository_;
+    std::shared_ptr<application::ports::BatchTaskRepository> batch_task_repository_;
+    std::shared_ptr<application::ports::MusicCatalogQueryRepository> catalog_query_repository_;
+    std::shared_ptr<application::ports::SongResourceQueue> song_resource_queue_;
+
+    std::shared_ptr<application::use_cases::CrawlerService> crawler_service_;
+    std::shared_ptr<application::use_cases::MiguPacmtokenService> migu_pacmtoken_service_;
+    std::shared_ptr<api::controllers::CrawlerController> crawler_controller_;
+
+    std::unique_ptr<http::server::HttpServer> http_server_;
+};
+
+ServerApplication::ServerApplication(const Config &config) : impl_(std::make_unique<Impl>(config))
+{}
+
+ServerApplication::~ServerApplication() = default;
+
+bool ServerApplication::initialize()
+{
+    try {
+        std::cout << "[App] Initializing crawler components..." << std::endl;
+
+        const int parse_worker_count = (std::max)(1, impl_->config_.parse_worker_threads);
+        impl_->parse_worker_pool_ = std::make_shared<execution::threading::ThreadPool>(parse_worker_count);
+        const int async_worker_count = (std::max)(1, impl_->config_.async_worker_threads);
+        impl_->handler_worker_pool_ = std::make_shared<execution::threading::ThreadPool>(static_cast<std::size_t>(async_worker_count));
+        impl_->batch_worker_pool_ = std::make_shared<execution::threading::ThreadPool>(static_cast<std::size_t>((std::max)(1, impl_->config_.max_batch_concurrency)));
+        impl_->page_worker_pool_ = std::make_shared<execution::threading::ThreadPool>(static_cast<std::size_t>((std::max)(1, impl_->config_.max_page_concurrency)));
+        impl_->resource_worker_pool_ = std::make_shared<execution::threading::ThreadPool>(static_cast<std::size_t>((std::max)(1, impl_->config_.resource_worker_threads)));
+
+        impl_->asio_http_client_ = std::make_shared<http::client::AsioHttpClient>(makeHttpClientOptions(impl_->config_));
+        impl_->http_client_ = impl_->asio_http_client_;
+        impl_->file_storage_ = std::make_shared<storage::filesystem::FileStorage>(impl_->config_.storage_path);
+        impl_->parser_ = std::make_shared<music::migu::parser::MiguParser>();
+        impl_->song_resource_parser_ = std::make_shared<music::migu::parser::MiguSongResourceParser>();
+        impl_->migu_pacmtoken_store_ = std::make_shared<music::migu::provider::MiguRuntimePacmtokenStore>();
+        impl_->migu_pacmtoken_refresher_ = std::make_shared<music::migu::provider::MiguPacmtokenClient>(impl_->http_client_);
+        impl_->music_provider_ = std::make_shared<music::migu::provider::MiguProvider>(impl_->http_client_, impl_->migu_pacmtoken_store_);
+        impl_->song_resource_content_fetcher_ = std::make_shared<http::client::HttpSongResourceContentFetcher>(impl_->http_client_);
+        impl_->async_song_resource_provider_ = std::make_shared<music::migu::provider::MiguAsyncSongResourceProvider>(impl_->asio_http_client_, impl_->migu_pacmtoken_store_);
+        impl_->async_song_resource_content_fetcher_ = std::make_shared<http::client::AsyncHttpSongResourceContentFetcher>(impl_->asio_http_client_);
+
+        auto persistence_components = assemblePersistence(impl_->config_);
+        if (!persistence_components) {
+            return false;
+        }
+        std::shared_ptr<application::ports::TaskExecutor> persistence_executor = persistence_components->persistence_executor;
+        impl_->persistence_worker_pool_ = std::move(persistence_components->persistence_worker_pool);
+        impl_->sqlite_pool_ = std::move(persistence_components->sqlite_pool);
+        impl_->mysql_pool_ = std::move(persistence_components->mysql_pool);
+        impl_->song_repository_ = std::move(persistence_components->song_repository);
+        impl_->song_source_repository_ = std::move(persistence_components->song_source_repository);
+        impl_->singer_source_repository_ = std::move(persistence_components->singer_source_repository);
+        impl_->singer_source_sync_queue_ = std::move(persistence_components->singer_source_sync_queue);
+        impl_->album_source_repository_ = std::move(persistence_components->album_source_repository);
+        impl_->album_repository_ = std::move(persistence_components->album_repository);
+        impl_->singer_repository_ = std::move(persistence_components->singer_repository);
+        impl_->batch_task_repository_ = std::move(persistence_components->batch_task_repository);
+        impl_->catalog_query_repository_ = std::move(persistence_components->catalog_query_repository);
+        impl_->song_resource_queue_ = std::move(persistence_components->song_resource_queue);
+        auto blocking_storage_executor = impl_->persistence_worker_pool_ ? std::static_pointer_cast<application::ports::TaskExecutor>(impl_->persistence_worker_pool_) : std::static_pointer_cast<application::ports::TaskExecutor>(impl_->resource_worker_pool_);
+        impl_->async_runtime_ = std::make_shared<execution::asio::AsioAsyncRuntime>(impl_->asio_http_client_->executor(), blocking_storage_executor);
+
+        impl_->diagnostics_ = std::make_shared<observability::logging::ConsoleDiagnosticsSink>();
+
+        application::use_cases::CrawlerServiceDependencies crawler_dependencies;
+        crawler_dependencies.providers.raw_page_fetcher = impl_->music_provider_;
+        crawler_dependencies.providers.song_search_provider = impl_->music_provider_;
+        crawler_dependencies.providers.album_search_provider = impl_->music_provider_;
+        crawler_dependencies.providers.singer_catalog_provider = impl_->music_provider_;
+        crawler_dependencies.providers.album_detail_provider = impl_->music_provider_;
+        crawler_dependencies.providers.song_resource_provider = impl_->music_provider_;
+        crawler_dependencies.providers.song_resource_content_fetcher = impl_->song_resource_content_fetcher_;
+        crawler_dependencies.providers.async_song_resource_provider = impl_->async_song_resource_provider_;
+        crawler_dependencies.providers.async_song_resource_content_fetcher = impl_->async_song_resource_content_fetcher_;
+        crawler_dependencies.providers.migu_pacmtoken_refresher = impl_->migu_pacmtoken_refresher_;
+        crawler_dependencies.providers.migu_pacmtoken_store = impl_->migu_pacmtoken_store_;
+
+        crawler_dependencies.parsers.parse_result_parser = impl_->parser_;
+        crawler_dependencies.parsers.song_source_parser = impl_->parser_;
+        crawler_dependencies.parsers.singer_source_parser = impl_->parser_;
+        crawler_dependencies.parsers.album_source_parser = impl_->parser_;
+        crawler_dependencies.parsers.page_inspector = impl_->parser_;
+        crawler_dependencies.parsers.song_resource_parser = impl_->song_resource_parser_;
+
+        crawler_dependencies.persistence.file_store = impl_->file_storage_;
+        crawler_dependencies.persistence.song_repository = impl_->song_repository_;
+        crawler_dependencies.persistence.album_repository = impl_->album_repository_;
+        crawler_dependencies.persistence.singer_repository = impl_->singer_repository_;
+        crawler_dependencies.persistence.song_source_repository = impl_->song_source_repository_;
+        crawler_dependencies.persistence.singer_source_repository = impl_->singer_source_repository_;
+        crawler_dependencies.persistence.singer_source_sync_queue = impl_->singer_source_sync_queue_;
+        crawler_dependencies.persistence.album_source_writer = impl_->album_source_repository_;
+        crawler_dependencies.persistence.album_source_sync_queue = impl_->album_source_repository_;
+        crawler_dependencies.persistence.batch_task_repository = impl_->batch_task_repository_;
+        crawler_dependencies.persistence.catalog_query_repository = impl_->catalog_query_repository_;
+        crawler_dependencies.persistence.song_resource_queue = impl_->song_resource_queue_;
+        crawler_dependencies.persistence.song_resource_blob_store = impl_->file_storage_;
+
+        crawler_dependencies.executors.parse_executor = impl_->parse_worker_pool_;
+        crawler_dependencies.executors.batch_executor = impl_->batch_worker_pool_;
+        crawler_dependencies.executors.page_executor = impl_->page_worker_pool_;
+        crawler_dependencies.executors.persistence_executor = persistence_executor;
+        crawler_dependencies.executors.resource_executor = impl_->resource_worker_pool_;
+        crawler_dependencies.executors.async_runtime = impl_->async_runtime_;
+
+        crawler_dependencies.options.max_batch_concurrency = impl_->config_.max_batch_concurrency;
+        crawler_dependencies.options.max_page_concurrency = impl_->config_.max_page_concurrency;
+        crawler_dependencies.options.max_retries = impl_->config_.max_retries;
+        crawler_dependencies.options.task_timeout = std::chrono::milliseconds(impl_->config_.task_timeout_ms);
+        crawler_dependencies.options.runtime_settings = makeRuntimeSettings(impl_->config_);
+        crawler_dependencies.diagnostics = impl_->diagnostics_;
+
+        impl_->crawler_service_ = std::make_shared<application::use_cases::CrawlerService>(std::move(crawler_dependencies));
+        impl_->migu_pacmtoken_service_ = std::make_shared<application::use_cases::MiguPacmtokenService>(
+            impl_->migu_pacmtoken_refresher_,
+            impl_->migu_pacmtoken_store_
+        );
+
+        try {
+            application::model::MiguStaleRecoveryRequest recovery_request;
+            recovery_request.stale_after_seconds = (std::max)(60, impl_->config_.task_timeout_ms / 1000);
+            const auto recovered = impl_->crawler_service_->recoverMiguStale(std::move(recovery_request));
+            const int recovered_total = recovered.singer_songs_recovered + recovered.singer_albums_recovered + recovered.album_details_recovered + recovered.album_songs_recovered + recovered.resources_recovered + recovered.batches_recovered;
+            if (recovered_total > 0) {
+                std::cout << "[App] Recovered stale Migu running states: singer_songs=" << recovered.singer_songs_recovered
+                          << ", singer_albums=" << recovered.singer_albums_recovered
+                          << ", album_details=" << recovered.album_details_recovered
+                          << ", album_songs=" << recovered.album_songs_recovered
+                          << ", resources=" << recovered.resources_recovered
+                          << ", batches=" << recovered.batches_recovered << std::endl;
+            }
+        } catch (const std::exception &e) {
+            std::cerr << "[App] Stale Migu recovery skipped: " << e.what() << std::endl;
+        }
+
+        impl_->crawler_controller_ = std::make_shared<api::controllers::CrawlerController>(
+            impl_->crawler_service_,
+            makeReadonlySettingsSnapshot(impl_->config_),
+            impl_->migu_pacmtoken_service_
+        );
+
+        impl_->http_server_ = std::make_unique<http::server::DrogonHttpServer>(impl_->config_.http_worker_threads, impl_->handler_worker_pool_);
+        impl_->http_server_->bind(impl_->config_.host, impl_->config_.port);
+
+        api::routing::CrawlerRoutes crawler_routes(impl_->crawler_controller_);
+        crawler_routes.registerRoutes(*impl_->http_server_);
+
+        std::cout << "[App] Crawler initialization complete." << std::endl;
+        return true;
+    } catch (const std::exception &e) {
+        std::cerr << "[App] Initialization failed: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+void ServerApplication::run()
+{
+    if (impl_->http_server_) {
+        impl_->http_server_->run();
+    }
+}
+
+void ServerApplication::stop()
+{
+    if (impl_->http_server_) {
+        impl_->http_server_->stop();
+    }
+    if (impl_->mysql_pool_) {
+        impl_->mysql_pool_->cancel();
+    }
+}
+
+// 这个函数既支持 URL 直接爬取，也支持关键词搜索爬取
+bool ServerApplication::executeCrawl(const std::string &target)
+{
+    if (!impl_->crawler_service_) {
+        std::cerr << "[App] CrawlerService not initialized." << std::endl;
+        return false;
+    }
+
+    std::cout << "[App] CLI Mode: Crawling " << target << "..." << std::endl;
+    if (isUrl(target)) {
+        return impl_->crawler_service_->processUrlSync(target, 20);
+    }
+    return impl_->crawler_service_->searchAndSaveSync(target, 20);
+}
+
+} // namespace orchestrator::modules::crawler::infrastructure::app
