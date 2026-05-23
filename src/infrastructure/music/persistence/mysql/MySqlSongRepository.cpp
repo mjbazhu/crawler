@@ -1,0 +1,182 @@
+#include "crawler/infrastructure/music/persistence/mysql/MySqlSongRepository.h"
+
+#include "crawler/infrastructure/music/persistence/mysql/MySqlValueReader.h"
+#include "crawler/infrastructure/music/persistence/mysql/MySqlWriteRunner.h"
+#include "crawler/infrastructure/music/persistence/sql/SqlFileLoader.h"
+
+#include <boost/asio/use_awaitable.hpp>
+#include <boost/mysql/results.hpp>
+#include <boost/mysql/statement.hpp>
+
+#include <ctime>
+#include <iostream>
+#include <string>
+
+namespace orchestrator::modules::crawler::infrastructure::music::persistence::mysql {
+
+namespace {
+
+// 当前 Unix 秒时间戳，用于保持与 SQLite 调试后端一致的 created_at/updated_at 语义。
+std::uint64_t nowSeconds()
+{
+    return static_cast<std::uint64_t>(std::time(nullptr));
+}
+
+} // namespace
+
+MySqlSongRepository::MySqlSongRepository(std::shared_ptr<MySqlConnectionPool> pool, SqlPaths paths) : MySqlCrudRepository(std::move(pool)),
+                                                                                                      upsert_sql_(sql::SqlFileLoader::loadOrThrow(paths.upsert)),
+                                                                                                      delete_sql_(sql::SqlFileLoader::loadOrThrow(paths.delete_by_id)),
+                                                                                                      find_sql_(sql::SqlFileLoader::loadOrThrow(paths.find_by_id)),
+                                                                                                      find_all_sql_(sql::SqlFileLoader::loadOrThrow(paths.find_all))
+{}
+
+bool MySqlSongRepository::saveBatch(const std::vector<domain::Song> &songs)
+{
+    return MySqlWriteRunner::waitForWrite(pool_->executor(), coSaveBatch(songs), "MySqlSongRepository", "saveBatch");
+}
+
+boost::asio::awaitable<bool> MySqlSongRepository::coSaveBatch(std::vector<domain::Song> songs)
+{
+    if (songs.empty()) {
+        co_return true;
+    }
+
+    auto connection = co_await pool_->coAcquire();
+    bool transaction_started = false;
+    std::string failure_message;
+    try {
+        boost::mysql::results result;
+        co_await connection->async_execute("START TRANSACTION", result, boost::asio::use_awaitable);
+        transaction_started = true;
+
+        auto statement = co_await connection->async_prepare_statement(upsert_sql_, boost::asio::use_awaitable);
+        for (const auto &song : songs) {
+            const std::uint64_t now = nowSeconds();
+            const std::uint64_t created_at = song.created_at == 0 ? now : song.created_at;
+            const std::uint64_t updated_at = song.updated_at == 0 ? now : song.updated_at;
+            co_await connection->async_execute(
+                statement.bind(
+                    song.title,
+                    song.title,
+                    created_at,
+                    updated_at
+                ),
+                result,
+                boost::asio::use_awaitable
+            );
+        }
+
+        co_await connection->async_execute("COMMIT", result, boost::asio::use_awaitable);
+        co_return true;
+    } catch (const std::exception &e) {
+        failure_message = e.what();
+    }
+
+    if (transaction_started) {
+        try {
+            boost::mysql::results rollback_result;
+            co_await connection->async_execute("ROLLBACK", rollback_result, boost::asio::use_awaitable);
+        } catch (const std::exception &rollback_error) {
+            std::cerr << "[MySqlSongRepository] rollback failed: " << rollback_error.what() << std::endl;
+        }
+    }
+
+    if (!failure_message.empty()) {
+        std::cerr << "[MySqlSongRepository] coSaveBatch failed: " << failure_message << std::endl;
+    }
+    co_return false;
+}
+
+boost::asio::awaitable<bool> MySqlSongRepository::coCreate(const domain::Song &entity)
+{
+    try {
+        auto connection = co_await pool_->coAcquire();
+        auto statement = co_await connection->async_prepare_statement(upsert_sql_, boost::asio::use_awaitable);
+        boost::mysql::results result;
+        const std::uint64_t now = nowSeconds();
+        const std::uint64_t created_at = entity.created_at == 0 ? now : entity.created_at;
+        const std::uint64_t updated_at = entity.updated_at == 0 ? now : entity.updated_at;
+        co_await connection->async_execute(
+            statement.bind(entity.title, entity.title, created_at, updated_at),
+            result,
+            boost::asio::use_awaitable
+        );
+        co_return hasAffectedRows(result);
+    } catch (const std::exception &e) {
+        std::cerr << "[MySqlSongRepository] coCreate failed: " << e.what() << std::endl;
+        co_return false;
+    }
+}
+
+boost::asio::awaitable<bool> MySqlSongRepository::coUpdate(const domain::Song &entity)
+{
+    co_return co_await coCreate(entity);
+}
+
+boost::asio::awaitable<bool> MySqlSongRepository::coDeleteById(const std::uint64_t &id)
+{
+    try {
+        auto connection = co_await pool_->coAcquire();
+        auto statement = co_await connection->async_prepare_statement(delete_sql_, boost::asio::use_awaitable);
+        boost::mysql::results result;
+        co_await connection->async_execute(statement.bind(id), result, boost::asio::use_awaitable);
+        co_return hasAffectedRows(result);
+    } catch (const std::exception &e) {
+        std::cerr << "[MySqlSongRepository] coDeleteById failed: " << e.what() << std::endl;
+        co_return false;
+    }
+}
+
+boost::asio::awaitable<std::optional<domain::Song>> MySqlSongRepository::coFindById(const std::uint64_t &id)
+{
+    try {
+        auto connection = co_await pool_->coAcquire();
+        auto statement = co_await connection->async_prepare_statement(find_sql_, boost::asio::use_awaitable);
+        boost::mysql::results result;
+        co_await connection->async_execute(statement.bind(id), result, boost::asio::use_awaitable);
+        if (result.rows().empty()) {
+            co_return std::nullopt;
+        }
+        co_return mapRow(result.rows().front());
+    } catch (const std::exception &e) {
+        std::cerr << "[MySqlSongRepository] coFindById failed: " << e.what() << std::endl;
+        co_return std::nullopt;
+    }
+}
+
+boost::asio::awaitable<std::vector<domain::Song>> MySqlSongRepository::coFindAll(std::size_t limit, std::size_t offset)
+{
+    std::vector<domain::Song> songs;
+    try {
+        auto connection = co_await pool_->coAcquire();
+        auto statement = co_await connection->async_prepare_statement(find_all_sql_, boost::asio::use_awaitable);
+        boost::mysql::results result;
+        co_await connection->async_execute(statement.bind(static_cast<std::uint64_t>(limit), static_cast<std::uint64_t>(offset)), result, boost::asio::use_awaitable);
+        songs.reserve(result.rows().size());
+        for (boost::mysql::row_view row : result.rows()) {
+            songs.push_back(mapRow(row));
+        }
+    } catch (const std::exception &e) {
+        std::cerr << "[MySqlSongRepository] coFindAll failed: " << e.what() << std::endl;
+    }
+    co_return songs;
+}
+
+domain::Song MySqlSongRepository::mapRow(boost::mysql::row_view row)
+{
+    domain::Song song;
+    song.song_id = MySqlValueReader::uint64At(row, 0);
+    song.singer_id = MySqlValueReader::uint64At(row, 1);
+    song.album_id = MySqlValueReader::uint64At(row, 2);
+    song.artwork = MySqlValueReader::stringAt(row, 3);
+    song.title = MySqlValueReader::stringAt(row, 4);
+    song.artist = MySqlValueReader::stringAt(row, 5);
+    song.album = MySqlValueReader::stringAt(row, 6);
+    song.lrc = MySqlValueReader::stringAt(row, 7);
+    song.created_at = MySqlValueReader::uint64At(row, 8);
+    song.updated_at = MySqlValueReader::uint64At(row, 9);
+    return song;
+}
+
+} // namespace orchestrator::modules::crawler::infrastructure::music::persistence::mysql

@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS album_song_refs (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '专辑歌曲关系主键',
+    album_source_ref_id BIGINT UNSIGNED COMMENT '关联 album_source_refs.id；专辑来源尚未入库时为空',
+    song_source_ref_id BIGINT UNSIGNED NOT NULL COMMENT '关联 song_source_refs.id，表示该曲目对应的平台歌曲来源',
+    source VARCHAR(32) NOT NULL COMMENT '音乐平台标识，例如 migu、qq、netease',
+    source_album_id VARCHAR(64) NOT NULL DEFAULT '' COMMENT '平台专辑 ID',
+    source_song_id VARCHAR(64) COMMENT '平台歌曲 ID',
+    source_content_id VARCHAR(64) COMMENT '平台内容或资源 ID',
+    disc_no INT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'Disc 序号，未知时为 0',
+    disc_name VARCHAR(128) NOT NULL DEFAULT '' COMMENT 'Disc 原始文本，例如 Disc 1',
+    track_no INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '专辑内曲序，未知时为 0',
+    song_order INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '平台返回歌曲顺序，从 1 开始；未知时为 0',
+    created_at BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '记录创建时间，Unix 秒时间戳',
+    updated_at BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '记录最后更新时间，Unix 秒时间戳',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_album_song_source_ref (source, source_album_id, song_source_ref_id),
+    KEY idx_album_song_album (source, source_album_id, disc_no, track_no, song_order),
+    KEY idx_album_song_song (song_source_ref_id),
+    CONSTRAINT fk_album_song_refs_album_source FOREIGN KEY (album_source_ref_id) REFERENCES album_source_refs (id) ON DELETE SET NULL,
+    CONSTRAINT fk_album_song_refs_song_source FOREIGN KEY (song_source_ref_id) REFERENCES song_source_refs (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='专辑与平台歌曲关系表，保存 Disc、曲序和专辑内顺序';

@@ -1,0 +1,17 @@
+SET
+    @source := CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci,
+    @source_song_id := CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci,
+    @source_content_id := CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci,
+    @source_resource_type := CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci,
+    @title := CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci,
+    @normalized_title := CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci,
+    @source_duration_seconds := ?,
+    @song_pinyin := CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci,
+    @album_id := CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci,
+    @album_name := CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci,
+    @album_pinyin := CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci,
+    @cover_url := CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci,
+    @lyric_url := CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci,
+    @mrc_url := CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci,
+    @trc_url := CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci,
+    @copyright_id := CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci;
