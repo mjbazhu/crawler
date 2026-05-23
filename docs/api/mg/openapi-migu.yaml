@@ -1,0 +1,2620 @@
+openapi: 3.0.3
+info:
+  title: Crawler Migu Metadata API
+  version: 1.7.0
+  description: Migu metadata and song resource crawler API. The current singer, singer songs, singer albums, album details, album songs and resource processing workflows are exposed.
+servers:
+  - url: http://127.0.0.1:8080
+    description: Local crawler service
+tags:
+  - name: migu
+    description: Migu metadata crawl and resource processing operations
+  - name: system
+    description: Service health and OpenAPI document
+paths:
+  /api/migu/singers/crawl:
+    post:
+      tags: [migu]
+      summary: Crawl singer catalog
+      description: Crawl Migu singer categories and save singers plus singer_source_refs.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SingerIndexCrawlRequest'
+      responses:
+        '202':
+          $ref: '#/components/responses/TaskAccepted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /api/migu/singer-songs/crawl:
+    post:
+      tags: [migu]
+      summary: Crawl singer songs
+      description: Crawl songs for one or many Migu singer IDs.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SingerIdsCrawlRequest'
+      responses:
+        '202':
+          $ref: '#/components/responses/TaskAccepted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /api/migu/singer-songs/crawl-from-db:
+    post:
+      tags: [migu]
+      summary: Crawl singer songs from database queue
+      description: Claim singers from singer_source_refs by songs_sync_status and crawl songs. Empty country, gender and q filters are ignored.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SingerFromDbCrawlRequest'
+      responses:
+        '202':
+          $ref: '#/components/responses/TaskAccepted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /api/migu/singer-albums/crawl:
+    post:
+      tags: [migu]
+      summary: Crawl singer albums
+      description: Crawl album list records for one or many Migu singer IDs.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SingerIdsCrawlRequest'
+      responses:
+        '202':
+          $ref: '#/components/responses/TaskAccepted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /api/migu/singer-albums/crawl-from-db:
+    post:
+      tags: [migu]
+      summary: Crawl singer albums from database queue
+      description: Claim singers from singer_source_refs by albums_sync_status and crawl albums. Empty country, gender and q filters are ignored.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SingerFromDbCrawlRequest'
+      responses:
+        '202':
+          $ref: '#/components/responses/TaskAccepted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /api/migu/album-details/crawl:
+    post:
+      tags: [migu]
+      summary: Backfill album details
+      description: Fetch pending album details from album_source_refs and save detail metadata. The same response also parses songItems when present.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AlbumBackfillRequest'
+      responses:
+        '202':
+          $ref: '#/components/responses/TaskAccepted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /api/migu/album-songs/crawl:
+    post:
+      tags: [migu]
+      summary: Backfill album songs
+      description: Fetch pending album songItems for album_source_refs rows whose details are already synced.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AlbumBackfillRequest'
+      responses:
+        '202':
+          $ref: '#/components/responses/TaskAccepted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /api/migu/singers:
+    get:
+      tags: [migu]
+      summary: List Migu singers
+      description: Supports q, gender, country, songs_sync_status and albums_sync_status.
+      parameters:
+        - { name: page, in: query, required: false, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 20 } }
+        - { name: q, in: query, required: false, schema: { type: string, maxLength: 128 } }
+        - { name: gender, in: query, required: false, schema: { type: integer, minimum: 0, maximum: 3 } }
+        - { name: country, in: query, required: false, schema: { type: string, maxLength: 128 } }
+        - { name: songs_sync_status, in: query, required: false, schema: { type: string, pattern: '^[0-4](,[0-4])*$' } }
+        - { name: albums_sync_status, in: query, required: false, schema: { type: string, pattern: '^[0-4](,[0-4])*$' } }
+      responses:
+        '200': { $ref: '#/components/responses/SingerRecordPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /api/migu/singers/{source_singer_id}:
+    get:
+      tags: [migu]
+      summary: Get Migu singer
+      parameters:
+        - { name: source_singer_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Singer record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SingerRecord'
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/migu/singers/{source_singer_id}/songs:
+    get:
+      tags: [migu]
+      summary: List Migu singer songs
+      parameters:
+        - { name: source_singer_id, in: path, required: true, schema: { type: string } }
+        - { name: page, in: query, required: false, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 20 } }
+        - { name: q, in: query, required: false, schema: { type: string, maxLength: 128 } }
+        - { name: artist, in: query, required: false, schema: { type: string, maxLength: 128 } }
+        - { name: album, in: query, required: false, schema: { type: string, maxLength: 128 } }
+        - { name: resource_status, in: query, required: false, schema: { type: string, pattern: '^[0-4](,[0-4])*$' } }
+        - { name: format, in: query, required: false, schema: { type: string, maxLength: 32 } }
+      responses:
+        '200': { $ref: '#/components/responses/SongRecordPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /api/migu/singers/{source_singer_id}/albums:
+    get:
+      tags: [migu]
+      summary: List Migu singer albums
+      parameters:
+        - { name: source_singer_id, in: path, required: true, schema: { type: string } }
+        - { name: page, in: query, required: false, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 20 } }
+        - { name: q, in: query, required: false, schema: { type: string, maxLength: 128 } }
+        - { name: artist, in: query, required: false, schema: { type: string, maxLength: 128 } }
+        - { name: kind, in: query, required: false, schema: { type: integer, minimum: 0, maximum: 2 } }
+        - { name: detail_sync_status, in: query, required: false, schema: { type: string, pattern: '^[0-4](,[0-4])*$' } }
+        - { name: songs_sync_status, in: query, required: false, schema: { type: string, pattern: '^[0-4](,[0-4])*$' } }
+      responses:
+        '200': { $ref: '#/components/responses/AlbumRecordPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /api/migu/albums:
+    get:
+      tags: [migu]
+      summary: List Migu albums
+      description: Supports q, artist, kind, detail_sync_status and songs_sync_status.
+      parameters:
+        - { name: page, in: query, required: false, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 20 } }
+        - { name: q, in: query, required: false, schema: { type: string, maxLength: 128 } }
+        - { name: artist, in: query, required: false, schema: { type: string, maxLength: 128 } }
+        - { name: kind, in: query, required: false, schema: { type: integer, minimum: 0, maximum: 2 } }
+        - { name: detail_sync_status, in: query, required: false, schema: { type: string, pattern: '^[0-4](,[0-4])*$' } }
+        - { name: songs_sync_status, in: query, required: false, schema: { type: string, pattern: '^[0-4](,[0-4])*$' } }
+      responses:
+        '200': { $ref: '#/components/responses/AlbumRecordPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /api/migu/albums/{source_album_id}:
+    get:
+      tags: [migu]
+      summary: Get Migu album
+      parameters:
+        - { name: source_album_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Album record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlbumRecord'
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/migu/albums/{source_album_id}/songs:
+    get:
+      tags: [migu]
+      summary: List Migu album songs
+      parameters:
+        - { name: source_album_id, in: path, required: true, schema: { type: string } }
+        - { name: page, in: query, required: false, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 20 } }
+        - { name: q, in: query, required: false, schema: { type: string, maxLength: 128 } }
+        - { name: artist, in: query, required: false, schema: { type: string, maxLength: 128 } }
+        - { name: album, in: query, required: false, schema: { type: string, maxLength: 128 } }
+        - { name: resource_status, in: query, required: false, schema: { type: string, pattern: '^[0-4](,[0-4])*$' } }
+        - { name: format, in: query, required: false, schema: { type: string, maxLength: 32 } }
+      responses:
+        '200': { $ref: '#/components/responses/SongRecordPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /api/migu/songs:
+    get:
+      tags: [migu]
+      summary: List Migu songs
+      description: Supports q, artist, album, resource_status and format.
+      parameters:
+        - { name: page, in: query, required: false, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 20 } }
+        - { name: q, in: query, required: false, schema: { type: string, maxLength: 128 } }
+        - { name: artist, in: query, required: false, schema: { type: string, maxLength: 128 } }
+        - { name: album, in: query, required: false, schema: { type: string, maxLength: 128 } }
+        - { name: resource_status, in: query, required: false, schema: { type: string, pattern: '^[0-4](,[0-4])*$' } }
+        - { name: format, in: query, required: false, schema: { type: string, maxLength: 32 } }
+      responses:
+        '200': { $ref: '#/components/responses/SongRecordPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /api/migu/songs/{source_song_id}:
+    get:
+      tags: [migu]
+      summary: Get Migu song
+      parameters:
+        - { name: source_song_id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Song record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SongRecord'
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/migu/resources/queue:
+    get:
+      tags: [migu]
+      summary: List Migu resource queue
+      description: Resource task queue view. This API does not fetch or download resources.
+      parameters:
+        - { name: page, in: query, required: false, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 20 } }
+        - { name: q, in: query, required: false, schema: { type: string, maxLength: 128 } }
+        - { name: status, in: query, required: false, schema: { type: string, pattern: '^[0-4](,[0-4])*$' } }
+        - { name: kind, in: query, required: false, schema: { type: string, maxLength: 32 } }
+        - { name: format, in: query, required: false, schema: { type: string, maxLength: 32 } }
+      responses:
+        '200': { $ref: '#/components/responses/ResourceQueueRecordPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /api/migu/resources/preview:
+    post:
+      tags: [migu]
+      summary: Preview Migu resource queue governance
+      description: Returns matched, eligible, ineligible and missing resource counts before retry/reset/recover-stale. This endpoint does not write database rows.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResourceActionRequest'
+      responses:
+        '200':
+          description: Resource governance preview
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourcePreviewResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /api/migu/resources/retry:
+    post:
+      tags: [migu]
+      summary: Retry Migu resource queue records
+      description: Marks selected failed resource records as pending. Skipped resources remain skipped. It does not fetch, probe or download resources.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResourceActionRequest'
+      responses:
+        '200':
+          description: Resource action result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceActionResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /api/migu/resources/reset:
+    post:
+      tags: [migu]
+      summary: Reset Migu resource queue records
+      description: Resets selected resource records to pending and clears retry/error metadata. It does not delete files or fetch resources.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResourceActionRequest'
+      responses:
+        '200':
+          description: Resource action result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceActionResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /api/migu/resources/recover-stale:
+    post:
+      tags: [migu]
+      summary: Recover stale Migu resource queue records
+      description: Marks selected stale running resource records as failed so they can be governed later.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResourceActionRequest'
+      responses:
+        '200':
+          description: Resource action result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceActionResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /api/migu/resources/process:
+    post:
+      tags: [migu]
+      summary: Process Migu resource queue
+      description: Claims pending resource records, obtains temporary Migu resource URLs, downloads content, saves bytes and writes results back to MySQL. Known digital albums are skipped without requesting resource URLs. Set async=true for long-running background processing; item and event rows are written in real time.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResourceProcessRequest'
+      responses:
+        '200':
+          description: Resource processing result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceProcessResponse'
+        '202':
+          description: Resource processing accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceProcessAcceptedResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /api/migu/pacmtoken/refresh:
+    post:
+      tags: [migu]
+      summary: Refresh Migu pacmtoken
+      description: Calls Migu checkPacMtoken with the current pacmtoken, stores the successful token in backend memory by default, and returns the token for the frontend timer. The initial token must be provided by the caller; this endpoint does not implement login, does not read Migu Cookie environment variables, and does not write .env.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PacmtokenRefreshRequest'
+      responses:
+        '200':
+          description: pacmtoken refreshed or still valid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PacmtokenRefreshResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '502':
+          description: Migu checkPacMtoken failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /api/migu/pacmtoken/state:
+    get:
+      tags: [migu]
+      summary: Get runtime pacmtoken state
+      description: Returns only token length and updated time. The token value is not included and this state is not persisted.
+      responses:
+        '200':
+          description: pacmtoken state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PacmtokenStateResponse'
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /api/migu/pacmtoken/current:
+    post:
+      tags: [migu]
+      summary: Get current runtime pacmtoken
+      description: Returns the current in-memory token so the frontend can update local storage after long-running auto refresh. Do not log this response body.
+      responses:
+        '200':
+          description: current pacmtoken
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PacmtokenCurrentResponse'
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /api/migu/dictionaries:
+    get:
+      tags: [migu]
+      summary: Get Migu frontend dictionaries
+      description: Returns sync status, gender, album kind, resource kind, audio format, error category and result code dictionaries.
+      responses:
+        '200':
+          description: Dictionary values
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DictionaryResponse'
+  /api/migu/backfill/{type}/queue:
+    get:
+      tags: [migu]
+      summary: List Migu backfill queue
+      parameters:
+        - { name: type, in: path, required: true, schema: { type: string, enum: [singer-songs, singer-albums, album-details, album-songs] } }
+        - { name: page, in: query, required: false, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 20 } }
+        - { name: q, in: query, required: false, schema: { type: string, maxLength: 128 } }
+        - { name: status, in: query, required: false, schema: { type: string, pattern: '^[0-4](,[0-4])*$' } }
+        - { name: sync_status, in: query, required: false, schema: { type: string, pattern: '^[0-4](,[0-4])*$' } }
+        - { name: country, in: query, required: false, schema: { type: string, maxLength: 128 } }
+        - { name: gender, in: query, required: false, schema: { type: integer, minimum: 0, maximum: 3 } }
+        - { name: artist, in: query, required: false, schema: { type: string, maxLength: 128 } }
+        - { name: kind, in: query, required: false, schema: { type: integer, minimum: 0, maximum: 2 } }
+      responses:
+        '200': { $ref: '#/components/responses/BackfillQueuePage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /api/migu/backfill/{type}/preview:
+    post:
+      tags: [migu]
+      summary: Preview Migu backfill targets
+      description: Returns matched count, eligible count, missing count and sample targets before retry or reset. It does not claim or reset records.
+      parameters:
+        - { name: type, in: path, required: true, schema: { type: string, enum: [singer-songs, singer-albums, album-details, album-songs] } }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BackfillActionRequest'
+      responses:
+        '200':
+          description: Preview result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackfillPreviewResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/migu/backfill/{type}/retry:
+    post:
+      tags: [migu]
+      summary: Retry Migu backfill targets
+      parameters:
+        - { name: type, in: path, required: true, schema: { type: string, enum: [singer-songs, singer-albums, album-details, album-songs] } }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BackfillActionRequest'
+      responses:
+        '202': { $ref: '#/components/responses/TaskAccepted' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /api/migu/backfill/{type}/reset:
+    post:
+      tags: [migu]
+      summary: Reset Migu backfill target status
+      parameters:
+        - { name: type, in: path, required: true, schema: { type: string, enum: [singer-songs, singer-albums, album-details, album-songs] } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BackfillActionRequest'
+      responses:
+        '200':
+          description: Reset result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackfillResetResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /api/migu/governance/events:
+    get:
+      tags: [migu]
+      summary: List Migu governance events
+      description: Returns audit events produced by resource, backfill, maintenance and batch governance actions.
+      parameters:
+        - { name: page, in: query, required: false, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: page_size, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 20 } }
+        - { name: q, in: query, required: false, schema: { type: string, maxLength: 128 } }
+        - { name: target_type, in: query, required: false, schema: { type: string, maxLength: 64 } }
+        - { name: target_id, in: query, required: false, schema: { type: string, maxLength: 128 } }
+        - { name: action, in: query, required: false, schema: { type: string, maxLength: 64 } }
+        - { name: batch_id, in: query, required: false, schema: { type: string, maxLength: 128 } }
+      responses:
+        '200':
+          description: Governance event page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GovernanceEventPage'
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /api/migu/integrity:
+    get:
+      tags: [migu]
+      summary: Get Migu catalog integrity
+      description: Returns lightweight counts for unfinished metadata, stale metadata running states, stale batches and stale resource tasks.
+      parameters:
+        - name: stale_after_seconds
+          in: query
+          required: false
+          schema: { type: integer, minimum: 60, default: 3600 }
+      responses:
+        '200':
+          description: Integrity summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntegritySummary'
+  /api/migu/schema/status:
+    get:
+      tags: [migu]
+      summary: Get Migu MySQL schema status
+      description: Checks crawler MySQL schema version and required tables/columns for the current metadata console. This endpoint does not migrate data.
+      responses:
+        '200':
+          description: Schema status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SchemaStatus'
+  /api/migu/maintenance/recover-stale:
+    post:
+      tags: [migu]
+      summary: Recover stale Migu running states
+      description: Marks metadata rows and persisted batches that have stayed in running state beyond stale_after_seconds as failed so backfill retry can govern them again. This endpoint does not fetch or download resources.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StaleRecoveryRequest'
+      responses:
+        '200':
+          description: Recovery result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StaleRecoveryResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+  /api/migu/tasks:
+    get:
+      tags: [migu]
+      summary: List persisted Migu tasks
+      description: Returns task batches from MySQL so the frontend can restore task lists after refresh or service restart.
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 20
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [Pending, Running, Completed, Failed, Cancelled]
+        - name: type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [singerIndex, singerSongs, singerAlbums, singerSongsFromDb, singerAlbumsFromDb, albumDetails, albumSongs]
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 128
+        - name: include_archived
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Task batch page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchTaskPage'
+  /api/migu/tasks/summary:
+    get:
+      tags: [migu]
+      summary: Get Migu task summary
+      description: Returns global batch state distribution, latest success/failure batches, running count and stale running signal.
+      parameters:
+        - name: stale_after_seconds
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 3600
+      responses:
+        '200':
+          description: Task summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskSummary'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /api/migu/tasks/{batch_id}:
+    get:
+      tags: [migu]
+      summary: Get persisted Migu task
+      parameters:
+        - name: batch_id
+          in: path
+          required: true
+          schema:
+            type: string
+            maxLength: 128
+      responses:
+        '200':
+          description: Task batch
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchTask'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/migu/tasks/{batch_id}/items:
+    get:
+      tags: [migu]
+      summary: List persisted Migu task items
+      parameters:
+        - name: batch_id
+          in: path
+          required: true
+          schema:
+            type: string
+            maxLength: 128
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [Pending, Running, Completed, Failed, Cancelled]
+        - name: error_category
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [network, parse, persistence, copyright, resource, invalid_target, timeout, unknown]
+        - name: result_code
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [ok, network_failed, parse_failed, persist_failed, invalid_target, timeout, partial_completed, failed]
+      responses:
+        '200':
+          description: Task item page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchTaskItemPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /api/migu/tasks/{batch_id}/rerun-failed:
+    post:
+      tags: [migu]
+      summary: Rerun failed Migu task items
+      description: Creates a new batch from failed, cancelled or timeout items of the old batch. The old batch remains immutable.
+      parameters:
+        - name: batch_id
+          in: path
+          required: true
+          schema: { type: string, maxLength: 128 }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchGovernanceRequest'
+      responses:
+        '202':
+          description: New governance batch created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchGovernanceResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/migu/tasks/{batch_id}/clone:
+    post:
+      tags: [migu]
+      summary: Clone Migu task
+      description: Creates a new batch from the old batch request and item set. mode=failed clones only failed items.
+      parameters:
+        - name: batch_id
+          in: path
+          required: true
+          schema: { type: string, maxLength: 128 }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchGovernanceRequest'
+      responses:
+        '202':
+          description: New governance batch created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchGovernanceResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/migu/tasks/{batch_id}/backfill-retry:
+    post:
+      tags: [migu]
+      summary: Create backfill retry from task items
+      description: Extracts singer or album metadata targets from supported task items and creates a new backfill retry batch.
+      parameters:
+        - name: batch_id
+          in: path
+          required: true
+          schema: { type: string, maxLength: 128 }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchGovernanceRequest'
+      responses:
+        '202':
+          description: New governance batch created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchGovernanceResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/migu/tasks/{batch_id}/archive:
+    post:
+      tags: [migu]
+      summary: Archive Migu task
+      description: Marks a batch as archived/hidden without deleting batch, item or event history.
+      parameters:
+        - name: batch_id
+          in: path
+          required: true
+          schema: { type: string, maxLength: 128 }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchGovernanceRequest'
+      responses:
+        '200':
+          description: Batch archived
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchArchiveResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/migu/tasks/{batch_id}/events:
+    get:
+      tags: [migu]
+      summary: List persisted Migu task events
+      parameters:
+        - name: batch_id
+          in: path
+          required: true
+          schema:
+            type: string
+            maxLength: 128
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 100
+      responses:
+        '200':
+          description: Task event page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchTaskEventPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /api/migu/tasks/progress:
+    get:
+      tags: [migu]
+      summary: Poll Migu task progress
+      parameters:
+        - name: batch_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Task progress
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Progress'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/migu/tasks/stop:
+    post:
+      tags: [migu]
+      summary: Request Migu task stop
+      description: Cancellation is cooperative. batch_id may be supplied in JSON body or query string.
+      parameters:
+        - name: batch_id
+          in: query
+          required: false
+          schema:
+            type: string
+            maxLength: 128
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchControlRequest'
+      responses:
+        '200':
+          description: Stop requested
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StopResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /api/migu/overview:
+    get:
+      tags: [migu]
+      summary: Get Migu catalog overview
+      description: Aggregates persisted singer, song, album, sync queue and resource status counts for the frontend dashboard.
+      responses:
+        '200':
+          description: Catalog overview
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Overview'
+  /api/migu/settings:
+    get:
+      tags: [migu]
+      summary: Get Migu crawler settings
+      responses:
+        '200':
+          description: Settings snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingsSnapshot'
+    put:
+      tags: [migu]
+      summary: Update mutable Migu crawler settings
+      description: Updates scheduling and resource download knobs for new scheduling decisions.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SettingsUpdate'
+      responses:
+        '200':
+          description: Updated settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingsSnapshot'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+    patch:
+      tags: [migu]
+      summary: Update mutable Migu crawler settings
+      description: Updates scheduling and resource download knobs for new scheduling decisions.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SettingsUpdate'
+      responses:
+        '200':
+          description: Updated settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingsSnapshot'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /api/openapi.json:
+    get:
+      tags: [system]
+      summary: Get OpenAPI document
+      responses:
+        '200':
+          description: OpenAPI JSON
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/health:
+    get:
+      tags: [system]
+      summary: Health check
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+components:
+  responses:
+    TaskAccepted:
+      description: Task accepted
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/TaskResponse'
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: batch_id not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Conflict:
+      description: Current task state does not allow this operation
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ServiceUnavailable:
+      description: Required workflow or executor is not configured
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    CatalogPage:
+      description: Catalog page
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CatalogPage'
+    SingerRecordPage:
+      description: Singer record page
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SingerRecordPage'
+    AlbumRecordPage:
+      description: Album record page
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AlbumRecordPage'
+    SongRecordPage:
+      description: Song record page
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SongRecordPage'
+    ResourceQueueRecordPage:
+      description: Resource queue record page
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ResourceQueueRecordPage'
+    BackfillQueuePage:
+      description: Unified backfill queue page.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BackfillQueueTargetPage'
+  schemas:
+    ErrorResponse:
+      type: object
+      required: [error_code, message, error]
+      properties:
+        error_code:
+          type: string
+          description: Stable frontend-facing error code.
+        message:
+          type: string
+          description: Human-readable error message.
+        error:
+          type: string
+          description: Backward-compatible alias of message.
+        details:
+          nullable: true
+          description: Optional structured error details.
+    SingerTab:
+      type: string
+      description: Migu singer category tab.
+      enum: [huayu-nan, huayu-nv, huayu-group, oumei-nan, oumei-nv, oumei-group, rihan-nan, rihan-nv, rihan-group]
+    MiguId:
+      description: Migu numeric ID. Frontend should prefer integer.
+      oneOf:
+        - type: integer
+          minimum: 1
+        - type: string
+          minLength: 1
+          maxLength: 64
+    SyncStatus:
+      type: integer
+      enum: [0, 1, 2, 3, 4]
+      description: 'Metadata sync status: 0 pending, 1 running, 2 completed, 3 failed, 4 partial.'
+    CatalogPage:
+      type: object
+      required: [items, page, page_size, total]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        page:
+          type: integer
+          minimum: 1
+        page_size:
+          type: integer
+          minimum: 1
+          maximum: 200
+        total:
+          type: integer
+          minimum: 0
+    SingerRecord:
+      type: object
+      required: [source, source_singer_id, name, songs_sync_status, albums_sync_status]
+      properties:
+        singer_db_id: { type: integer, minimum: 0 }
+        name: { type: string }
+        normalized_name: { type: string }
+        gender: { type: integer, minimum: 0, maximum: 3 }
+        status: { type: integer }
+        source_ref_id: { type: integer, minimum: 0 }
+        source: { type: string, enum: [migu] }
+        source_item_key: { type: string }
+        source_singer_id: { type: string }
+        source_name_pinyin: { type: string }
+        country: { type: string }
+        source_tag: { type: string }
+        source_metric: { type: string }
+        avatar_url: { type: string }
+        songs_sync_status:
+          $ref: '#/components/schemas/SyncStatus'
+        songs_synced_at: { nullable: true, type: integer, minimum: 0 }
+        songs_sync_count: { type: integer, minimum: 0 }
+        songs_sync_error: { type: string }
+        songs_last_batch_id: { nullable: true, type: string }
+        songs_running_batch_id: { nullable: true, type: string }
+        albums_sync_status:
+          $ref: '#/components/schemas/SyncStatus'
+        albums_synced_at: { nullable: true, type: integer, minimum: 0 }
+        albums_sync_count: { type: integer, minimum: 0 }
+        albums_sync_error: { type: string }
+        albums_last_batch_id: { nullable: true, type: string }
+        albums_running_batch_id: { nullable: true, type: string }
+        created_at: { type: integer, minimum: 0 }
+        updated_at: { type: integer, minimum: 0 }
+    AlbumRecord:
+      type: object
+      required: [source, source_album_id, source_title, detail_sync_status, songs_sync_status]
+      properties:
+        album_db_id: { type: integer, minimum: 0 }
+        title: { type: string }
+        normalized_title: { type: string }
+        primary_artist_name: { type: string }
+        release_date: { type: string }
+        source_ref_id: { type: integer, minimum: 0 }
+        source: { type: string, enum: [migu] }
+        source_item_key: { type: string }
+        source_album_id: { type: string }
+        source_resource_type: { type: string }
+        source_res_type: { type: string }
+        source_album_kind: { type: integer, minimum: 0 }
+        source_title: { type: string }
+        source_artist_id: { type: string }
+        source_artist_name: { type: string }
+        cover_url: { type: string }
+        total_count: { type: string }
+        publish_date: { type: string }
+        play_num: { type: integer, minimum: 0 }
+        play_num_desc: { type: string }
+        detail_sync_status:
+          $ref: '#/components/schemas/SyncStatus'
+        detail_synced_at: { nullable: true, type: integer, minimum: 0 }
+        detail_sync_error: { type: string }
+        detail_last_batch_id: { nullable: true, type: string }
+        detail_running_batch_id: { nullable: true, type: string }
+        songs_sync_status:
+          $ref: '#/components/schemas/SyncStatus'
+        songs_synced_at: { nullable: true, type: integer, minimum: 0 }
+        songs_sync_count: { type: integer, minimum: 0 }
+        songs_sync_error: { type: string }
+        songs_last_batch_id: { nullable: true, type: string }
+        songs_running_batch_id: { nullable: true, type: string }
+        created_at: { type: integer, minimum: 0 }
+        updated_at: { type: integer, minimum: 0 }
+    SongRecord:
+      type: object
+      required: [source, source_song_id, title]
+      properties:
+        song_db_id: { type: integer, minimum: 0 }
+        title: { type: string }
+        normalized_title: { type: string }
+        source_duration_seconds: { type: integer, minimum: 0 }
+        source_ref_id: { type: integer, minimum: 0 }
+        source: { type: string, enum: [migu] }
+        source_item_key: { type: string }
+        source_song_id: { type: string }
+        source_content_id: { type: string }
+        source_resource_type: { type: string }
+        source_title_pinyin: { type: string }
+        source_album_id: { type: string }
+        source_album_name: { type: string }
+        primary_artist_id:
+          type: string
+          description: Primary display artist ID derived from song_artist_refs.
+        primary_artist_name:
+          type: string
+          description: Primary display artist name derived from song_artist_refs.
+        cover_url: { type: string }
+        lyric_url: { type: string }
+        mrc_url: { type: string }
+        trc_url: { type: string }
+        copyright_id: { type: string }
+        metadata_status: { type: integer }
+        format_types: { type: string }
+        resource_count: { type: integer, minimum: 0 }
+        failed_resource_count: { type: integer, minimum: 0 }
+        created_at: { type: integer, minimum: 0 }
+        updated_at: { type: integer, minimum: 0 }
+    ResourceQueueRecord:
+      type: object
+      required: [resource_id, source, source_song_id, resource_kind, format_type, status]
+      properties:
+        resource_id: { type: integer, minimum: 0 }
+        song_source_ref_id: { type: integer, minimum: 0 }
+        source: { type: string, enum: [migu] }
+        source_song_id: { type: string }
+        source_content_id: { type: string }
+        title: { type: string }
+        artist: { type: string }
+        album: { type: string }
+        resource_kind: { type: string }
+        format_type: { type: string }
+        remote_url: { type: string }
+        local_path: { type: string }
+        size_bytes: { type: integer, minimum: 0 }
+        checksum: { type: string }
+        status: { type: integer, minimum: 0, maximum: 4 }
+        retry_count: { type: integer, minimum: 0 }
+        last_error: { type: string }
+        error_category:
+          type: string
+          enum: [network, parse, persistence, copyright, resource, invalid_target, timeout, unknown, ""]
+        result_code:
+          type: string
+          enum: [ok, network_failed, parse_failed, persist_failed, invalid_target, timeout, partial_completed, failed, ""]
+        last_batch_id: { nullable: true, type: string }
+        running_batch_id: { nullable: true, type: string }
+        last_processed_at: { nullable: true, type: integer, minimum: 0 }
+        fetched_at: { nullable: true, type: integer, minimum: 0 }
+        created_at: { type: integer, minimum: 0 }
+        updated_at: { type: integer, minimum: 0 }
+    SingerRecordPage:
+      allOf:
+        - $ref: '#/components/schemas/CatalogPage'
+        - type: object
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/SingerRecord'
+    AlbumRecordPage:
+      allOf:
+        - $ref: '#/components/schemas/CatalogPage'
+        - type: object
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/AlbumRecord'
+    SongRecordPage:
+      allOf:
+        - $ref: '#/components/schemas/CatalogPage'
+        - type: object
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/SongRecord'
+    ResourceQueueRecordPage:
+      allOf:
+        - $ref: '#/components/schemas/CatalogPage'
+        - type: object
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/ResourceQueueRecord'
+    ResourceActionRequest:
+      type: object
+      description: Govern resource queue records only. It does not fetch, probe or download resource URLs.
+      properties:
+        source:
+          type: string
+          enum: [migu]
+          default: migu
+        action:
+          type: string
+          enum: [retry, reset, recover-stale]
+          description: Required by /api/migu/resources/preview. Ignored by concrete retry/reset/recover endpoints.
+        resource_ids:
+          type: array
+          items: { type: integer, minimum: 1 }
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          default: 50
+        stale_after_seconds:
+          type: integer
+          minimum: 1
+          default: 3600
+        filter:
+          type: object
+          additionalProperties: true
+          description: Supports status/resource_status, q, kind and format.
+    ResourceProcessRequest:
+      type: object
+      description: Claims pending Migu resource records, fetches the resource URL when needed, downloads content, stores bytes and writes back status. Use async=true for long-running batches. Audio resources use the runtime pacmtoken stored through POST /api/migu/pacmtoken/refresh and may auto-refresh it during processing; tokens are not written to batch tables or logs.
+      properties:
+        source:
+          type: string
+          enum: [migu]
+          default: migu
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          default: 20
+        offset:
+          type: integer
+          minimum: 0
+          default: 0
+        async:
+          type: boolean
+          default: false
+          description: When true, returns 202 with batch_id and processes resources in the background.
+        batch_id:
+          type: string
+          description: Optional caller-provided batch id; generated when omitted.
+        filter:
+          type: object
+          additionalProperties: true
+          description: Supports status/resource_status/resourceStatus/statuses, kind/resource_kind/resourceKind, format/format_type/formatType and content_id/contentId/source_content_id/sourceContentId.
+        options:
+          $ref: '#/components/schemas/ResourceProcessOptions'
+      example:
+        source: migu
+        limit: 10
+        offset: 0
+        filter:
+          kind: audio
+          format: ZQ24
+          content_id: '600902000006889266'
+          status: [0, 3]
+        options:
+          resource_download_concurrency: 3
+          resource_download_retries: 1
+          resource_download_timeout_ms: 120000
+          pacmtoken_refresh_interval_seconds: 300
+          auto_refresh_pacmtoken: true
+          refresh_pacmtoken_on_440013: true
+    ResourceProcessOptions:
+      type: object
+      description: Per-request resource download options. Omitted fields use GET /api/migu/settings mutable defaults.
+      properties:
+        resource_download_concurrency:
+          type: integer
+          minimum: 1
+          maximum: 32
+          default: 3
+        resourceDownloadConcurrency:
+          type: integer
+          minimum: 1
+          maximum: 32
+        resource_download_retries:
+          type: integer
+          minimum: 0
+          maximum: 5
+          default: 1
+        resourceDownloadRetries:
+          type: integer
+          minimum: 0
+          maximum: 5
+        resource_download_timeout_ms:
+          type: integer
+          minimum: 10000
+          maximum: 600000
+          default: 120000
+        resourceDownloadTimeoutMs:
+          type: integer
+          minimum: 10000
+          maximum: 600000
+        pacmtoken_refresh_interval_seconds:
+          type: integer
+          minimum: 0
+          maximum: 3600
+          default: 300
+          description: 0 disables periodic long-run refresh.
+        pacmtokenRefreshIntervalSeconds:
+          type: integer
+          minimum: 0
+          maximum: 3600
+        auto_refresh_pacmtoken:
+          type: boolean
+          default: true
+        autoRefreshPacmtoken:
+          type: boolean
+        refresh_pacmtoken_on_440013:
+          type: boolean
+          default: true
+        refreshPacmtokenOn440013:
+          type: boolean
+    ResourceProcessAcceptedResponse:
+      type: object
+      required: [accepted, async, batch_id, task_url, items_url, events_url]
+      properties:
+        accepted: { type: boolean }
+        async: { type: boolean }
+        batch_id: { type: string }
+        task_url: { type: string }
+        items_url: { type: string }
+        events_url: { type: string }
+    ResourceProcessItem:
+      type: object
+      required: [resource_id, resource_kind, format_type, ok, skipped, related, synthetic, error_category, result_code, message]
+      properties:
+        resource_id: { type: integer, minimum: 0 }
+        song_source_ref_id: { type: integer, minimum: 0 }
+        source: { type: string }
+        source_song_id: { type: string }
+        source_content_id: { type: string }
+        title: { type: string }
+        resource_kind: { type: string }
+        format_type: { type: string }
+        ok: { type: boolean }
+        skipped: { type: boolean }
+        related:
+          type: boolean
+          description: True when the item was discovered from an audio response lyric/mrc/trc URL.
+        synthetic:
+          type: boolean
+          description: True when no real resource row could be claimed, for example related_not_claimed.
+        error_category:
+          type: string
+          description: Failure or skip category. Empty when ok is true.
+        result_code: { type: string }
+        message: { type: string }
+    ResourceProcessResponse:
+      type: object
+      required: [batch_id, claimed_count, succeeded_count, failed_count, skipped_count, related_succeeded_count, related_failed_count, related_skipped_count, synthetic_related_skipped_count, items]
+      properties:
+        batch_id: { type: string }
+        claimed_count: { type: integer, minimum: 0 }
+        succeeded_count: { type: integer, minimum: 0 }
+        failed_count: { type: integer, minimum: 0 }
+        skipped_count: { type: integer, minimum: 0 }
+        related_succeeded_count:
+          type: integer
+          minimum: 0
+          description: Related lyric, mrc or trc resources stored after the first successful audio URL response.
+        related_failed_count:
+          type: integer
+          minimum: 0
+          description: Related lyric, mrc or trc resources that failed to store.
+        related_skipped_count:
+          type: integer
+          minimum: 0
+          description: Related lyric, mrc or trc resources skipped because they were missing, already processed or not applicable.
+        synthetic_related_skipped_count:
+          type: integer
+          minimum: 0
+          description: Related skipped items generated without a real resource row, such as related_not_claimed.
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ResourceProcessItem'
+    ResourceActionItem:
+      type: object
+      required: [resource_id, source_id, name, status, reason]
+      properties:
+        resource_id: { type: integer, minimum: 0 }
+        source_id: { type: string }
+        name: { type: string }
+        status: { type: integer, minimum: 0, maximum: 4 }
+        reason: { type: string }
+    ResourceActionResponse:
+      type: object
+      required: [action, updated_count, success_count, failed_count, skipped_count, items]
+      properties:
+        action: { type: string, enum: [retry, reset, recover-stale] }
+        updated_count: { type: integer, minimum: 0 }
+        success_count: { type: integer, minimum: 0 }
+        failed_count: { type: integer, minimum: 0 }
+        skipped_count: { type: integer, minimum: 0 }
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ResourceActionItem'
+    ResourcePreviewItem:
+      type: object
+      required: [resource_id, target_id, target_name, resource_kind, format_type, sync_status, eligible, reason]
+      properties:
+        resource_id: { type: integer, minimum: 0 }
+        target_id: { type: string }
+        target_name: { type: string }
+        resource_kind: { type: string }
+        format_type: { type: string }
+        sync_status: { type: integer, minimum: 0, maximum: 4 }
+        eligible: { type: boolean }
+        reason: { type: string }
+    ResourcePreviewResponse:
+      type: object
+      required: [source, action, matched_count, eligible_count, ineligible_count, missing_count, items]
+      properties:
+        source: { type: string, enum: [migu] }
+        action: { type: string, enum: [retry, reset, recover-stale] }
+        matched_count: { type: integer, minimum: 0 }
+        eligible_count: { type: integer, minimum: 0 }
+        ineligible_count: { type: integer, minimum: 0 }
+        missing_count: { type: integer, minimum: 0 }
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ResourcePreviewItem'
+    BackfillActionRequest:
+      type: object
+      properties:
+        source:
+          type: string
+          enum: [migu]
+          default: migu
+        source_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/MiguId'
+        source_singer_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/MiguId'
+        source_album_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/MiguId'
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          default: 50
+        limit_per_target:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 20
+        filter:
+          type: object
+          additionalProperties: true
+    BackfillActionItem:
+      type: object
+      required: [source_id, name, status, reason]
+      properties:
+        source_id: { type: string }
+        name: { type: string }
+        status: { nullable: true, type: integer, minimum: 0, maximum: 4 }
+        reason: { type: string }
+    BackfillQueueTarget:
+      type: object
+      required: [target_id, target_type, target_name, owner_name, sync_status, sync_count, eligible_actions, eligible, reason]
+      properties:
+        target_id: { type: string }
+        target_type: { type: string, enum: [singer, album] }
+        target_name: { type: string }
+        owner_name: { type: string }
+        source: { type: string, enum: [migu] }
+        sync_status: { nullable: true, type: integer, minimum: 0, maximum: 4 }
+        sync_count: { type: integer, minimum: 0 }
+        last_error: { type: string }
+        last_batch_id: { nullable: true, type: string }
+        running_batch_id: { nullable: true, type: string }
+        last_processed_at: { nullable: true, type: integer, minimum: 0 }
+        eligible_actions:
+          type: array
+          items: { type: string, enum: [retry, reset, recover-stale] }
+        eligible: { type: boolean }
+        reason: { type: string }
+    BackfillQueueTargetPage:
+      allOf:
+        - $ref: '#/components/schemas/CatalogPage'
+        - type: object
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/BackfillQueueTarget'
+    BackfillPreviewResponse:
+      type: object
+      required: [type, source, matched_count, eligible_count, ineligible_count, missing_count, sample_size, items]
+      properties:
+        type: { type: string, enum: [singer-songs, singer-albums, album-details, album-songs] }
+        source: { type: string, enum: [migu] }
+        matched_count: { type: integer, minimum: 0 }
+        eligible_count: { type: integer, minimum: 0 }
+        ineligible_count: { type: integer, minimum: 0 }
+        missing_count: { type: integer, minimum: 0 }
+        sample_size: { type: integer, minimum: 1, maximum: 20 }
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/BackfillQueueTarget'
+    BackfillResetResponse:
+      type: object
+      required: [type, updated_count, success_count, failed_count, skipped_count, items]
+      properties:
+        type:
+          type: string
+          enum: [singer-songs, singer-albums, album-details, album-songs]
+        updated_count:
+          type: integer
+          minimum: 0
+        success_count: { type: integer, minimum: 0 }
+        failed_count: { type: integer, minimum: 0 }
+        skipped_count: { type: integer, minimum: 0 }
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/BackfillActionItem'
+    DictionaryEntry:
+      type: object
+      properties:
+        value:
+          oneOf:
+            - type: integer
+            - type: string
+        code: { type: string }
+        label: { type: string }
+    DictionaryResponse:
+      type: object
+      properties:
+        sync_status:
+          type: array
+          items: { $ref: '#/components/schemas/DictionaryEntry' }
+        gender:
+          type: array
+          items: { $ref: '#/components/schemas/DictionaryEntry' }
+        album_kind:
+          type: array
+          items: { $ref: '#/components/schemas/DictionaryEntry' }
+        resource_kind:
+          type: array
+          items: { type: string }
+        audio_format:
+          type: array
+          items: { type: string }
+        error_category:
+          type: array
+          items: { type: string }
+        result_code:
+          type: array
+          items: { type: string }
+    StaleRecoveryRequest:
+      type: object
+      description: Recover metadata, resource rows or task rows stuck in running state. Empty types recovers all supported Migu queues and batches.
+      properties:
+        source:
+          type: string
+          enum: [migu]
+          default: migu
+        stale_after_seconds:
+          type: integer
+          minimum: 1
+          default: 3600
+        types:
+          type: array
+          items:
+            type: string
+            enum: [singer-songs, singer-albums, album-details, album-songs, resources, batches]
+    StaleRecoveryResponse:
+      type: object
+      required: [source, singer_songs_recovered, singer_albums_recovered, album_details_recovered, album_songs_recovered, resources_recovered, batches_recovered, recovered_at]
+      properties:
+        source:
+          type: string
+          enum: [migu]
+        singer_songs_recovered: { type: integer, minimum: 0 }
+        singer_albums_recovered: { type: integer, minimum: 0 }
+        album_details_recovered: { type: integer, minimum: 0 }
+        album_songs_recovered: { type: integer, minimum: 0 }
+        resources_recovered: { type: integer, minimum: 0 }
+        batches_recovered: { type: integer, minimum: 0 }
+        recovered_at: { type: integer, minimum: 0 }
+    IntegritySummary:
+      type: object
+      required: [singers_without_songs, singers_without_albums, albums_without_details, albums_without_songs, songs_without_resource_tasks, resources_failed, resources_running_stale, singers_songs_running_stale, singers_albums_running_stale, albums_details_running_stale, albums_songs_running_stale, running_batches_stale, generated_at]
+      properties:
+        singers_without_songs: { type: integer, minimum: 0 }
+        singers_without_albums: { type: integer, minimum: 0 }
+        albums_without_details: { type: integer, minimum: 0 }
+        albums_without_songs: { type: integer, minimum: 0 }
+        songs_without_resource_tasks: { type: integer, minimum: 0 }
+        resources_failed: { type: integer, minimum: 0 }
+        resources_running_stale: { type: integer, minimum: 0 }
+        singers_songs_running_stale: { type: integer, minimum: 0 }
+        singers_albums_running_stale: { type: integer, minimum: 0 }
+        albums_details_running_stale: { type: integer, minimum: 0 }
+        albums_songs_running_stale: { type: integer, minimum: 0 }
+        running_batches_stale: { type: integer, minimum: 0 }
+        generated_at: { type: integer, minimum: 0 }
+    SchemaStatus:
+      type: object
+      required: [source, schema_version, latest_applied_version, latest_available_version, schema_name, ok, pending_migrations, checksum_mismatches, missing_tables, missing_columns, checked_at]
+      properties:
+        source: { type: string, enum: [migu] }
+        schema_version: { type: integer, minimum: 0 }
+        latest_applied_version: { type: integer, minimum: 0 }
+        latest_available_version: { type: integer, minimum: 0 }
+        schema_name: { type: string }
+        ok: { type: boolean }
+        pending_migrations:
+          type: array
+          items: { type: string }
+        checksum_mismatches:
+          type: array
+          items: { type: string }
+        missing_tables:
+          type: array
+          items: { type: string }
+        missing_columns:
+          type: array
+          items: { type: string }
+        checked_at: { type: integer, minimum: 0 }
+    SingerIndexCrawlRequest:
+      type: object
+      description: Crawl Migu singer catalog by category tab. Provide tab/singer_tab or tabs/singer_tabs.
+      anyOf:
+        - required: [tab]
+        - required: [singer_tab]
+        - required: [tabs]
+      properties:
+        tab:
+          $ref: '#/components/schemas/SingerTab'
+        singer_tab:
+          $ref: '#/components/schemas/SingerTab'
+        singerTab:
+          $ref: '#/components/schemas/SingerTab'
+        tabs:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            $ref: '#/components/schemas/SingerTab'
+        singer_tabs:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            $ref: '#/components/schemas/SingerTab'
+        singerTabs:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            $ref: '#/components/schemas/SingerTab'
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 20
+          description: Maximum items per selected target.
+        start_index:
+          type: integer
+          minimum: 0
+          default: 0
+          description: Inclusive 0-based start index.
+        startPosition:
+          type: integer
+          minimum: 0
+          description: Alias of start_index.
+        start:
+          type: integer
+          minimum: 0
+          description: Alias of start_index.
+        end_index:
+          type: integer
+          minimum: 1
+          description: Exclusive 0-based end index.
+        endPosition:
+          type: integer
+          minimum: 1
+          description: Alias of end_index.
+        end:
+          type: integer
+          minimum: 1
+          description: Alias of end_index.
+    SingerIdsCrawlRequest:
+      type: object
+      description: Crawl Migu singer songs or singer albums by singer IDs.
+      anyOf:
+        - required: [singer_id]
+        - required: [singer_ids]
+      properties:
+        singer_id:
+          $ref: '#/components/schemas/MiguId'
+        singerId:
+          $ref: '#/components/schemas/MiguId'
+        singer_ids:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            $ref: '#/components/schemas/MiguId'
+        singerIds:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            $ref: '#/components/schemas/MiguId'
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 20
+          description: Maximum items per selected target.
+        start_index:
+          type: integer
+          minimum: 0
+          default: 0
+          description: Inclusive 0-based start index.
+        startPosition:
+          type: integer
+          minimum: 0
+          description: Alias of start_index.
+        start:
+          type: integer
+          minimum: 0
+          description: Alias of start_index.
+        end_index:
+          type: integer
+          minimum: 1
+          description: Exclusive 0-based end index.
+        endPosition:
+          type: integer
+          minimum: 1
+          description: Alias of end_index.
+        end:
+          type: integer
+          minimum: 1
+          description: Alias of end_index.
+    AlbumBackfillRequest:
+      type: object
+      description: Backfill pending album records from album_source_refs. source currently only supports migu.
+      properties:
+        source:
+          type: string
+          enum: [migu]
+          default: migu
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 20
+          description: Maximum pending albums to backfill.
+    SingerFromDbFilter:
+      type: object
+      description: Optional filters for singer_source_refs. Empty country, gender or q means no filtering.
+      properties:
+        sync_status:
+          type: array
+          default: [0, 3, 4]
+          items:
+            type: integer
+            minimum: 0
+            maximum: 4
+        syncStatus:
+          type: array
+          items:
+            type: integer
+            minimum: 0
+            maximum: 4
+        country:
+          type: string
+          maxLength: 128
+          description: Optional source_country filter. Empty string disables it.
+        gender:
+          nullable: true
+          type: integer
+          minimum: 0
+          maximum: 3
+          description: Optional singers.gender filter. Omit or null to disable it.
+        q:
+          type: string
+          maxLength: 128
+          description: Optional singer name/source_singer_id fuzzy keyword. Empty string disables it.
+    SingerFromDbCrawlRequest:
+      type: object
+      description: Claim singers from singer_source_refs by sync status and start singer songs or albums crawl.
+      properties:
+        source:
+          type: string
+          enum: [migu]
+          default: migu
+        filter:
+          $ref: '#/components/schemas/SingerFromDbFilter'
+        max_targets:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          default: 20
+          description: Maximum singers to claim from singer_source_refs.
+        maxTargets:
+          type: integer
+          minimum: 1
+          maximum: 1000
+        limit_per_singer:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 20
+          description: Maximum songs or albums fetched for each singer.
+        limitPerSinger:
+          type: integer
+          minimum: 1
+          maximum: 500
+        include_stale_running:
+          type: boolean
+          default: false
+          description: Whether to reclaim targets stuck in status 1 longer than stale_after_seconds.
+        stale_after_seconds:
+          type: integer
+          minimum: 60
+          maximum: 86400
+          default: 3600
+    TaskResponse:
+      type: object
+      required: [batch_id, message, target_count, limit]
+      properties:
+        batch_id:
+          type: string
+          description: Background task ID used for progress polling and stop requests.
+        message:
+          type: string
+        target:
+          type: string
+          description: Only returned by album backfill endpoints.
+        target_count:
+          type: integer
+          minimum: 0
+        claimed_count:
+          type: integer
+          minimum: 0
+          description: Only returned by backfill retry endpoints.
+        skipped_count:
+          type: integer
+          minimum: 0
+          description: Explicit IDs skipped because they do not exist or are not in claimable status.
+        success_count:
+          type: integer
+          minimum: 0
+        failed_count:
+          type: integer
+          minimum: 0
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/BackfillActionItem'
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 500
+        start_index:
+          type: integer
+          description: Only returned by list endpoints.
+        end_index:
+          type: integer
+          description: Only returned by list endpoints.
+    StopResponse:
+      type: object
+      required: [batch_id, message]
+      properties:
+        batch_id:
+          type: string
+        message:
+          type: string
+          example: migu task stop requested
+    Progress:
+      type: object
+      required: [batch_id, state, total, processed, success, failed, duration_seconds, percent]
+      properties:
+        batch_id:
+          type: string
+        state:
+          type: string
+          enum: [Pending, Running, Completed, Failed, Cancelled]
+        total:
+          type: integer
+          minimum: 0
+        processed:
+          type: integer
+          minimum: 0
+        success:
+          type: integer
+          minimum: 0
+        failed:
+          type: integer
+          minimum: 0
+        current_item:
+          type: string
+        recent_errors:
+          type: array
+          items:
+            type: string
+        duration_seconds:
+          type: integer
+          minimum: 0
+        percent:
+          type: number
+          minimum: 0
+          maximum: 100
+    BatchTask:
+      type: object
+      required: [batch_id, type, state, target_count, processed, success, failed, created_at, duration_seconds]
+      properties:
+        batch_id:
+          type: string
+        source:
+          type: string
+          example: migu
+        type:
+          type: string
+          enum: [singerIndex, singerSongs, singerAlbums, singerSongsFromDb, singerAlbumsFromDb, albumDetails, albumSongs]
+        state:
+          type: string
+          enum: [Pending, Running, Completed, Failed, Cancelled]
+        request_params:
+          type: object
+          additionalProperties: true
+        settings_snapshot:
+          type: object
+          additionalProperties: true
+        limit:
+          type: integer
+          minimum: 0
+        target_count:
+          type: integer
+          minimum: 0
+        processed:
+          type: integer
+          minimum: 0
+        success:
+          type: integer
+          minimum: 0
+        failed:
+          type: integer
+          minimum: 0
+        cancel_requested:
+          type: boolean
+        last_error:
+          type: string
+        created_at:
+          type: integer
+          minimum: 0
+        started_at:
+          type: integer
+          nullable: true
+          minimum: 0
+        finished_at:
+          type: integer
+          nullable: true
+          minimum: 0
+        updated_at:
+          type: integer
+          minimum: 0
+        archived_at:
+          type: integer
+          nullable: true
+          minimum: 0
+        archived_reason:
+          type: string
+          nullable: true
+        parent_batch_id:
+          type: string
+          nullable: true
+        duration_seconds:
+          type: integer
+          minimum: 0
+    BatchTaskPage:
+      type: object
+      required: [items, page, page_size, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/BatchTask'
+        page:
+          type: integer
+          minimum: 1
+        page_size:
+          type: integer
+          minimum: 1
+        total:
+          type: integer
+          minimum: 0
+    BatchTaskItem:
+      type: object
+      required: [batch_id, item_index, item_key, item_type, state]
+      properties:
+        batch_id:
+          type: string
+        item_index:
+          type: integer
+          minimum: 0
+        item_key:
+          type: string
+        item_type:
+          type: string
+        item_label:
+          type: string
+        source:
+          type: string
+          example: migu
+        source_singer_id:
+          type: string
+        source_album_id:
+          type: string
+        source_song_id:
+          type: string
+        state:
+          type: string
+          enum: [Pending, Running, Completed, Failed, Cancelled]
+        retry_count:
+          type: integer
+          minimum: 0
+        written_count:
+          type: integer
+          minimum: 0
+        error_category:
+          type: string
+          enum: [network, parse, persistence, copyright, resource, invalid_target, timeout, unknown, ""]
+        result_code:
+          type: string
+          enum: [ok, network_failed, parse_failed, persist_failed, invalid_target, timeout, partial_completed, failed, ""]
+        started_at:
+          type: integer
+          nullable: true
+          minimum: 0
+        finished_at:
+          type: integer
+          nullable: true
+          minimum: 0
+        last_error:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: integer
+          minimum: 0
+        updated_at:
+          type: integer
+          minimum: 0
+    BatchTaskItemPage:
+      type: object
+      required: [items, page, page_size, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/BatchTaskItem'
+        page:
+          type: integer
+          minimum: 1
+        page_size:
+          type: integer
+          minimum: 1
+        total:
+          type: integer
+          minimum: 0
+    BatchTaskEvent:
+      type: object
+      required: [batch_id, event_type, message, created_at]
+      properties:
+        batch_id:
+          type: string
+        item_index:
+          type: integer
+          nullable: true
+          minimum: 0
+        event_type:
+          type: string
+        message:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: integer
+          minimum: 0
+    BatchTaskEventPage:
+      type: object
+      required: [items, page, page_size, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/BatchTaskEvent'
+        page:
+          type: integer
+          minimum: 1
+        page_size:
+          type: integer
+          minimum: 1
+        total:
+          type: integer
+          minimum: 0
+    DistributionEntry:
+      type: object
+      required: [key, count]
+      properties:
+        key: { type: string }
+        count: { type: integer, minimum: 0 }
+    TaskSummary:
+      type: object
+      required: [state_distribution, failure_task_types, running_count, generated_at]
+      properties:
+        state_distribution:
+          type: array
+          items:
+            $ref: '#/components/schemas/DistributionEntry'
+        failure_task_types:
+          type: array
+          items:
+            $ref: '#/components/schemas/DistributionEntry'
+        latest_success:
+          nullable: true
+          oneOf:
+            - $ref: '#/components/schemas/BatchTask'
+        latest_failed:
+          nullable: true
+          oneOf:
+            - $ref: '#/components/schemas/BatchTask'
+        running_count: { type: integer, minimum: 0 }
+        oldest_stale_running_at: { nullable: true, type: integer, minimum: 0 }
+        generated_at: { type: integer, minimum: 0 }
+    BatchGovernanceRequest:
+      type: object
+      description: Create a new batch from previous batch items, or archive the old batch. Old batches are never rerun in place.
+      properties:
+        mode:
+          type: string
+          enum: [all, failed]
+          default: failed
+        state:
+          oneOf:
+            - type: string
+            - type: array
+              items: { type: string }
+        states:
+          type: array
+          items: { type: string }
+        error_category:
+          type: string
+          enum: [network, parse, persistence, copyright, resource, invalid_target, timeout, unknown, ""]
+        result_code:
+          type: string
+          enum: [ok, network_failed, parse_failed, persist_failed, invalid_target, timeout, partial_completed, failed, ""]
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          default: 50
+        limit_per_target:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 50
+        reason:
+          type: string
+          maxLength: 512
+    BatchGovernanceItem:
+      type: object
+      required: [source_id, name, status, reason]
+      properties:
+        source_id: { type: string }
+        name: { type: string }
+        status: { type: string }
+        reason: { type: string }
+    BatchGovernanceResponse:
+      type: object
+      required: [batch_id, claimed_count, success_count, failed_count, skipped_count, items]
+      properties:
+        batch_id: { nullable: true, type: string }
+        claimed_count: { type: integer, minimum: 0 }
+        success_count: { type: integer, minimum: 0 }
+        failed_count: { type: integer, minimum: 0 }
+        skipped_count: { type: integer, minimum: 0 }
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/BatchGovernanceItem'
+    BatchArchiveResponse:
+      type: object
+      required: [batch_id, archived]
+      properties:
+        batch_id: { type: string }
+        archived: { type: boolean }
+    StatusDistribution:
+      type: object
+      description: Status-code keyed count map. Sync states use 0 pending, 1 running, 2 completed, 3 failed, 4 partial. Resource states use 0 pending, 1 running, 2 completed, 3 failed, 4 skipped.
+      additionalProperties:
+        type: integer
+        minimum: 0
+    Overview:
+      type: object
+      required: [singers, singer_sources, songs, song_sources, albums, album_sources, album_detail_sync, album_song_sync, resource_status]
+      properties:
+        singers:
+          type: integer
+          minimum: 0
+        singer_sources:
+          type: integer
+          minimum: 0
+        songs:
+          type: integer
+          minimum: 0
+        song_sources:
+          type: integer
+          minimum: 0
+        albums:
+          type: integer
+          minimum: 0
+        album_sources:
+          type: integer
+          minimum: 0
+        singer_song_sync:
+          $ref: '#/components/schemas/StatusDistribution'
+        singer_album_sync:
+          $ref: '#/components/schemas/StatusDistribution'
+        album_detail_sync:
+          $ref: '#/components/schemas/StatusDistribution'
+        album_song_sync:
+          $ref: '#/components/schemas/StatusDistribution'
+        resource_status:
+          $ref: '#/components/schemas/StatusDistribution'
+    GovernanceEvent:
+      type: object
+      required: [event_id, source, action, target_type, target_id, created_at]
+      properties:
+        event_id: { type: integer, minimum: 0 }
+        source: { type: string, enum: [migu] }
+        action: { type: string }
+        target_type: { type: string }
+        target_id: { type: string }
+        batch_id: { nullable: true, type: string }
+        before_status: { nullable: true, type: string }
+        after_status: { nullable: true, type: string }
+        result_code: { nullable: true, type: string }
+        error_category: { nullable: true, type: string }
+        reason: { nullable: true, type: string }
+        payload:
+          type: object
+          additionalProperties: true
+        created_at: { type: integer, minimum: 0 }
+    GovernanceEventPage:
+      type: object
+      required: [items, page, page_size, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/GovernanceEvent'
+        page: { type: integer, minimum: 1 }
+        page_size: { type: integer, minimum: 1, maximum: 200 }
+        total: { type: integer, minimum: 0 }
+    BatchControlRequest:
+      type: object
+      required: [batch_id]
+      properties:
+        batch_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+    SettingsUpdate:
+      type: object
+      description: Hot-updatable scheduling settings. At least one mutable field is required.
+      properties:
+        max_batch_concurrency:
+          type: integer
+          minimum: 1
+          maximum: 128
+        maxBatchConcurrency:
+          type: integer
+          minimum: 1
+          maximum: 128
+        max_page_concurrency:
+          type: integer
+          minimum: 1
+          maximum: 128
+        maxPageConcurrency:
+          type: integer
+          minimum: 1
+          maximum: 128
+        max_retries:
+          type: integer
+          minimum: 0
+          maximum: 10
+        maxRetries:
+          type: integer
+          minimum: 0
+          maximum: 10
+        task_timeout_ms:
+          type: integer
+          minimum: 1000
+          maximum: 86400000
+        taskTimeoutMs:
+          type: integer
+          minimum: 1000
+          maximum: 86400000
+        resource_download_concurrency:
+          type: integer
+          minimum: 1
+          maximum: 32
+        resourceDownloadConcurrency:
+          type: integer
+          minimum: 1
+          maximum: 32
+        resource_download_retries:
+          type: integer
+          minimum: 0
+          maximum: 5
+        resourceDownloadRetries:
+          type: integer
+          minimum: 0
+          maximum: 5
+        resource_download_timeout_ms:
+          type: integer
+          minimum: 10000
+          maximum: 600000
+        resourceDownloadTimeoutMs:
+          type: integer
+          minimum: 10000
+          maximum: 600000
+        pacmtoken_refresh_interval_seconds:
+          type: integer
+          minimum: 0
+          maximum: 3600
+        pacmtokenRefreshIntervalSeconds:
+          type: integer
+          minimum: 0
+          maximum: 3600
+        auto_refresh_pacmtoken:
+          type: boolean
+        autoRefreshPacmtoken:
+          type: boolean
+        refresh_pacmtoken_on_440013:
+          type: boolean
+        refreshPacmtokenOn440013:
+          type: boolean
+    SettingsSnapshot:
+      type: object
+      required: [mutable, readonly]
+      properties:
+        mutable:
+          type: object
+          properties:
+            max_batch_concurrency:
+              type: integer
+            max_page_concurrency:
+              type: integer
+            max_retries:
+              type: integer
+            task_timeout_ms:
+              type: integer
+            resource_download_concurrency:
+              type: integer
+            resource_download_retries:
+              type: integer
+            resource_download_timeout_ms:
+              type: integer
+            pacmtoken_refresh_interval_seconds:
+              type: integer
+            auto_refresh_pacmtoken:
+              type: boolean
+            refresh_pacmtoken_on_440013:
+              type: boolean
+        readonly:
+          type: object
+          properties:
+            http_worker_threads:
+              type: integer
+            async_worker_threads:
+              type: integer
+            resource_worker_threads:
+              type: integer
+            parse_worker_threads:
+              type: integer
+            persistence_worker_threads:
+              type: integer
+            outbound_http_io_threads:
+              type: integer
+            mysql_io_threads:
+              type: integer
+            mysql_max_pool_size:
+              type: integer
+            persistence_backend:
+              type: string
+        notes:
+          type: object
+          additionalProperties:
+            type: string
+    PacmtokenRefreshRequest:
+      type: object
+      description: Refresh or validate a caller-provided Migu pacmtoken. The first call must provide pacmtoken or a Cookie string containing pacmtoken. Later calls may omit the body to reuse the token stored in backend runtime memory. The backend does not read Migu Cookie environment variables and does not persist the token.
+      properties:
+        pacmtoken:
+          type: string
+          maxLength: 8192
+          description: Current raw pacmtoken. A full Cookie string containing pacmtoken is also accepted, but cookie is preferred for full Cookie input.
+        cookie:
+          type: string
+          maxLength: 8192
+          description: Optional full Cookie string copied from an authenticated browser session; pacmtoken is extracted server-side.
+        store:
+          type: boolean
+          default: true
+          description: Whether to store the successful token in backend runtime memory for subsequent refresh calls and resource processing.
+        update_runtime:
+          type: boolean
+          description: Alias of store; kept for frontend compatibility.
+      example:
+        pacmtoken: current-pacmtoken
+        store: true
+    PacmtokenRefreshResponse:
+      type: object
+      description: Refresh result. The pacmtoken value is returned only so the frontend timer can keep its local state in sync; do not log it.
+      required: [success, refreshed, pacmtoken, pacmtoken_length, updated_at]
+      properties:
+        success:
+          type: boolean
+        refreshed:
+          type: boolean
+          description: True when checkPacMtoken returned a different token.
+        pacmtoken:
+          type: string
+          description: Token returned for frontend timer state. Do not log this value.
+        pacmtoken_length:
+          type: integer
+          minimum: 0
+        upstream_status:
+          nullable: true
+          type: integer
+        updated_at:
+          type: integer
+          minimum: 0
+        message:
+          type: string
+      example:
+        success: true
+        refreshed: true
+        pacmtoken: new-pacmtoken
+        pacmtoken_length: 56
+        upstream_status: 200
+        updated_at: 1779370000
+        message: migu pacmtoken refreshed
+    PacmtokenStateResponse:
+      type: object
+      description: Runtime pacmtoken state without exposing the token value.
+      required: [configured, has_pacmtoken, pacmtoken_length, updated_at]
+      properties:
+        configured:
+          type: boolean
+        has_pacmtoken:
+          type: boolean
+        pacmtoken_length:
+          type: integer
+          minimum: 0
+        updated_at:
+          nullable: true
+          type: integer
+          minimum: 0
+    PacmtokenCurrentResponse:
+      type: object
+      description: Runtime pacmtoken current value for explicit frontend sync. Do not log this response body.
+      required: [configured, has_pacmtoken, pacmtoken_length, updated_at, pacmtoken]
+      properties:
+        configured:
+          type: boolean
+        has_pacmtoken:
+          type: boolean
+        pacmtoken_length:
+          type: integer
+          minimum: 0
+        updated_at:
+          nullable: true
+          type: integer
+          minimum: 0
+        pacmtoken:
+          type: string
+          description: Current runtime token; never persisted by the backend.
+    HealthResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          example: ok
