@@ -1,0 +1,129 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 21,
+    "patch": 0
+  },
+
+  "configurePresets": [
+    {
+      "name": "msvc-vcpkg",
+      "displayName": "msvc + vcpkg",
+      "description": "MSVC toolchain with vcpkg (Debug)",
+
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/msvc-debug",
+
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+
+        "CMAKE_CXX_COMPILER": "cl.exe",
+        "CMAKE_LINKER": "link.exe",
+
+        "CMAKE_TOOLCHAIN_FILE": "D:/curl/vcpkg/scripts/buildsystems/vcpkg.cmake",
+
+        "VCPKG_TARGET_TRIPLET": "x64-windows",
+
+        "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreadedDebugDLL",
+
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    }
+  ],
+
+  "buildPresets": [
+    {
+      "name": "msvc-vcpkg-debug",
+      "displayName": "Build (msvc + vcpkg)",
+      "configurePreset": "msvc-vcpkg"
+    },
+    {
+      "name": "msvc-vcpkg-debug-demo",
+      "displayName": "Build demo service (msvc + vcpkg)",
+      "configurePreset": "msvc-vcpkg",
+      "targets": [
+        "demo"
+      ]
+    },
+    {
+      "name": "msvc-vcpkg-debug-migu-ingestion-test",
+      "displayName": "Build Migu ingestion test (msvc + vcpkg)",
+      "configurePreset": "msvc-vcpkg",
+      "targets": [
+        "MiguSingerSongIngestionTest"
+      ]
+    },
+    {
+      "name": "msvc-vcpkg-debug-migu-singer-index-ingestion-test",
+      "displayName": "Build Migu singer index ingestion test (msvc + vcpkg)",
+      "configurePreset": "msvc-vcpkg",
+      "targets": [
+        "MiguSingerIndexIngestionTest"
+      ]
+    },
+    {
+      "name": "msvc-vcpkg-debug-migu-singer-album-ingestion-test",
+      "displayName": "Build Migu singer album ingestion test (msvc + vcpkg)",
+      "configurePreset": "msvc-vcpkg",
+      "targets": [
+        "MiguSingerAlbumIngestionTest"
+      ]
+    },
+    {
+      "name": "msvc-vcpkg-debug-migu-provider-test",
+      "displayName": "Build Migu provider test (msvc + vcpkg)",
+      "configurePreset": "msvc-vcpkg",
+      "targets": [
+        "MiguProviderTest"
+      ]
+    },
+    {
+      "name": "msvc-vcpkg-debug-migu-singer-index-parser-test",
+      "displayName": "Build Migu singer index parser test (msvc + vcpkg)",
+      "configurePreset": "msvc-vcpkg",
+      "targets": [
+        "MiguSingerIndexParserTest"
+      ]
+    },
+    {
+      "name": "msvc-vcpkg-debug-migu-singer-index-ingestion-flow-test",
+      "displayName": "Build Migu singer index ingestion flow test (msvc + vcpkg)",
+      "configurePreset": "msvc-vcpkg",
+      "targets": [
+        "MiguSingerIndexIngestionFlowTest"
+      ]
+    },
+    {
+      "name": "msvc-vcpkg-debug-migu-album-source-parser-test",
+      "displayName": "Build Migu album source parser test (msvc + vcpkg)",
+      "configurePreset": "msvc-vcpkg",
+      "targets": [
+        "MiguAlbumSourceParserTest"
+      ]
+    },
+    {
+      "name": "msvc-vcpkg-debug-migu-singer-album-ingestion-flow-test",
+      "displayName": "Build Migu singer album ingestion flow test (msvc + vcpkg)",
+      "configurePreset": "msvc-vcpkg",
+      "targets": [
+        "MiguSingerAlbumIngestionFlowTest"
+      ]
+    },
+    {
+      "name": "msvc-vcpkg-debug-migu-song-relation-integration-test",
+      "displayName": "Build Migu song relation integration test (msvc + vcpkg)",
+      "configurePreset": "msvc-vcpkg",
+      "targets": [
+        "MiguSongRelationIntegrationTest"
+      ]
+    }
+  ],
+
+  "testPresets": [
+    {
+      "name": "test-msvc",
+      "configurePreset": "msvc-vcpkg"
+    }
+  ]
+}

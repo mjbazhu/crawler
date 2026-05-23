@@ -1,0 +1,10 @@
+.vscode
+build
+data
+others
+uploads
+.env
+.env.*
+!.env.example
+.clang-format
+.clangd
