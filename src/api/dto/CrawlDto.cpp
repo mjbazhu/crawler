@@ -19,11 +19,11 @@ constexpr int kDefaultLimit = 20;
 constexpr int kMaxLimit = 500;
 constexpr std::size_t kMaxTargets = 1000;
 
-// 解析 limit，未提供时使用默认值。
-int parseLimit(const json &body)
+// 解析 limit，未提供时使用调用方默认值。
+int parseLimit(const json &body, int fallback = kDefaultLimit)
 {
     if (!body.contains("limit") || !body["limit"].is_number_integer()) {
-        return kDefaultLimit;
+        return fallback;
     }
     return body["limit"].get<int>();
 }
@@ -194,8 +194,8 @@ bool isValidSingerTab(const std::string &tab)
     return std::find(std::begin(kTabs), std::end(kTabs), tab) != std::end(kTabs);
 }
 
-// 校验通用 limit 和区间。
-std::optional<std::string> validateSelection(std::size_t size, int limit, int start_index, std::optional<int> end_index)
+// 校验目标数量和区间边界。
+std::optional<std::string> validateSelectionRange(std::size_t size, int start_index, std::optional<int> end_index)
 {
     if (size == 0) {
         return "targets cannot be empty";
@@ -203,14 +203,47 @@ std::optional<std::string> validateSelection(std::size_t size, int limit, int st
     if (size > kMaxTargets) {
         return "targets cannot exceed 1000 items";
     }
-    if (limit <= 0 || limit > kMaxLimit) {
-        return "limit must be between 1 and 500";
-    }
     if (start_index < 0 || start_index >= static_cast<int>(size)) {
         return "start_index must point to an existing target";
     }
     if (end_index && (*end_index <= start_index || *end_index > static_cast<int>(size))) {
         return "end_index must be greater than start_index and at most targets.size";
+    }
+    return std::nullopt;
+}
+
+// 校验通用 limit 和区间。
+std::optional<std::string> validateSelection(std::size_t size, int limit, int start_index, std::optional<int> end_index)
+{
+    if (auto error = validateSelectionRange(size, start_index, end_index)) {
+        return error;
+    }
+    if (limit <= 0 || limit > kMaxLimit) {
+        return "limit must be between 1 and 500";
+    }
+    return std::nullopt;
+}
+
+// 校验歌手分类入口，limit=0 表示当前分类全部歌手。
+std::optional<std::string> validateSingerIndexSelection(std::size_t size, int limit, int start_index, std::optional<int> end_index)
+{
+    if (auto error = validateSelectionRange(size, start_index, end_index)) {
+        return error;
+    }
+    if (limit < 0) {
+        return "limit must be 0 or greater";
+    }
+    return std::nullopt;
+}
+
+// 校验歌手 ID 采集入口，limit=0 表示每个歌手全部歌曲或专辑。
+std::optional<std::string> validateSingerIdsSelection(std::size_t size, int limit, int start_index, std::optional<int> end_index)
+{
+    if (auto error = validateSelectionRange(size, start_index, end_index)) {
+        return error;
+    }
+    if (limit < 0 || limit > kMaxLimit) {
+        return "limit must be between 0 and 500";
     }
     return std::nullopt;
 }
@@ -263,7 +296,7 @@ std::optional<MiguSingerIndexCrawlRequestDto> MiguSingerIndexCrawlRequestDto::fr
 
 std::optional<std::string> MiguSingerIndexCrawlRequestDto::validate() const
 {
-    if (auto error = validateSelection(tabs.size(), limit, start_index, end_index)) {
+    if (auto error = validateSingerIndexSelection(tabs.size(), limit, start_index, end_index)) {
         return error;
     }
     const auto invalid = std::find_if(tabs.begin(), tabs.end(), [](const std::string &tab) {
@@ -293,7 +326,7 @@ std::optional<MiguSingerIdsCrawlRequestDto> MiguSingerIdsCrawlRequestDto::fromRe
 
         auto body = json::parse(req.body);
         MiguSingerIdsCrawlRequestDto dto;
-        dto.limit = parseLimit(body);
+        dto.limit = parseLimit(body, 0);
         dto.start_index = parseIntField(body, {"start_index", "startPosition", "start"}, 0);
         dto.end_index = parseOptionalIntField(body, {"end_index", "endPosition", "end"});
         dto.singer_ids = firstIdArrayField(body, {"singer_ids", "singerIds"});
@@ -310,7 +343,7 @@ std::optional<MiguSingerIdsCrawlRequestDto> MiguSingerIdsCrawlRequestDto::fromRe
 
 std::optional<std::string> MiguSingerIdsCrawlRequestDto::validate() const
 {
-    return validateSelection(singer_ids.size(), limit, start_index, end_index);
+    return validateSingerIdsSelection(singer_ids.size(), limit, start_index, end_index);
 }
 
 std::vector<std::string> MiguSingerIdsCrawlRequestDto::selectedSongTargets() const

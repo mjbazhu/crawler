@@ -62,6 +62,9 @@ public:
     // 获取歌手分类列表并保存歌手来源参数。
     bool crawlSingerIndexAndSave(std::string tab, int limit);
 
+    // 获取歌手分类列表并返回实际解析保存数量。
+    application::model::SingerCollectionResult crawlSingerIndexAndSaveResult(std::string tab, int limit);
+
     // 获取指定歌手专辑分页并保存专辑来源参数。
     bool crawlSingerAlbumsAndSave(std::uint64_t singer_id, int limit, int max_page_concurrency);
 

@@ -58,13 +58,17 @@ void collectSongSources(const nlohmann::json &node, std::vector<application::mod
 // 从 Migu 歌手卡片提取后续写入所需字段。
 std::optional<application::model::SingerSourceMetadata> parseSingerSourceFromItem(
     const nlohmann::json &item,
-    const domain::CountryGender &singer_class
+    const domain::CountryGender &singer_class,
+    std::string_view tab,
+    std::uint32_t index_order
 );
 
 // 从对象、数组和歌手列表结构中收集歌手来源元数据。
 void collectSingerSources(
     const nlohmann::json &node,
     const domain::CountryGender &singer_class,
+    std::string_view tab,
+    std::uint32_t &next_index_order,
     std::vector<application::model::SingerSourceMetadata> &singers
 );
 

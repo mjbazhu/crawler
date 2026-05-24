@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <future>
+#include <set>
 #include <utility>
 
 namespace orchestrator::modules::crawler::application::use_cases {
@@ -58,6 +59,33 @@ void markSeedSinger(std::vector<application::model::SongSourceMetadata> &songs, 
     }
 }
 
+// 计算歌手分类本次会写入的唯一平台来源数量，避免接口重复项干扰批次进度。
+int singerIndexUniqueCount(const std::vector<application::model::SingerSourceMetadata> &singers, int limit)
+{
+    const int effective_limit = limit < 0 ? kWorkflowDefaultLimit : limit;
+    const std::size_t max_count = effective_limit == 0 ? singers.size() : (std::min)(singers.size(), static_cast<std::size_t>(effective_limit));
+    std::set<std::string> unique_keys;
+    for (std::size_t index = 0; index < max_count; ++index) {
+        const auto &singer = singers[index];
+        if (!singer.source.empty() && !singer.source_singer_id.empty() && !singer.name.empty()) {
+            unique_keys.insert(singer.source + "\n" + singer.source_singer_id);
+        }
+    }
+    return static_cast<int>(unique_keys.size());
+}
+
+// 歌手歌曲/专辑采集 limit=0 表示分页保护范围内全部获取，正数仍限制到 500。
+int normalizeSingerIdsWorkflowLimit(int limit)
+{
+    if (limit < 0) {
+        return kWorkflowDefaultLimit;
+    }
+    if (limit == 0) {
+        return 0;
+    }
+    return (std::min)(limit, 500);
+}
+
 } // namespace
 
 SingerCatalogWorkflow::SingerCatalogWorkflow(
@@ -84,7 +112,7 @@ application::model::SingerCollectionResult SingerCatalogWorkflow::crawlSingerSon
         return {false, false, 0, "singer song workflow is not configured"};
     }
 
-    const int normalized_limit = normalizeWorkflowLimit(limit);
+    const int normalized_limit = normalizeSingerIdsWorkflowLimit(limit);
     const int window = workflowPageWindow(max_page_concurrency);
     std::size_t stored_count = 0;
     bool stop_paging = false;
@@ -121,9 +149,10 @@ application::model::SingerCollectionResult SingerCatalogWorkflow::crawlSingerSon
                 fetch_failed = true;
                 should_stop = true;
             } else {
-                const std::size_t remaining = static_cast<std::size_t>(normalized_limit) - stored_count;
+                const std::size_t remaining = normalized_limit == 0 ? page_result.song_sources.size() : static_cast<std::size_t>(normalized_limit) - stored_count;
                 if (!page_result.song_sources.empty() && remaining > 0) {
-                    const bool saved = persistence_->saveSongSources(page_result.song_sources, static_cast<int>(remaining));
+                    const int save_limit = normalized_limit == 0 ? 0 : static_cast<int>(remaining);
+                    const bool saved = persistence_->saveSongSources(page_result.song_sources, save_limit);
                     if (saved) {
                         stored_count += (std::min)(remaining, page_result.song_sources.size());
                     } else {
@@ -157,17 +186,33 @@ application::model::SingerCollectionResult SingerCatalogWorkflow::crawlSingerSon
 
 bool SingerCatalogWorkflow::crawlSingerIndexAndSave(std::string tab, int limit)
 {
+    const auto result = crawlSingerIndexAndSaveResult(std::move(tab), limit);
+    return result.success && result.written_count > 0;
+}
+
+application::model::SingerCollectionResult SingerCatalogWorkflow::crawlSingerIndexAndSaveResult(std::string tab, int limit)
+{
     if (!singer_catalog_provider_ || !parser_ || !persistence_ || tab.empty()) {
-        return false;
+        return {false, false, 0, "singer index workflow is not configured"};
     }
 
     auto response = singer_catalog_provider_->fetchSingerIndexPage(tab);
     if (!response) {
-        return false;
+        return {false, false, 0, "failed to fetch singer index page"};
     }
 
     auto singer_sources = parser_->parseSingerSources(std::move(response->body), tab);
-    return persistence_->saveSingerSources(singer_sources, normalizeWorkflowLimit(limit));
+    const int singer_index_limit = limit < 0 ? kWorkflowDefaultLimit : limit;
+    const int unique_count = singerIndexUniqueCount(singer_sources, singer_index_limit);
+    if (unique_count == 0) {
+        return {false, false, 0, "singer index page did not contain valid singer sources"};
+    }
+
+    const bool saved = persistence_->saveSingerSources(singer_sources, singer_index_limit);
+    if (!saved) {
+        return {false, false, unique_count, "failed to save singer sources"};
+    }
+    return {true, false, unique_count, {}};
 }
 
 bool SingerCatalogWorkflow::crawlSingerAlbumsAndSave(std::uint64_t singer_id, int limit, int max_page_concurrency)
@@ -182,7 +227,7 @@ application::model::SingerCollectionResult SingerCatalogWorkflow::crawlSingerAlb
         return {false, false, 0, "singer album workflow is not configured"};
     }
 
-    const int normalized_limit = normalizeWorkflowLimit(limit);
+    const int normalized_limit = normalizeSingerIdsWorkflowLimit(limit);
     const int window = workflowPageWindow(max_page_concurrency);
     const std::string source_artist_id = std::to_string(singer_id);
     std::vector<application::model::AlbumSourceMetadata> collected;

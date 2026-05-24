@@ -2,6 +2,7 @@
 
 #include "crawler/domain/music/model/Singer.h"
 
+#include <cstdint>
 #include <string>
 
 namespace orchestrator::modules::crawler::application::model {
@@ -25,6 +26,8 @@ struct SingerSourceMetadata {
     std::string source_metric;     // 平台热度、播放量或数量原始值
     std::string source_country;    // 由 tab 推导的平台地区，例如 华语、欧美、日韩
     std::string avatar_url;        // 平台头像地址
+    std::string source_index_tab;  // 平台歌手分类 tab，例如 huayu-nan
+    std::uint32_t source_index_order = 0; // 歌手在当前分类 tab 中的顺序，从 1 开始
 };
 
 } // namespace orchestrator::modules::crawler::application::model

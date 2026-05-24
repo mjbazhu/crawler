@@ -5,8 +5,10 @@
 
 #include <boost/asio/awaitable.hpp>
 
+#include <cstddef>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace orchestrator::modules::crawler::infrastructure::music::persistence::mysql {
@@ -32,10 +34,19 @@ public:
     // 同步 port 入口：内部桥接到 MySQL 协程写入并阻塞等待结果。
     bool saveBatch(const std::vector<application::model::SingerSourceMetadata> &singers) override;
 
-    // 协程式批量保存歌手来源，单批次使用同一事务。
+    // 协程式批量保存歌手来源，内部会分片事务写入以降低并发锁冲突。
     boost::asio::awaitable<bool> coSaveBatch(std::vector<application::model::SingerSourceMetadata> singers);
 
 private:
+    // 保存一个小分片，内部独立事务和短锁，避免大批量并发写入死锁。
+    boost::asio::awaitable<bool> coSaveChunk(
+        const std::vector<application::model::SingerSourceMetadata> &singers,
+        std::size_t first,
+        std::size_t last,
+        int max_attempts,
+        std::string_view context
+    );
+
     std::shared_ptr<MySqlConnectionPool> pool_; // 线程安全连接池
 
     std::vector<std::string> begin_sql_;         // 开启事务语句

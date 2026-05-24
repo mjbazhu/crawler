@@ -16,7 +16,7 @@ namespace dto {
 // Migu 歌手分类采集请求 DTO，支持单 tab 或 tab 数组。
 struct MiguSingerIndexCrawlRequestDto {
     std::vector<std::string> tabs; // 歌手分类 tab 列表
-    int limit = 20;                // 每个 tab 最大采集数量
+    int limit = 20;                // 每个 tab 最大采集数量，0 表示当前分类全部
     int start_index = 0;           // 选中区间起点，闭区间
     std::optional<int> end_index;  // 选中区间终点，开区间
 
@@ -33,7 +33,7 @@ struct MiguSingerIndexCrawlRequestDto {
 // Migu 歌手 ID 采集请求 DTO，用于歌手歌曲和歌手专辑列表。
 struct MiguSingerIdsCrawlRequestDto {
     std::vector<std::uint64_t> singer_ids; // Migu 歌手 ID 列表
-    int limit = 20;                        // 每个歌手最大采集数量
+    int limit = 0;                         // 每个歌手最大采集数量，0 表示全部
     int start_index = 0;                   // 选中区间起点，闭区间
     std::optional<int> end_index;          // 选中区间终点，开区间
 

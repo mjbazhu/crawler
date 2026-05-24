@@ -86,6 +86,11 @@ bool MusicCollectionWorkflow::crawlSingerIndexAndSave(std::string tab, int limit
     return singer_workflow_ ? singer_workflow_->crawlSingerIndexAndSave(std::move(tab), limit) : false;
 }
 
+application::model::SingerCollectionResult MusicCollectionWorkflow::crawlSingerIndexAndSaveResult(std::string tab, int limit)
+{
+    return singer_workflow_ ? singer_workflow_->crawlSingerIndexAndSaveResult(std::move(tab), limit) : application::model::SingerCollectionResult {false, false, 0, "singer workflow is not configured"};
+}
+
 bool MusicCollectionWorkflow::crawlSingerAlbumsAndSave(std::uint64_t singer_id, int limit, int max_page_concurrency)
 {
     return singer_workflow_ ? singer_workflow_->crawlSingerAlbumsAndSave(singer_id, limit, max_page_concurrency) : false;

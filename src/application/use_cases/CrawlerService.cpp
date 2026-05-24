@@ -45,6 +45,54 @@ int normalizeLimit(int limit)
     return (std::min)(limit, 500);
 }
 
+// 歌手分类采集的 limit=0 表示当前分类全部，正数不做 500 上限截断。
+int normalizeSingerIndexLimit(int limit)
+{
+    return limit < 0 ? kDefaultLimit : limit;
+}
+
+// 歌手歌曲/专辑采集的 limit=0 表示全部，正数仍保留 500 上限。
+int normalizeSingerIdsLimit(int limit)
+{
+    if (limit < 0) {
+        return kDefaultLimit;
+    }
+    if (limit == 0) {
+        return 0;
+    }
+    return (std::min)(limit, 500);
+}
+
+// 判断是否是手动歌手歌曲/专辑批次。
+bool isSingerIdsTaskType(std::string_view task_type)
+{
+    return task_type == "singerSongs" || task_type == "singerAlbums";
+}
+
+// 按批次类型归一化每目标 limit，避免特殊入口被通用规则改成 20。
+int normalizeLimitForTask(int limit, std::string_view task_type)
+{
+    if (task_type == "singerIndex") {
+        return normalizeSingerIndexLimit(limit);
+    }
+    if (isSingerIdsTaskType(task_type)) {
+        return normalizeSingerIdsLimit(limit);
+    }
+    return normalizeLimit(limit);
+}
+
+// 按解析后的目标类型归一化 limit。
+int normalizeLimitForTarget(int limit, CrawlTargetKind kind)
+{
+    if (kind == CrawlTargetKind::SingerIndex) {
+        return normalizeSingerIndexLimit(limit);
+    }
+    if (kind == CrawlTargetKind::SingerSongs || kind == CrawlTargetKind::SingerAlbums) {
+        return normalizeSingerIdsLimit(limit);
+    }
+    return normalizeLimit(limit);
+}
+
 // 归一化从库认领目标数量。
 std::size_t normalizeTargetLimit(std::size_t limit)
 {
@@ -618,17 +666,7 @@ private:
         if (event_type.find("Failed") != std::string_view::npos || event_type.find("Rejected") != std::string_view::npos || event_type.find("Restricted") != std::string_view::npos || event_type.find("ValidationFailed") != std::string_view::npos) {
             return application::ports::DiagnosticsLevel::Warn;
         }
-        if (event_type == "batchStarted" ||
-            event_type == "batchFinished" ||
-            event_type == "resourceClaimStarted" ||
-            event_type == "resourceClaimCompleted" ||
-            event_type == "resourceClaimEmpty" ||
-            event_type == "itemCompleted" ||
-            event_type == "itemFailed" ||
-            event_type == "resourceDbWritebackCompleted" ||
-            event_type == "resourceFailureWritebackCompleted" ||
-            event_type == "resourceSkipWritebackCompleted" ||
-            event_type == "pacmtokenRefreshed") {
+        if (event_type == "batchStarted" || event_type == "batchFinished" || event_type == "resourceClaimStarted" || event_type == "resourceClaimCompleted" || event_type == "resourceClaimEmpty" || event_type == "itemCompleted" || event_type == "itemFailed" || event_type == "resourceDbWritebackCompleted" || event_type == "resourceFailureWritebackCompleted" || event_type == "resourceSkipWritebackCompleted" || event_type == "pacmtokenRefreshed") {
             return application::ports::DiagnosticsLevel::Info;
         }
         return application::ports::DiagnosticsLevel::Debug;
@@ -645,8 +683,8 @@ private:
 
     // 批次 item 槽位，保证开始和结束事件使用同一 item_index。
     struct ItemSlot {
-        int item_index = 0;                                                        // 批次内序号
-        std::string item_key;                                                      // 批次 item_key
+        int item_index = 0;                                                                  // 批次内序号
+        std::string item_key;                                                                // 批次 item_key
         std::chrono::steady_clock::time_point started_at = std::chrono::steady_clock::now(); // item 开始处理时间
     };
 
@@ -797,17 +835,17 @@ private:
         (void)repository_->updateBatchProgress(batch);
     }
 
-    std::shared_ptr<application::ports::BatchTaskRepository> repository_; // 批次持久化 port
-    application::model::SongResourceClaimQuery query_;                    // 请求快照
-    std::string settings_snapshot_;                                       // 运行设置快照
-    std::shared_ptr<application::ports::DiagnosticsSink> diagnostics_;     // 运行日志诊断 port
-    std::mutex mutex_;                                                    // 保护实时进度计数
-    int next_item_index_ = 0;                                             // 下一个动态 item 序号
-    int processed_count_ = 0;                                             // 已完成 item 数
-    int success_count_ = 0;                                               // 成功或跳过 item 数
-    int failure_count_ = 0;                                               // 失败 item 数
-    std::string last_error_;                                              // 最近失败说明
-    std::unordered_map<std::string, ItemSlot> item_slots_;                // 逻辑键到 item 槽位映射
+    std::shared_ptr<application::ports::BatchTaskRepository> repository_;                       // 批次持久化 port
+    application::model::SongResourceClaimQuery query_;                                          // 请求快照
+    std::string settings_snapshot_;                                                             // 运行设置快照
+    std::shared_ptr<application::ports::DiagnosticsSink> diagnostics_;                          // 运行日志诊断 port
+    std::mutex mutex_;                                                                          // 保护实时进度计数
+    int next_item_index_ = 0;                                                                   // 下一个动态 item 序号
+    int processed_count_ = 0;                                                                   // 已完成 item 数
+    int success_count_ = 0;                                                                     // 成功或跳过 item 数
+    int failure_count_ = 0;                                                                     // 失败 item 数
+    std::string last_error_;                                                                    // 最近失败说明
+    std::unordered_map<std::string, ItemSlot> item_slots_;                                      // 逻辑键到 item 槽位映射
     std::chrono::steady_clock::time_point batch_started_at_ = std::chrono::steady_clock::now(); // 批次开始处理时间
 };
 
@@ -1158,8 +1196,8 @@ bool CrawlerService::searchAndSave(std::string keyword, int limit)
         return false;
     }
 
-    const int normalized_limit = normalizeLimit(limit);
     const auto target = target_dispatcher_.dispatch(keyword);
+    const int normalized_limit = normalizeLimitForTarget(limit, target.kind);
     switch (target.kind) {
     case CrawlTargetKind::Url:
         return workflow_->processUrl(target.text, normalized_limit);
@@ -1274,15 +1312,39 @@ std::string CrawlerService::startBatchAsync(const std::vector<std::string> &targ
         return {};
     }
 
-    const int normalized_limit = normalizeLimit(limit);
     std::string normalized_type = task_type.empty() ? "generic" : std::move(task_type);
+    const int normalized_limit = normalizeLimitForTask(limit, normalized_type);
     auto items = makeTargetItems(targets, normalized_type);
+    const std::string handler_type = normalized_type;
     return startBatchItemsAsync(
         std::move(items),
         normalized_limit,
         std::move(normalized_type),
         std::move(request_params),
-        [this](std::string target, int item_limit) {
+        [this, handler_type](std::string target, int item_limit) {
+            if (handler_type == "singerIndex") {
+                const auto dispatched = target_dispatcher_.dispatch(target);
+                if (dispatched.kind != CrawlTargetKind::SingerIndex || !workflow_) {
+                    return BatchTaskManager::TargetResult {false, 0, "invalid singer index target", "invalid_target", "invalid_target"};
+                }
+                for (int attempt = 0; attempt <= maxRetries(); ++attempt) {
+                    try {
+                        const auto result = workflow_->crawlSingerIndexAndSaveResult(dispatched.text, item_limit);
+                        if (result.success || attempt >= maxRetries()) {
+                            return batchResultFromSingerCollection(result, true);
+                        }
+                    } catch (const std::exception &e) {
+                        if (attempt >= maxRetries()) {
+                            return failureTargetResult(e.what());
+                        }
+                    } catch (...) {
+                        if (attempt >= maxRetries()) {
+                            return failureTargetResult("unknown singer index crawl error");
+                        }
+                    }
+                }
+                return failureTargetResult("singer index crawl failed");
+            }
             return boolTargetResult(searchAndSaveWithRetry(std::move(target), item_limit));
         }
     );
@@ -1575,10 +1637,13 @@ std::string CrawlerService::startBatchItemsAsync(
         return {};
     }
 
+    std::string effective_task_type = task_type.empty() && !items.empty() ? items.front().item_type : std::move(task_type);
+    const int normalized_limit = normalizeLimitForTask(limit, effective_task_type);
+
     return batch_task_manager_->start(
         items,
-        normalizeLimit(limit),
-        task_type.empty() && !items.empty() ? items.front().item_type : std::move(task_type),
+        normalized_limit,
+        std::move(effective_task_type),
         std::move(request_params),
         runtimeSettingsJson(),
         std::move(parent_batch_id),

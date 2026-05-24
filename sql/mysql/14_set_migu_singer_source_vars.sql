@@ -14,4 +14,6 @@ SET
     @source_tag := CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci,
     @source_metric := CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci,
     @source_country := CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci,
-    @avatar_url := CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci;
+    @avatar_url := CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci,
+    @source_index_tab := CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci,
+    @source_index_order := ?;

@@ -6,6 +6,7 @@ SET @now := UNIX_TIMESTAMP();
 SET @name := NULLIF(@name, '');
 SET @normalized_name := COALESCE(NULLIF(@normalized_name, ''), @name);
 SET @source_name_pinyin_value := NULLIF(@source_name_pinyin, '');
+SET @source_index_tab_value := NULLIF(@source_index_tab, '');
 SET @source_singer_id_value := NULLIF(@source_singer_id, '');
 SET @source_item_key_value := COALESCE(
     NULLIF(@source_item_key, ''),
@@ -15,23 +16,6 @@ SET @source_item_key_value := COALESCE(
     END
 );
 
-SET @singer_db_id := NULL;
-SELECT singer_db_id
-INTO @singer_db_id
-FROM singer_source_refs
-WHERE source = @source
-  AND source_item_key = @source_item_key_value
-LIMIT 1;
-
-SET @matched_singer_db_id := NULL;
-SELECT id
-INTO @matched_singer_db_id
-FROM singers
-WHERE normalized_name = @normalized_name
-LIMIT 1;
-
-SET @singer_db_id := COALESCE(@singer_db_id, @matched_singer_db_id);
-
 INSERT INTO singers (
     name,
     normalized_name,
@@ -40,25 +24,31 @@ INSERT INTO singers (
     updated_at,
     status
 )
-SELECT
+VALUES (
     @name,
     @normalized_name,
     @gender,
     @now,
     @now,
     1
-WHERE @singer_db_id IS NULL;
-
-SET @singer_db_id := COALESCE(@singer_db_id, LAST_INSERT_ID());
-
-UPDATE singers
-SET
+)
+ON DUPLICATE KEY UPDATE
+    id = LAST_INSERT_ID(id),
+    name = CASE
+        WHEN name = '' AND VALUES(name) <> '' THEN VALUES(name)
+        ELSE name
+    END,
     gender = CASE
-        WHEN gender = 0 AND @gender <> 0 THEN @gender
+        WHEN gender = 0 AND VALUES(gender) <> 0 THEN VALUES(gender)
         ELSE gender
     END,
-    updated_at = @now
-WHERE id = @singer_db_id;
+    updated_at = VALUES(updated_at),
+    status = CASE
+        WHEN status = 0 THEN 1
+        ELSE status
+    END;
+
+SET @singer_db_id := LAST_INSERT_ID();
 
 INSERT INTO singer_source_refs (
     singer_db_id,
@@ -117,3 +107,28 @@ ON DUPLICATE KEY UPDATE
     updated_at = VALUES(updated_at);
 
 SET @singer_source_ref_id := LAST_INSERT_ID();
+
+INSERT INTO singer_index_memberships (
+    singer_source_ref_id,
+    tab,
+    index_order,
+    source_tag,
+    source_metric,
+    created_at,
+    updated_at
+)
+SELECT
+    @singer_source_ref_id,
+    @source_index_tab_value,
+    COALESCE(@source_index_order, 0),
+    NULLIF(@source_tag, ''),
+    NULLIF(@source_metric, ''),
+    @now,
+    @now
+WHERE @singer_source_ref_id IS NOT NULL
+  AND @source_index_tab_value IS NOT NULL
+ON DUPLICATE KEY UPDATE
+    index_order = VALUES(index_order),
+    source_tag = VALUES(source_tag),
+    source_metric = VALUES(source_metric),
+    updated_at = VALUES(updated_at);

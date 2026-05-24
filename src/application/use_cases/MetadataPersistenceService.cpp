@@ -29,6 +29,28 @@ std::vector<T> limitedCopy(const std::vector<T> &items, int limit)
     return limited;
 }
 
+// 歌手分类入口允许 0 表示全部，正数不做通用 500 上限截断。
+template <typename T>
+std::vector<T> singerIndexLimitedCopy(const std::vector<T> &items, int limit)
+{
+    std::vector<T> limited;
+    const int effective_limit = limit < 0 ? kDefaultLimit : limit;
+    const auto count = effective_limit == 0 ? items.size() : (std::min)(items.size(), static_cast<std::size_t>(effective_limit));
+    limited.reserve(count);
+    limited.insert(limited.end(), items.begin(), items.begin() + static_cast<std::ptrdiff_t>(count));
+    return limited;
+}
+
+// 歌手歌曲/专辑入口允许 workflow 用 0 保存当前已采集集合的全部来源。
+template <typename T>
+std::vector<T> limitedCopyAllowAll(const std::vector<T> &items, int limit)
+{
+    if (limit == 0) {
+        return items;
+    }
+    return limitedCopy(items, limit);
+}
+
 } // namespace
 
 MetadataPersistenceService::MetadataPersistenceService(
@@ -88,7 +110,7 @@ bool MetadataPersistenceService::saveSongSources(const std::vector<application::
     }
 
     auto repository = song_source_repository_;
-    auto limited = limitedCopy(songs, limit);
+    auto limited = limitedCopyAllowAll(songs, limit);
     return persistence_runner_.run<bool>(
         [repository, limited = std::move(limited)]() {
             return repository ? repository->saveBatch(limited) : false;
@@ -105,7 +127,7 @@ bool MetadataPersistenceService::saveSingerSources(const std::vector<application
     }
 
     auto repository = singer_source_repository_;
-    auto limited = limitedCopy(singers, limit);
+    auto limited = singerIndexLimitedCopy(singers, limit);
     return persistence_runner_.run<bool>(
         [repository, limited = std::move(limited)]() {
             return repository ? repository->saveBatch(limited) : false;
@@ -122,7 +144,7 @@ bool MetadataPersistenceService::saveAlbumSources(const std::vector<application:
     }
 
     auto writer = album_source_writer_;
-    auto limited = limitedCopy(albums, limit);
+    auto limited = limitedCopyAllowAll(albums, limit);
     return persistence_runner_.run<bool>(
         [writer, limited = std::move(limited)]() {
             return writer ? writer->saveBatch(limited) : false;
