@@ -1,11 +1,12 @@
 #include "crawler/infrastructure/http/server/DrogonHttpServer.h"
 
+#include "crawler/infrastructure/observability/logging/Logger.h"
+
 #include <drogon/drogon.h>
 
 #include <algorithm>
 #include <exception>
 #include <functional>
-#include <iostream>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -15,6 +16,14 @@
 namespace orchestrator::modules::crawler::infrastructure::http::server {
 
 namespace {
+
+namespace logging = orchestrator::modules::crawler::infrastructure::observability::logging;
+
+// 记录 HTTP server adapter 运行日志，保持控制台和文件输出格式统一。
+void logServer(logging::LogLevel level, std::string_view message)
+{
+    logging::Logger::instance().log(level, "DrogonHttpServer", message);
+}
 
 api::http::HttpRequest toApiRequest(const drogon::HttpRequestPtr &request)
 {
@@ -93,10 +102,10 @@ void dispatchApiHandler(
         try {
             (*response_callback)(toDrogonResponse(handler(std::move(api_request))));
         } catch (const std::exception &e) {
-            std::cerr << "[DrogonHttpServer] Route handler exception: " << e.what() << std::endl;
+            logServer(logging::LogLevel::L_ERROR, std::string("Route handler exception: ") + e.what());
             (*response_callback)(jsonError(drogon::k500InternalServerError, "Internal Server Error"));
         } catch (...) {
-            std::cerr << "[DrogonHttpServer] Unknown route handler exception" << std::endl;
+            logServer(logging::LogLevel::L_ERROR, "Unknown route handler exception");
             (*response_callback)(jsonError(drogon::k500InternalServerError, "Internal Server Error"));
         }
     };
@@ -109,10 +118,10 @@ void dispatchApiHandler(
     try {
         handler_executor->submit(std::move(dispatch));
     } catch (const std::exception &e) {
-        std::cerr << "[DrogonHttpServer] Submit route handler failed: " << e.what() << std::endl;
+        logServer(logging::LogLevel::L_ERROR, std::string("Submit route handler failed: ") + e.what());
         (*response_callback)(jsonError(drogon::k500InternalServerError, "Internal Server Error"));
     } catch (...) {
-        std::cerr << "[DrogonHttpServer] Submit route handler failed with unknown error" << std::endl;
+        logServer(logging::LogLevel::L_ERROR, "Submit route handler failed with unknown error");
         (*response_callback)(jsonError(drogon::k500InternalServerError, "Internal Server Error"));
     }
 }
@@ -140,11 +149,11 @@ void DrogonHttpServer::run()
     framework.setExceptionHandler([](const std::exception &e,
                                      const drogon::HttpRequestPtr &,
                                      std::function<void(const drogon::HttpResponsePtr &)> &&callback) {
-        std::cerr << "[DrogonHttpServer] Handler exception: " << e.what() << std::endl;
+        logServer(logging::LogLevel::L_ERROR, std::string("Handler exception: ") + e.what());
         callback(jsonError(drogon::k500InternalServerError, "Internal Server Error"));
     });
 
-    std::cout << "[DrogonHttpServer] Listening on http://" << host_ << ':' << port_ << std::endl;
+    logServer(logging::LogLevel::L_INFO, "Listening on http://" + host_ + ':' + std::to_string(port_));
     framework.run();
 }
 

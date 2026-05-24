@@ -24,6 +24,13 @@ class SongResourceProcessListener {
 public:
     virtual ~SongResourceProcessListener() = default;
 
+    // 批次阶段事件；payload 必须脱敏，不得包含临时下载 URL、Cookie 或 token。
+    virtual void onBatchEvent(std::string event_type, std::string payload)
+    {
+        (void)event_type;
+        (void)payload;
+    }
+
     // 资源项开始处理；实现方不得在这里执行长时间阻塞逻辑。
     virtual void onItemStarted(const application::model::SongResourceProcessItem &item) = 0;
 
@@ -78,8 +85,8 @@ private:
     application::model::SongResourceProcessItem downloadAndStoreAttempt(application::model::SongResourceQueueTarget target, std::string remote_url, const std::string &batch_id, const application::model::SongResourceProcessOptions &options, bool write_failure, SongResourceProcessListener *listener);
     void processRelatedTextResources(const application::model::SongResourceQueueTarget &audio_target, const application::model::SongResourceFetchResult &fetch_result, const std::string &batch_id, application::model::SongResourceProcessResult &batch_result, SongResourceProcessListener *listener, ProcessRunState *state);
     bool refreshPacmtoken(ProcessRunState &state, SongResourceProcessListener *listener, bool force);
-    application::model::SongResourceProcessItem fail(application::model::SongResourceQueueTarget target, std::string category, std::string code, std::string message, const std::string &batch_id);
-    application::model::SongResourceProcessItem skip(application::model::SongResourceQueueTarget target, std::string category, std::string code, std::string message, const std::string &batch_id);
+    application::model::SongResourceProcessItem fail(application::model::SongResourceQueueTarget target, std::string category, std::string code, std::string message, const std::string &batch_id, SongResourceProcessListener *listener = nullptr);
+    application::model::SongResourceProcessItem skip(application::model::SongResourceQueueTarget target, std::string category, std::string code, std::string message, const std::string &batch_id, SongResourceProcessListener *listener = nullptr);
 
     std::shared_ptr<application::ports::SongResourceQueue> resource_queue_;           // 资源队列 port
     std::shared_ptr<application::ports::SongResourceProvider> resource_provider_;     // 资源 URL provider

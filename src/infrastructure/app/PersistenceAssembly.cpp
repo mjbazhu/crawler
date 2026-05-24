@@ -13,6 +13,7 @@
 #include "crawler/infrastructure/music/persistence/sqlite/AlbumDao.h"
 #include "crawler/infrastructure/music/persistence/sqlite/SingerDao.h"
 #include "crawler/infrastructure/music/persistence/sqlite/SongDao.h"
+#include "crawler/infrastructure/observability/logging/Logger.h"
 
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/use_future.hpp>
@@ -22,13 +23,20 @@
 #include <cctype>
 #include <exception>
 #include <future>
-#include <iostream>
 #include <string>
 #include <string_view>
 
 namespace orchestrator::modules::crawler::infrastructure::app {
 
 namespace {
+
+namespace logging = orchestrator::modules::crawler::infrastructure::observability::logging;
+
+// 记录组合根持久化装配日志，统一走运行日志出口。
+void logApp(logging::LogLevel level, std::string_view message)
+{
+    logging::Logger::instance().log(level, "App", message);
+}
 
 // 将后端名称规整为小写，避免配置大小写差异导致误判。
 std::string normalizeBackend(std::string_view value)
@@ -92,7 +100,7 @@ bool initializeMySqlSchema(
 
     auto future = boost::asio::co_spawn(pool->executor(), pool->coInitializeSchema(), boost::asio::use_future);
     if (future.wait_for(timeout) != std::future_status::ready) {
-        std::cerr << "[App] MySQL schema initialization timed out after " << timeout.count() << " ms." << std::endl;
+        logApp(logging::LogLevel::L_ERROR, "MySQL schema initialization timed out after " + std::to_string(timeout.count()) + " ms.");
         pool->cancel();
         return false;
     }
@@ -100,7 +108,7 @@ bool initializeMySqlSchema(
     try {
         return future.get();
     } catch (const std::exception &e) {
-        std::cerr << "[App] MySQL schema initialization failed: " << e.what() << std::endl;
+        logApp(logging::LogLevel::L_ERROR, std::string("MySQL schema initialization failed: ") + e.what());
         return false;
     }
 }
@@ -122,13 +130,13 @@ std::optional<PersistenceComponents> assemblePersistence(const ServerApplication
         components.album_repository = std::make_shared<music::persistence::sqlite::AlbumDao>(*components.sqlite_pool);
         components.singer_repository = std::make_shared<music::persistence::sqlite::SingerDao>(*components.sqlite_pool);
         components.persistence_executor = components.persistence_worker_pool;
-        std::cout << "[App] Persistence backend: sqlite-debug (sync DAO through worker pool)." << std::endl;
+        logApp(logging::LogLevel::L_INFO, "Persistence backend: sqlite-debug (sync DAO through worker pool).");
         return components;
     }
 
     components.mysql_pool = std::make_shared<music::persistence::mysql::MySqlConnectionPool>(config.mysql);
     if (!initializeMySqlSchema(components.mysql_pool, std::chrono::milliseconds(config.mysql_startup_timeout_ms))) {
-        std::cerr << "[App] MySQL schema initialization failed." << std::endl;
+        logApp(logging::LogLevel::L_ERROR, "MySQL schema initialization failed.");
         return std::nullopt;
     }
     components.song_repository = std::make_shared<music::persistence::mysql::MySqlSongRepository>(components.mysql_pool, makeSongSqlPaths(config.mysql));
@@ -141,7 +149,7 @@ std::optional<PersistenceComponents> assemblePersistence(const ServerApplication
     components.batch_task_repository = std::make_shared<music::persistence::mysql::MySqlBatchTaskRepository>(components.mysql_pool);
     components.catalog_query_repository = std::make_shared<music::persistence::mysql::MySqlMusicCatalogQueryRepository>(components.mysql_pool);
     components.song_resource_queue = std::make_shared<music::persistence::mysql::MySqlSongResourceQueue>(components.mysql_pool);
-    std::cout << "[App] Persistence backend: mysql (native async repository)." << std::endl;
+    logApp(logging::LogLevel::L_INFO, "Persistence backend: mysql (native async repository).");
     return components;
 }
 

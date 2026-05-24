@@ -8,3 +8,4 @@ uploads
 !.env.example
 .clang-format
 .clangd
+logs

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cctype>
 #include <cstdint>
 #include <ctime>
@@ -14,6 +15,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace orchestrator::modules::crawler::application::use_cases {
 
@@ -313,44 +315,136 @@ std::string resourceProcessItemPayload(const application::model::SongResourcePro
     return out.str();
 }
 
+// 提取简单 JSON object 的对象体，调用方只处理本模块手写的脱敏 payload。
+std::string jsonObjectBody(std::string_view payload)
+{
+    const auto begin = payload.find_first_not_of(" \t\r\n");
+    if (begin == std::string_view::npos) {
+        return {};
+    }
+    const auto end = payload.find_last_not_of(" \t\r\n");
+    if (payload[begin] != '{' || payload[end] != '}' || end <= begin) {
+        return {};
+    }
+    return std::string(payload.substr(begin + 1, end - begin - 1));
+}
+
+// 判断 payload 顶层是否已经包含字段名，避免 recorder 补 trace 时产生重复 key。
+bool jsonObjectContainsField(std::string_view payload, std::string_view key)
+{
+    const std::string needle = "\"" + std::string(key) + "\"";
+    return payload.find(needle) != std::string_view::npos;
+}
+
+// 追加 JSON 字段分隔符。
+void appendJsonSeparator(std::ostringstream &out, bool &first)
+{
+    if (!first) {
+        out << ',';
+    }
+    first = false;
+}
+
+// 追加字符串字段；字段已存在时不覆盖 workflow 原始 payload。
+void appendJsonStringFieldIfMissing(std::ostringstream &out, bool &first, std::string_view original, std::string_view key, std::string_view value)
+{
+    if (jsonObjectContainsField(original, key)) {
+        return;
+    }
+    appendJsonSeparator(out, first);
+    out << '"' << key << "\":\"" << escapeJsonString(std::string(value)) << '"';
+}
+
+// 追加原始 JSON 值字段；调用方负责保证 raw_value 是合法 JSON 标量或数组。
+void appendJsonRawFieldIfMissing(std::ostringstream &out, bool &first, std::string_view original, std::string_view key, std::string_view raw_value)
+{
+    if (jsonObjectContainsField(original, key)) {
+        return;
+    }
+    appendJsonSeparator(out, first);
+    out << '"' << key << "\":" << raw_value;
+}
+
+// 把状态列表渲染为 JSON 数组。
+std::string statusesJson(const std::vector<int> &statuses)
+{
+    std::ostringstream out;
+    out << '[';
+    for (std::size_t index = 0; index < statuses.size(); ++index) {
+        if (index > 0) {
+            out << ',';
+        }
+        out << statuses[index];
+    }
+    out << ']';
+    return out.str();
+}
+
+// 在现有 JSON object 上补充 recorder 统一字段。
+template <typename AppendFields>
+std::string extendJsonObject(std::string_view payload, AppendFields append_fields)
+{
+    std::ostringstream out;
+    out << '{';
+    const std::string body = jsonObjectBody(payload);
+    bool first = body.empty();
+    if (!body.empty()) {
+        out << body;
+    }
+    append_fields(out, first, payload);
+    out << '}';
+    return out.str();
+}
+
+// 计算稳定耗时，统一使用毫秒。
+std::int64_t elapsedMillisecondsSince(std::chrono::steady_clock::time_point started_at)
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started_at).count();
+}
+
 // 资源处理批次落库 helper，只依赖批次仓储 port。
 class ResourceProcessBatchRecorder : public SongResourceProcessListener {
 public:
     ResourceProcessBatchRecorder(
         std::shared_ptr<application::ports::BatchTaskRepository> repository,
         application::model::SongResourceClaimQuery query,
-        std::string settings_snapshot
+        std::string settings_snapshot,
+        std::shared_ptr<application::ports::DiagnosticsSink> diagnostics
     ) : repository_(std::move(repository)),
         query_(std::move(query)),
-        settings_snapshot_(std::move(settings_snapshot))
+        settings_snapshot_(std::move(settings_snapshot)),
+        diagnostics_(std::move(diagnostics))
     {}
 
     // 写入 Running 批次主记录。
     void begin()
     {
-        if (!repository_ || query_.batch_id.empty()) {
+        if (query_.batch_id.empty()) {
             return;
         }
         const std::uint64_t now = nowSeconds();
-        application::model::CrawlBatchRecord batch;
-        batch.batch_id = query_.batch_id;
-        batch.source = query_.source.empty() ? "migu" : query_.source;
-        batch.task_type = "resourceProcess";
-        batch.state = "Running";
-        batch.request_params = resourceProcessRequestJson(query_);
-        batch.settings_snapshot = settings_snapshot_.empty() ? "{}" : settings_snapshot_;
-        batch.limit_count = static_cast<int>(query_.limit);
-        batch.created_at = now;
-        batch.started_at = now;
-        batch.updated_at = now;
-        (void)repository_->createBatch(batch, {});
-        (void)repository_->appendEvent(application::model::CrawlBatchEventRecord {query_.batch_id, std::nullopt, "batchStarted", "Resource process started", "{}", now});
+        if (repository_) {
+            application::model::CrawlBatchRecord batch;
+            batch.batch_id = query_.batch_id;
+            batch.source = query_.source.empty() ? "migu" : query_.source;
+            batch.task_type = "resourceProcess";
+            batch.state = "Running";
+            batch.request_params = resourceProcessRequestJson(query_);
+            batch.settings_snapshot = settings_snapshot_.empty() ? "{}" : settings_snapshot_;
+            batch.limit_count = static_cast<int>(query_.limit);
+            batch.created_at = now;
+            batch.started_at = now;
+            batch.updated_at = now;
+            (void)repository_->createBatch(batch, {});
+            (void)repository_->appendEvent(application::model::CrawlBatchEventRecord {query_.batch_id, std::nullopt, "batchStarted", "Resource process started", makeBatchEventPayload("{}"), now});
+        }
+        logEvent(application::ports::DiagnosticsLevel::Info, "batchStarted", "Resource process started", makeBatchEventPayload("{}"));
     }
 
     // 资源项开始时立即写入 Running item 和开始事件。
     void onItemStarted(const application::model::SongResourceProcessItem &item) override
     {
-        if (!repository_ || query_.batch_id.empty()) {
+        if (query_.batch_id.empty()) {
             return;
         }
 
@@ -362,15 +456,35 @@ public:
         record.error_category.clear();
         record.result_code.clear();
         record.written_count = 0;
-        (void)repository_->upsertItem(record);
-        (void)repository_->appendEvent(application::model::CrawlBatchEventRecord {query_.batch_id, slot.item_index, "itemStarted", slot.item_key, "{\"stage\":\"started\"}", now});
+        if (repository_) {
+            (void)repository_->upsertItem(record);
+            (void)repository_->appendEvent(application::model::CrawlBatchEventRecord {query_.batch_id, slot.item_index, "itemStarted", slot.item_key, makeItemEventPayload(item, slot, "{\"stage\":\"started\"}"), now});
+        }
+        logEvent(levelForEvent("itemStarted"), "itemStarted", "item started", record.payload.empty() ? "{}" : record.payload);
         updateRunningBatchProgress(now, {});
+    }
+
+    // 写入批次阶段事件，不绑定具体 item。
+    void onBatchEvent(std::string event_type, std::string payload) override
+    {
+        if (query_.batch_id.empty()) {
+            return;
+        }
+
+        const std::uint64_t now = nowSeconds();
+        std::string message = event_type;
+        const auto level = levelForEvent(event_type);
+        const std::string event_payload = makeBatchEventPayload(payload.empty() ? "{}" : payload);
+        logEvent(level, event_type, event_type, event_payload);
+        if (repository_) {
+            (void)repository_->appendEvent(application::model::CrawlBatchEventRecord {query_.batch_id, std::nullopt, std::move(event_type), std::move(message), event_payload, now});
+        }
     }
 
     // 资源项结束时立即写入最终状态、结束事件和批次进度。
     void onItemFinished(const application::model::SongResourceProcessItem &item) override
     {
-        if (!repository_ || query_.batch_id.empty()) {
+        if (query_.batch_id.empty()) {
             return;
         }
 
@@ -380,8 +494,15 @@ public:
         application::model::CrawlBatchItemRecord record = makeItemRecord(item, slot, failed ? "Failed" : "Completed", now);
         record.finished_at = now;
         record.last_error = failed ? item.message : "";
-        (void)repository_->upsertItem(record);
-        (void)repository_->appendEvent(application::model::CrawlBatchEventRecord {query_.batch_id, slot.item_index, failed ? "itemFailed" : "itemCompleted", slot.item_key, resourceProcessItemPayload(item), now});
+        if (repository_) {
+            (void)repository_->upsertItem(record);
+        }
+        const std::string event_type = failed ? "itemFailed" : "itemCompleted";
+        const std::string payload = makeItemEventPayload(item, slot, resourceProcessItemPayload(item), elapsedMillisecondsSince(slot.started_at));
+        if (repository_) {
+            (void)repository_->appendEvent(application::model::CrawlBatchEventRecord {query_.batch_id, slot.item_index, event_type, slot.item_key, payload, now});
+        }
+        logEvent(levelForEvent(event_type), event_type, failed ? "item failed" : "item completed", payload);
 
         updateCompletedCounters(failed, item.message, item.ok);
         updateRunningBatchProgress(now, failed ? item.message : std::string {});
@@ -390,19 +511,24 @@ public:
     // 写入资源项阶段事件，payload 由 workflow 保证脱敏。
     void onItemEvent(const application::model::SongResourceProcessItem &item, std::string event_type, std::string payload) override
     {
-        if (!repository_ || query_.batch_id.empty()) {
+        if (query_.batch_id.empty()) {
             return;
         }
 
         const ItemSlot slot = ensureItemSlot(item);
         const std::uint64_t now = nowSeconds();
-        (void)repository_->appendEvent(application::model::CrawlBatchEventRecord {query_.batch_id, slot.item_index, std::move(event_type), slot.item_key, std::move(payload), now});
+        const auto level = levelForEvent(event_type);
+        const std::string event_payload = makeItemEventPayload(item, slot, payload.empty() ? "{}" : payload);
+        logEvent(level, event_type, event_type, event_payload);
+        if (repository_) {
+            (void)repository_->appendEvent(application::model::CrawlBatchEventRecord {query_.batch_id, slot.item_index, std::move(event_type), slot.item_key, event_payload, now});
+        }
     }
 
     // 记录 pacmtoken 刷新事件，只写长度和时间，不写 token 明文。
     void onPacmtokenRefreshed(bool refreshed, std::size_t pacmtoken_length, std::uint64_t updated_at) override
     {
-        if (!repository_ || query_.batch_id.empty()) {
+        if (query_.batch_id.empty()) {
             return;
         }
 
@@ -412,13 +538,18 @@ public:
                 << ",\"updated_at\":" << updated_at
                 << '}';
         const std::uint64_t now = nowSeconds();
-        (void)repository_->appendEvent(application::model::CrawlBatchEventRecord {query_.batch_id, std::nullopt, "pacmtokenRefreshed", refreshed ? "refreshed" : "checked", payload.str(), now});
+        const std::string payload_text = makeBatchEventPayload(payload.str());
+        if (repository_) {
+            (void)repository_->appendEvent(application::model::CrawlBatchEventRecord {query_.batch_id, std::nullopt, "pacmtokenRefreshed", refreshed ? "refreshed" : "checked", payload_text, now});
+        }
+        logEvent(application::ports::DiagnosticsLevel::Info, "pacmtokenRefreshed", refreshed ? "pacmtoken refreshed" : "pacmtoken checked", payload_text);
     }
 
     // 写入最终批次状态；item 明细已经在 listener 回调中实时写入。
     void finish(const application::model::SongResourceProcessResult &result)
     {
-        if (!repository_ || result.batch_id.empty()) {
+        const std::string batch_id = result.batch_id.empty() ? query_.batch_id : result.batch_id;
+        if (batch_id.empty()) {
             return;
         }
 
@@ -439,7 +570,7 @@ public:
 
         const std::uint64_t finished = nowSeconds();
         application::model::CrawlBatchRecord batch;
-        batch.batch_id = result.batch_id;
+        batch.batch_id = batch_id;
         batch.state = failure_count == 0 ? "Completed" : "Failed";
         batch.target_count = static_cast<int>(result.items.size());
         batch.processed_count = static_cast<int>(result.items.size());
@@ -448,14 +579,18 @@ public:
         batch.last_error = last_error;
         batch.finished_at = finished;
         batch.updated_at = finished;
-        (void)repository_->updateBatchProgress(batch);
-        (void)repository_->appendEvent(application::model::CrawlBatchEventRecord {result.batch_id, std::nullopt, "batchFinished", batch.state, "{}", finished});
+        const std::string payload = makeBatchFinishPayload(batch, elapsedMillisecondsSince(batch_started_at_));
+        if (repository_) {
+            (void)repository_->updateBatchProgress(batch);
+            (void)repository_->appendEvent(application::model::CrawlBatchEventRecord {batch_id, std::nullopt, "batchFinished", batch.state, payload, finished});
+        }
+        logEvent(batch.state == "Failed" ? application::ports::DiagnosticsLevel::Warn : application::ports::DiagnosticsLevel::Info, "batchFinished", "Resource process finished", payload);
     }
 
     // 提交后台任务失败时，把已创建批次立即标记为 Failed。
     void failBatch(std::string message)
     {
-        if (!repository_ || query_.batch_id.empty()) {
+        if (query_.batch_id.empty()) {
             return;
         }
         const std::uint64_t failed_at = nowSeconds();
@@ -465,16 +600,115 @@ public:
         batch.last_error = std::move(message);
         batch.finished_at = failed_at;
         batch.updated_at = failed_at;
-        (void)repository_->updateBatchProgress(batch);
-        (void)repository_->appendEvent(application::model::CrawlBatchEventRecord {query_.batch_id, std::nullopt, "batchFailed", batch.last_error, "{}", failed_at});
+        const std::string payload = makeBatchFinishPayload(batch, elapsedMillisecondsSince(batch_started_at_));
+        if (repository_) {
+            (void)repository_->updateBatchProgress(batch);
+            (void)repository_->appendEvent(application::model::CrawlBatchEventRecord {query_.batch_id, std::nullopt, "batchFailed", batch.last_error, payload, failed_at});
+        }
+        logEvent(application::ports::DiagnosticsLevel::Error, "batchFailed", "Resource process failed", payload);
     }
 
 private:
+    // 根据事件名选择运行日志级别，保持成功路径信息化、失败路径醒目。
+    static application::ports::DiagnosticsLevel levelForEvent(std::string_view event_type)
+    {
+        if (event_type == "batchFailed" || event_type.find("WritebackFailed") != std::string_view::npos || event_type.find("BlobSaveFailed") != std::string_view::npos) {
+            return application::ports::DiagnosticsLevel::Error;
+        }
+        if (event_type.find("Failed") != std::string_view::npos || event_type.find("Rejected") != std::string_view::npos || event_type.find("Restricted") != std::string_view::npos || event_type.find("ValidationFailed") != std::string_view::npos) {
+            return application::ports::DiagnosticsLevel::Warn;
+        }
+        if (event_type == "batchStarted" ||
+            event_type == "batchFinished" ||
+            event_type == "resourceClaimStarted" ||
+            event_type == "resourceClaimCompleted" ||
+            event_type == "resourceClaimEmpty" ||
+            event_type == "itemCompleted" ||
+            event_type == "itemFailed" ||
+            event_type == "resourceDbWritebackCompleted" ||
+            event_type == "resourceFailureWritebackCompleted" ||
+            event_type == "resourceSkipWritebackCompleted" ||
+            event_type == "pacmtokenRefreshed") {
+            return application::ports::DiagnosticsLevel::Info;
+        }
+        return application::ports::DiagnosticsLevel::Debug;
+    }
+
+    // 把资源批次事件镜像到运行日志；具体 console/file/json 输出由 infrastructure sink 决定。
+    void logEvent(application::ports::DiagnosticsLevel level, std::string_view event_type, std::string message, std::string_view payload) const
+    {
+        if (!diagnostics_) {
+            return;
+        }
+        diagnostics_->event(level, "ResourceProcess", event_type, message, payload.empty() ? std::string_view("{}") : payload);
+    }
+
     // 批次 item 槽位，保证开始和结束事件使用同一 item_index。
     struct ItemSlot {
-        int item_index = 0;   // 批次内序号
-        std::string item_key; // 批次 item_key
+        int item_index = 0;                                                        // 批次内序号
+        std::string item_key;                                                      // 批次 item_key
+        std::chrono::steady_clock::time_point started_at = std::chrono::steady_clock::now(); // item 开始处理时间
     };
+
+    // 追加批次统一 trace 字段，保证所有运行日志可按 batch_id 串起来。
+    void appendBatchTraceFields(std::ostringstream &out, bool &first, std::string_view original) const
+    {
+        appendJsonStringFieldIfMissing(out, first, original, "trace", "batch:" + query_.batch_id);
+        appendJsonStringFieldIfMissing(out, first, original, "batch_id", query_.batch_id);
+        appendJsonStringFieldIfMissing(out, first, original, "source", query_.source.empty() ? "migu" : query_.source);
+        appendJsonStringFieldIfMissing(out, first, original, "resource_kind", query_.resource_kind);
+        appendJsonStringFieldIfMissing(out, first, original, "format_type", query_.format_type);
+        appendJsonStringFieldIfMissing(out, first, original, "content_id", query_.source_content_id);
+        appendJsonRawFieldIfMissing(out, first, original, "limit", std::to_string(query_.limit));
+        appendJsonRawFieldIfMissing(out, first, original, "offset", std::to_string(query_.offset));
+        appendJsonRawFieldIfMissing(out, first, original, "statuses", statusesJson(query_.statuses));
+    }
+
+    // 构造批次事件 payload，统一补齐 trace 字段。
+    std::string makeBatchEventPayload(std::string_view payload) const
+    {
+        return extendJsonObject(payload, [this](std::ostringstream &out, bool &first, std::string_view original) {
+            appendBatchTraceFields(out, first, original);
+        });
+    }
+
+    // 构造批次结束 payload，补齐最终计数和总耗时。
+    std::string makeBatchFinishPayload(const application::model::CrawlBatchRecord &batch, std::int64_t duration_ms) const
+    {
+        return extendJsonObject("{}", [this, &batch, duration_ms](std::ostringstream &out, bool &first, std::string_view original) {
+            appendBatchTraceFields(out, first, original);
+            appendJsonStringFieldIfMissing(out, first, original, "state", batch.state);
+            appendJsonRawFieldIfMissing(out, first, original, "target_count", std::to_string(batch.target_count));
+            appendJsonRawFieldIfMissing(out, first, original, "processed_count", std::to_string(batch.processed_count));
+            appendJsonRawFieldIfMissing(out, first, original, "success_count", std::to_string(batch.success_count));
+            appendJsonRawFieldIfMissing(out, first, original, "failure_count", std::to_string(batch.failure_count));
+            appendJsonStringFieldIfMissing(out, first, original, "last_error", batch.last_error);
+            appendJsonRawFieldIfMissing(out, first, original, "duration_ms", std::to_string(duration_ms));
+        });
+    }
+
+    // 构造 item 事件 payload，统一补齐 item trace 字段和可选耗时。
+    std::string makeItemEventPayload(const application::model::SongResourceProcessItem &item, const ItemSlot &slot, std::string_view payload, std::int64_t duration_ms = -1) const
+    {
+        return extendJsonObject(payload, [this, &item, &slot, duration_ms](std::ostringstream &out, bool &first, std::string_view original) {
+            appendJsonStringFieldIfMissing(out, first, original, "trace", "batch:" + query_.batch_id + "/item:" + slot.item_key + "/index:" + std::to_string(slot.item_index));
+            appendJsonStringFieldIfMissing(out, first, original, "batch_id", query_.batch_id);
+            appendJsonRawFieldIfMissing(out, first, original, "item_index", std::to_string(slot.item_index));
+            appendJsonStringFieldIfMissing(out, first, original, "item_key", slot.item_key);
+            appendJsonRawFieldIfMissing(out, first, original, "resource_id", std::to_string(item.resource_id));
+            appendJsonRawFieldIfMissing(out, first, original, "song_source_ref_id", std::to_string(item.song_source_ref_id));
+            appendJsonStringFieldIfMissing(out, first, original, "content_id", item.source_content_id);
+            appendJsonStringFieldIfMissing(out, first, original, "source_content_id", item.source_content_id);
+            appendJsonStringFieldIfMissing(out, first, original, "resource_kind", item.resource_kind);
+            appendJsonStringFieldIfMissing(out, first, original, "format_type", item.format_type);
+            appendJsonRawFieldIfMissing(out, first, original, "related", item.related ? "true" : "false");
+            appendJsonRawFieldIfMissing(out, first, original, "synthetic", item.synthetic ? "true" : "false");
+            appendJsonRawFieldIfMissing(out, first, original, "skipped", item.skipped ? "true" : "false");
+            if (duration_ms >= 0) {
+                appendJsonRawFieldIfMissing(out, first, original, "duration_ms", std::to_string(duration_ms));
+            }
+        });
+    }
 
     // 返回资源项的稳定逻辑键；只用于 recorder 内部去重，不写入外部响应。
     static std::string logicalItemKey(const application::model::SongResourceProcessItem &item)
@@ -521,7 +755,7 @@ private:
         record.started_at = now;
         record.finished_at = record.state == "Running" ? 0 : now;
         record.last_error = failed ? item.message : "";
-        record.payload = resourceProcessItemPayload(item);
+        record.payload = makeItemEventPayload(item, slot, resourceProcessItemPayload(item));
         record.created_at = now;
         record.updated_at = now;
         return record;
@@ -545,6 +779,9 @@ private:
     // 写入 Running 状态下的批次进度。
     void updateRunningBatchProgress(std::uint64_t now, const std::string &last_error)
     {
+        if (!repository_) {
+            return;
+        }
         application::model::CrawlBatchRecord batch;
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -563,6 +800,7 @@ private:
     std::shared_ptr<application::ports::BatchTaskRepository> repository_; // 批次持久化 port
     application::model::SongResourceClaimQuery query_;                    // 请求快照
     std::string settings_snapshot_;                                       // 运行设置快照
+    std::shared_ptr<application::ports::DiagnosticsSink> diagnostics_;     // 运行日志诊断 port
     std::mutex mutex_;                                                    // 保护实时进度计数
     int next_item_index_ = 0;                                             // 下一个动态 item 序号
     int processed_count_ = 0;                                             // 已完成 item 数
@@ -570,7 +808,36 @@ private:
     int failure_count_ = 0;                                               // 失败 item 数
     std::string last_error_;                                              // 最近失败说明
     std::unordered_map<std::string, ItemSlot> item_slots_;                // 逻辑键到 item 槽位映射
+    std::chrono::steady_clock::time_point batch_started_at_ = std::chrono::steady_clock::now(); // 批次开始处理时间
 };
+
+// 运行异步资源批次；使用普通协程函数避免捕获型 coroutine lambda 的闭包悬垂。
+application::async::Task<void> runAsyncResourceProcessTask(
+    std::shared_ptr<AsyncSongResourceDownloadWorkflow> workflow,
+    std::shared_ptr<application::ports::AsyncRuntime> runtime,
+    std::shared_ptr<application::ports::BatchTaskRepository> batch_repository,
+    std::shared_ptr<application::ports::DiagnosticsSink> diagnostics,
+    application::model::SongResourceClaimQuery query,
+    std::string settings_snapshot
+)
+{
+    auto recorder = std::make_shared<ResourceProcessBatchRecorder>(batch_repository, query, settings_snapshot, diagnostics);
+    std::string failure_message;
+    try {
+        auto result = co_await workflow->processPending(std::move(query), recorder.get());
+        co_await runtime->postBlocking<void>([recorder, result = std::move(result)]() mutable {
+            recorder->finish(result);
+        });
+        co_return;
+    } catch (const std::exception &e) {
+        failure_message = e.what();
+    } catch (...) {
+        failure_message = "Migu resource process failed with unknown error";
+    }
+    co_await runtime->postBlocking<void>([recorder, failure_message]() mutable {
+        recorder->failBatch(failure_message);
+    });
+}
 
 // 根据采集结果计算同步状态。
 int syncStatusFromResult(const application::model::SingerCollectionResult &result)
@@ -1762,11 +2029,19 @@ application::model::SongResourceProcessResult CrawlerService::processMiguResourc
     query.limit = normalizeTargetLimit(query.limit);
     query.options = effectiveResourceProcessOptions(getRuntimeSettings(), query.option_overrides);
     const std::string settings_snapshot = runtimeSettingsJson();
-    ResourceProcessBatchRecorder recorder(batch_task_repository_, query, settings_snapshot);
+    ResourceProcessBatchRecorder recorder(batch_task_repository_, query, settings_snapshot, diagnostics_);
     recorder.begin();
-    auto result = song_resource_workflow_->processPending(std::move(query), &recorder);
-    recorder.finish(result);
-    return result;
+    try {
+        auto result = song_resource_workflow_->processPending(std::move(query), &recorder);
+        recorder.finish(result);
+        return result;
+    } catch (const std::exception &e) {
+        recorder.failBatch(e.what());
+        throw;
+    } catch (...) {
+        recorder.failBatch("Migu resource process failed with unknown error");
+        throw;
+    }
 }
 
 std::string CrawlerService::startMiguResourcesProcessAsync(application::model::SongResourceClaimQuery query)
@@ -1791,12 +2066,12 @@ std::string CrawlerService::startMiguResourcesProcessAsync(application::model::S
         auto batch_repository = batch_task_repository_;
         const std::string batch_id = query.batch_id;
         const std::string settings_snapshot = runtimeSettingsJson();
-        ResourceProcessBatchRecorder start_recorder(batch_repository, query, settings_snapshot);
+        ResourceProcessBatchRecorder start_recorder(batch_repository, query, settings_snapshot, diagnostics_);
         start_recorder.begin();
 
         const bool submitted = resource_process_runner_.submitDetached(
-            [workflow, batch_repository, query, settings_snapshot]() mutable {
-                ResourceProcessBatchRecorder recorder(batch_repository, query, settings_snapshot);
+            [workflow, batch_repository, diagnostics = diagnostics_, query, settings_snapshot]() mutable {
+                ResourceProcessBatchRecorder recorder(batch_repository, query, settings_snapshot, diagnostics);
                 try {
                     auto result = workflow->processPending(std::move(query), &recorder);
                     recorder.finish(result);
@@ -1822,29 +2097,10 @@ std::string CrawlerService::startMiguResourcesProcessAsync(application::model::S
     auto batch_repository = batch_task_repository_;
     const std::string batch_id = query.batch_id;
     const std::string settings_snapshot = runtimeSettingsJson();
-    ResourceProcessBatchRecorder start_recorder(batch_repository, query, settings_snapshot);
+    ResourceProcessBatchRecorder start_recorder(batch_repository, query, settings_snapshot, diagnostics_);
     start_recorder.begin();
 
-    auto task = [workflow, runtime, batch_repository, query, settings_snapshot]() mutable -> application::async::Task<void> {
-        auto recorder = std::make_shared<ResourceProcessBatchRecorder>(batch_repository, query, settings_snapshot);
-        std::string failure_message;
-        try {
-            auto result = co_await workflow->processPending(std::move(query), recorder.get());
-            co_await runtime->postBlocking<void>([recorder, result = std::move(result)]() mutable {
-                recorder->finish(result);
-            });
-            co_return;
-        } catch (const std::exception &e) {
-            failure_message = e.what();
-        } catch (...) {
-            failure_message = "Migu resource process failed with unknown error";
-        }
-        co_await runtime->postBlocking<void>([recorder, failure_message]() mutable {
-            recorder->failBatch(failure_message);
-        });
-    };
-
-    const bool submitted = async_runtime_->spawn(task());
+    const bool submitted = async_runtime_->spawn(runAsyncResourceProcessTask(workflow, runtime, batch_repository, diagnostics_, query, settings_snapshot));
     if (!submitted) {
         start_recorder.failBatch("Failed to submit Migu resource process task");
         return {};

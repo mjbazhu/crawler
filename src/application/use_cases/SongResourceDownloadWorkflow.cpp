@@ -8,6 +8,7 @@
 #include <future>
 #include <memory>
 #include <mutex>
+#include <sstream>
 #include <string_view>
 #include <unordered_set>
 #include <utility>
@@ -130,6 +131,49 @@ void emitItemEvent(SongResourceProcessListener *listener, const application::mod
         return;
     }
     listener->onItemEvent(makeStartedItem(target, target.resource_kind == "lyric" || target.resource_kind == "mrc" || target.resource_kind == "trc"), event_type, payload);
+}
+
+// 记录批次阶段事件。
+void emitBatchEvent(SongResourceProcessListener *listener, const std::string &event_type, const std::string &payload)
+{
+    if (!listener) {
+        return;
+    }
+    listener->onBatchEvent(event_type, payload);
+}
+
+// 把状态过滤转换为短 JSON 数组。
+std::string statusesJson(const std::vector<int> &statuses)
+{
+    std::ostringstream out;
+    out << '[';
+    for (std::size_t index = 0; index < statuses.size(); ++index) {
+        if (index > 0) {
+            out << ',';
+        }
+        out << statuses[index];
+    }
+    out << ']';
+    return out.str();
+}
+
+// 构造资源认领事件 payload。
+std::string claimPayload(const application::model::SongResourceClaimQuery &query, std::string_view stage, std::string_view extra = {})
+{
+    std::string payload = "{\"stage\":\"" + escapeJson(stage) + "\""
+                          + ",\"source\":\"" + escapeJson(query.source) + "\""
+                          + ",\"resource_kind\":\"" + escapeJson(query.resource_kind) + "\""
+                          + ",\"format_type\":\"" + escapeJson(query.format_type) + "\""
+                          + ",\"content_id\":\"" + escapeJson(query.source_content_id) + "\""
+                          + ",\"statuses\":" + statusesJson(query.statuses)
+                          + ",\"limit\":" + std::to_string(query.limit)
+                          + ",\"offset\":" + std::to_string(query.offset);
+    if (!extra.empty()) {
+        payload += ",";
+        payload.append(extra);
+    }
+    payload += "}";
+    return payload;
 }
 
 // 构造关联资源无法认领时的跳过明细。
@@ -261,8 +305,22 @@ application::model::SongResourceProcessResult SongResourceDownloadWorkflow::proc
         (void)refreshPacmtoken(state, listener, true);
     }
 
-    auto targets = resource_queue_->claimPending(query);
+    emitBatchEvent(listener, "resourceClaimStarted", claimPayload(query, "resource_claim_started"));
+    std::vector<application::model::SongResourceQueueTarget> targets;
+    try {
+        targets = resource_queue_->claimPending(query);
+    } catch (const std::exception &e) {
+        emitBatchEvent(listener, "resourceClaimFailed", claimPayload(query, "resource_claim_failed", "\"error\":\"" + escapeJson(trimMessage(e.what())) + "\""));
+        throw;
+    } catch (...) {
+        emitBatchEvent(listener, "resourceClaimFailed", claimPayload(query, "resource_claim_failed", "\"error\":\"resource claim failed with unknown error\""));
+        throw;
+    }
     result.claimed_count = static_cast<int>(targets.size());
+    emitBatchEvent(listener, "resourceClaimCompleted", claimPayload(query, "resource_claim_completed", "\"claimed_count\":" + std::to_string(result.claimed_count) + ",\"concurrency\":" + std::to_string(normalizedResourceConcurrency(state.options)) + ",\"retries\":" + std::to_string(state.options.resource_download_retries) + ",\"timeout_ms\":" + std::to_string(state.options.resource_download_timeout_ms)));
+    if (targets.empty()) {
+        emitBatchEvent(listener, "resourceClaimEmpty", claimPayload(query, "resource_claim_empty"));
+    }
     const auto record_main_item = [&result, listener](application::model::SongResourceProcessItem item) {
         if (item.ok) {
             ++result.succeeded_count;
@@ -310,7 +368,7 @@ application::model::SongResourceProcessResult SongResourceDownloadWorkflow::proc
                     }
                 });
             } catch (...) {
-                promise->set_value(fail(std::move(target), "unknown", "submit_failed", "resource worker submit failed", query.batch_id));
+                promise->set_value(fail(std::move(target), "unknown", "submit_failed", "resource worker submit failed", query.batch_id, listener));
             }
         }
         for (auto &future : futures) {
@@ -344,13 +402,13 @@ application::model::SongResourceProcessItem SongResourceDownloadWorkflow::proces
 application::model::SongResourceProcessItem SongResourceDownloadWorkflow::processAudio(application::model::SongResourceQueueTarget target, const std::string &batch_id, application::model::SongResourceProcessResult *batch_result, SongResourceProcessListener *listener, ProcessRunState *state)
 {
     if (isKnownDigitalAlbum(target)) {
-        return skip(std::move(target), "resource", "digital_album", "digital album requires purchase before download", batch_id);
+        return skip(std::move(target), "resource", "digital_album", "digital album requires purchase before download", batch_id, listener);
     }
     if (!resource_provider_ || !resource_parser_) {
-        return fail(std::move(target), "invalid_target", "missing_dependency", "song resource provider or parser is not configured", batch_id);
+        return fail(std::move(target), "invalid_target", "missing_dependency", "song resource provider or parser is not configured", batch_id, listener);
     }
     if (!validAudioTarget(target)) {
-        return fail(std::move(target), "invalid_target", "invalid_target", "missing contentId, resourceType, copyrightId or toneFlag", batch_id);
+        return fail(std::move(target), "invalid_target", "invalid_target", "missing contentId, resourceType, copyrightId or toneFlag", batch_id, listener);
     }
 
     const auto options = state ? state->options : application::model::SongResourceProcessOptions {};
@@ -358,6 +416,7 @@ application::model::SongResourceProcessItem SongResourceDownloadWorkflow::proces
     bool refreshed_after_440013 = false;
     application::model::SongResourceProcessItem last_failure;
     for (int attempt = 1; attempt <= max_attempts; ++attempt) {
+        emitItemEvent(listener, target, "resourceAttemptStarted", stagePayload(target, "resource_attempt_started", "\"attempt\":" + std::to_string(attempt) + ",\"max_attempts\":" + std::to_string(max_attempts)));
         if (state) {
             (void)refreshPacmtoken(*state, listener, false);
         }
@@ -368,9 +427,11 @@ application::model::SongResourceProcessItem SongResourceDownloadWorkflow::proces
             emitItemEvent(listener, target, "resourceUrlRequestFailed", stagePayload(target, "resource_url_request_failed", "\"attempt\":" + std::to_string(attempt) + ",\"result_code\":\"resource_url_fetch_failed\""));
             last_failure = makeItem(target, false, false, false, false, "network", "resource_url_fetch_failed", "song resource url request failed");
             if (attempt < max_attempts) {
+                emitItemEvent(listener, target, "resourceRetryScheduled", stagePayload(target, "resource_retry_scheduled", "\"attempt\":" + std::to_string(attempt) + ",\"next_attempt\":" + std::to_string(attempt + 1) + ",\"max_attempts\":" + std::to_string(max_attempts) + ",\"failed_stage\":\"resource_url_request\",\"result_code\":\"resource_url_fetch_failed\",\"error_category\":\"network\""));
                 continue;
             }
-            return fail(std::move(target), last_failure.error_category, last_failure.result_code, last_failure.message, batch_id);
+            emitItemEvent(listener, target, "resourceAttemptFinished", stagePayload(target, "resource_attempt_finished", "\"attempt\":" + std::to_string(attempt) + ",\"result_code\":\"" + escapeJson(last_failure.result_code) + "\",\"error_category\":\"" + escapeJson(last_failure.error_category) + "\""));
+            return fail(std::move(target), last_failure.error_category, last_failure.result_code, last_failure.message, batch_id, listener);
         }
 
         auto fetch_result = resource_parser_->parseSongResource(response->body);
@@ -384,7 +445,8 @@ application::model::SongResourceProcessItem SongResourceDownloadWorkflow::proces
             if (isPermanentResourceSkip(code)) {
                 emitItemEvent(listener, target, "resourceUrlRejected", stagePayload(target, "resource_url_rejected", "\"attempt\":" + std::to_string(attempt) + ",\"result_code\":\"" + escapeJson(code) + "\""));
                 const std::string category = permanentResourceSkipCategory(code);
-                return skip(std::move(target), category, std::move(code), std::move(message), batch_id);
+                emitItemEvent(listener, target, "resourceAttemptFinished", stagePayload(target, "resource_attempt_finished", "\"attempt\":" + std::to_string(attempt) + ",\"result_code\":\"" + escapeJson(code) + "\",\"error_category\":\"" + escapeJson(category) + "\""));
+                return skip(std::move(target), category, std::move(code), std::move(message), batch_id, listener);
             }
             if (isResourceRestrictionFailure(code) && options.refresh_pacmtoken_on_440013 && state && !refreshed_after_440013) {
                 emitItemEvent(listener, target, "resourceUrlRestricted", stagePayload(target, "resource_url_restricted", "\"attempt\":" + std::to_string(attempt) + ",\"result_code\":\"" + escapeJson(code) + "\""));
@@ -398,10 +460,12 @@ application::model::SongResourceProcessItem SongResourceDownloadWorkflow::proces
             }
             if (isResourceRestrictionFailure(code)) {
                 emitItemEvent(listener, target, "resourceUrlRejected", stagePayload(target, "resource_url_rejected", "\"attempt\":" + std::to_string(attempt) + ",\"result_code\":\"" + escapeJson(code) + "\""));
-                return fail(std::move(target), "resource", std::move(code), std::move(message), batch_id);
+                emitItemEvent(listener, target, "resourceAttemptFinished", stagePayload(target, "resource_attempt_finished", "\"attempt\":" + std::to_string(attempt) + ",\"result_code\":\"" + escapeJson(code) + "\",\"error_category\":\"resource\""));
+                return fail(std::move(target), "resource", std::move(code), std::move(message), batch_id, listener);
             }
             emitItemEvent(listener, target, "resourceUrlParseFailed", stagePayload(target, "resource_url_parse_failed", "\"attempt\":" + std::to_string(attempt) + ",\"result_code\":\"" + escapeJson(code) + "\""));
-            return fail(std::move(target), "parse", std::move(code), std::move(message), batch_id);
+            emitItemEvent(listener, target, "resourceAttemptFinished", stagePayload(target, "resource_attempt_finished", "\"attempt\":" + std::to_string(attempt) + ",\"result_code\":\"" + escapeJson(code) + "\",\"error_category\":\"parse\""));
+            return fail(std::move(target), "parse", std::move(code), std::move(message), batch_id, listener);
         }
 
         emitItemEvent(listener, target, "resourceUrlFetched", stagePayload(target, "resource_url_fetched", "\"attempt\":" + std::to_string(attempt) + ",\"audio_format_type\":\"" + escapeJson(fetch_result.audio_format_type) + "\"" + ",\"version\":\"" + escapeJson(fetch_result.version) + "\"" + ",\"has_lyric\":" + (fetch_result.lyric_url.empty() ? "false" : "true") + ",\"has_mrc\":" + (fetch_result.mrc_url.empty() ? "false" : "true") + ",\"has_trc\":" + (fetch_result.trc_url.empty() ? "false" : "true")));
@@ -410,44 +474,53 @@ application::model::SongResourceProcessItem SongResourceDownloadWorkflow::proces
         if (item.ok && resource_queue_) {
             application::model::SongResourceProcessResult fallback_result;
             processRelatedTextResources(target, fetch_result, batch_id, batch_result ? *batch_result : fallback_result, listener, state);
+            emitItemEvent(listener, target, "resourceAttemptFinished", stagePayload(target, "resource_attempt_finished", "\"attempt\":" + std::to_string(attempt) + ",\"result_code\":\"ok\""));
             return item;
         }
         last_failure = item;
         if (attempt < max_attempts && retryableResourceFailure(item)) {
+            emitItemEvent(listener, target, "resourceRetryScheduled", stagePayload(target, "resource_retry_scheduled", "\"attempt\":" + std::to_string(attempt) + ",\"next_attempt\":" + std::to_string(attempt + 1) + ",\"max_attempts\":" + std::to_string(max_attempts) + ",\"failed_stage\":\"resource_content_download\",\"result_code\":\"" + escapeJson(item.result_code) + "\",\"error_category\":\"" + escapeJson(item.error_category) + "\""));
             continue;
         }
         if (!item.ok && !item.skipped && attempt < max_attempts) {
-            return fail(std::move(target), item.error_category, item.result_code, item.message, batch_id);
+            emitItemEvent(listener, target, "resourceAttemptFinished", stagePayload(target, "resource_attempt_finished", "\"attempt\":" + std::to_string(attempt) + ",\"result_code\":\"" + escapeJson(item.result_code) + "\",\"error_category\":\"" + escapeJson(item.error_category) + "\""));
+            return fail(std::move(target), item.error_category, item.result_code, item.message, batch_id, listener);
         }
+        emitItemEvent(listener, target, "resourceAttemptFinished", stagePayload(target, "resource_attempt_finished", "\"attempt\":" + std::to_string(attempt) + ",\"result_code\":\"" + escapeJson(item.result_code) + "\",\"error_category\":\"" + escapeJson(item.error_category) + "\""));
         return item;
     }
 
-    return fail(std::move(target), last_failure.error_category.empty() ? "unknown" : last_failure.error_category, last_failure.result_code.empty() ? "failed" : last_failure.result_code, last_failure.message.empty() ? "resource processing failed" : last_failure.message, batch_id);
+    return fail(std::move(target), last_failure.error_category.empty() ? "unknown" : last_failure.error_category, last_failure.result_code.empty() ? "failed" : last_failure.result_code, last_failure.message.empty() ? "resource processing failed" : last_failure.message, batch_id, listener);
 }
 
 application::model::SongResourceProcessItem SongResourceDownloadWorkflow::processDirectResource(application::model::SongResourceQueueTarget target, const std::string &batch_id, const application::model::SongResourceProcessOptions &options, SongResourceProcessListener *listener)
 {
     if (target.remote_url.empty()) {
-        return fail(std::move(target), "invalid_target", "missing_remote_url", "resource remote_url is empty", batch_id);
+        return fail(std::move(target), "invalid_target", "missing_remote_url", "resource remote_url is empty", batch_id, listener);
     }
     std::string remote_url = target.remote_url;
     const int max_attempts = (std::max)(1, options.resource_download_retries + 1);
     application::model::SongResourceProcessItem last_failure;
     for (int attempt = 1; attempt <= max_attempts; ++attempt) {
+        emitItemEvent(listener, target, "resourceAttemptStarted", stagePayload(target, "resource_attempt_started", "\"attempt\":" + std::to_string(attempt) + ",\"max_attempts\":" + std::to_string(max_attempts)));
         auto item = downloadAndStoreAttempt(target, remote_url, batch_id, options, attempt == max_attempts, listener);
         if (item.ok || item.skipped) {
+            emitItemEvent(listener, target, "resourceAttemptFinished", stagePayload(target, "resource_attempt_finished", "\"attempt\":" + std::to_string(attempt) + ",\"result_code\":\"" + escapeJson(item.result_code) + "\",\"error_category\":\"" + escapeJson(item.error_category) + "\""));
             return item;
         }
         last_failure = item;
         if (attempt < max_attempts && retryableResourceFailure(item)) {
+            emitItemEvent(listener, target, "resourceRetryScheduled", stagePayload(target, "resource_retry_scheduled", "\"attempt\":" + std::to_string(attempt) + ",\"next_attempt\":" + std::to_string(attempt + 1) + ",\"max_attempts\":" + std::to_string(max_attempts) + ",\"failed_stage\":\"resource_content_download\",\"result_code\":\"" + escapeJson(item.result_code) + "\",\"error_category\":\"" + escapeJson(item.error_category) + "\""));
             continue;
         }
         if (attempt < max_attempts) {
-            return fail(std::move(target), item.error_category, item.result_code, item.message, batch_id);
+            emitItemEvent(listener, target, "resourceAttemptFinished", stagePayload(target, "resource_attempt_finished", "\"attempt\":" + std::to_string(attempt) + ",\"result_code\":\"" + escapeJson(item.result_code) + "\",\"error_category\":\"" + escapeJson(item.error_category) + "\""));
+            return fail(std::move(target), item.error_category, item.result_code, item.message, batch_id, listener);
         }
+        emitItemEvent(listener, target, "resourceAttemptFinished", stagePayload(target, "resource_attempt_finished", "\"attempt\":" + std::to_string(attempt) + ",\"result_code\":\"" + escapeJson(item.result_code) + "\",\"error_category\":\"" + escapeJson(item.error_category) + "\""));
         return item;
     }
-    return fail(std::move(target), last_failure.error_category.empty() ? "unknown" : last_failure.error_category, last_failure.result_code.empty() ? "failed" : last_failure.result_code, last_failure.message.empty() ? "resource processing failed" : last_failure.message, batch_id);
+    return fail(std::move(target), last_failure.error_category.empty() ? "unknown" : last_failure.error_category, last_failure.result_code.empty() ? "failed" : last_failure.result_code, last_failure.message.empty() ? "resource processing failed" : last_failure.message, batch_id, listener);
 }
 
 application::model::SongResourceProcessItem SongResourceDownloadWorkflow::downloadAndStore(application::model::SongResourceQueueTarget target, std::string remote_url, const std::string &batch_id, const application::model::SongResourceProcessOptions &options)
@@ -458,7 +531,7 @@ application::model::SongResourceProcessItem SongResourceDownloadWorkflow::downlo
 application::model::SongResourceProcessItem SongResourceDownloadWorkflow::downloadAndStoreAttempt(application::model::SongResourceQueueTarget target, std::string remote_url, const std::string &batch_id, const application::model::SongResourceProcessOptions &options, bool write_failure, SongResourceProcessListener *listener)
 {
     if (!content_fetcher_ || !blob_store_) {
-        return write_failure ? fail(std::move(target), "invalid_target", "missing_dependency", "content fetcher or blob store is not configured", batch_id) : makeItem(target, false, false, false, false, "invalid_target", "missing_dependency", "content fetcher or blob store is not configured");
+        return write_failure ? fail(std::move(target), "invalid_target", "missing_dependency", "content fetcher or blob store is not configured", batch_id, listener) : makeItem(target, false, false, false, false, "invalid_target", "missing_dependency", "content fetcher or blob store is not configured");
     }
 
     application::model::SongResourceContentFetchRequest fetch_request;
@@ -520,12 +593,13 @@ application::model::SongResourceProcessItem SongResourceDownloadWorkflow::downlo
     if (!content.ok) {
         if (writer) {
             writer->abort();
+            emitItemEvent(listener, target, "resourceBlobAbortCompleted", stagePayload(target, "resource_blob_abort_completed"));
         }
         const std::string category = !callback_failure_category.empty() ? callback_failure_category : (content.error_category.empty() ? "network" : content.error_category);
         const std::string code = !callback_failure_code.empty() ? callback_failure_code : (content.result_code.empty() ? "download_failed" : content.result_code);
         const std::string message = !callback_failure_message.empty() ? callback_failure_message : (content.message.empty() ? "resource content download failed" : content.message);
         emitItemEvent(listener, target, "resourceContentDownloadFailed", stagePayload(target, "resource_content_download_failed", "\"result_code\":\"" + escapeJson(code) + "\",\"error_category\":\"" + escapeJson(category) + "\""));
-        return write_failure ? fail(std::move(target), category, code, message, batch_id) : makeItem(target, false, false, false, false, category, code, message);
+        return write_failure ? fail(std::move(target), category, code, message, batch_id, listener) : makeItem(target, false, false, false, false, category, code, message);
     }
     emitItemEvent(listener, target, "resourceContentDownloaded", stagePayload(target, "resource_content_downloaded", "\"status_code\":" + std::to_string(content.status_code) + ",\"content_type\":\"" + escapeJson(content.content_type) + "\"" + ",\"body_size\":" + std::to_string(content.bytes_received)));
     const auto downloaded_size = content.bytes_received;
@@ -533,18 +607,19 @@ application::model::SongResourceProcessItem SongResourceDownloadWorkflow::downlo
     if (!writer) {
         const std::string message = "resource blob stream was not opened";
         emitItemEvent(listener, target, "resourceBlobSaveFailed", stagePayload(target, "resource_blob_save_failed", "\"result_code\":\"persist_failed\",\"message\":\"" + escapeJson(message) + "\""));
-        return write_failure ? fail(std::move(target), "persistence", "persist_failed", message, batch_id) : makeItem(target, false, false, false, false, "persistence", "persist_failed", message);
+        return write_failure ? fail(std::move(target), "persistence", "persist_failed", message, batch_id, listener) : makeItem(target, false, false, false, false, "persistence", "persist_failed", message);
     }
 
+    emitItemEvent(listener, target, "resourceBlobCommitStarted", stagePayload(target, "resource_blob_commit_started", "\"local_path\":\"" + escapeJson(path.relative_path) + "\""));
     auto saved = writer->commit();
     if (!saved.ok) {
         const std::string message = saved.error.empty() ? "resource blob save failed" : saved.error;
         emitItemEvent(listener, target, "resourceBlobSaveFailed", stagePayload(target, "resource_blob_save_failed", "\"result_code\":\"persist_failed\",\"message\":\"" + escapeJson(message) + "\""));
-        return write_failure ? fail(std::move(target), "persistence", "persist_failed", message, batch_id) : makeItem(target, false, false, false, false, "persistence", "persist_failed", message);
+        return write_failure ? fail(std::move(target), "persistence", "persist_failed", message, batch_id, listener) : makeItem(target, false, false, false, false, "persistence", "persist_failed", message);
     }
     if (saved.local_path.empty() || saved.size_bytes == 0 || saved.size_bytes != downloaded_size || saved.checksum.empty()) {
         emitItemEvent(listener, target, "resourceBlobValidationFailed", stagePayload(target, "resource_blob_validation_failed", "\"result_code\":\"persist_validation_failed\"" + std::string(",\"local_path\":\"") + escapeJson(saved.local_path) + "\"" + ",\"downloaded_size\":" + std::to_string(downloaded_size) + ",\"saved_size\":" + std::to_string(saved.size_bytes)));
-        return write_failure ? fail(std::move(target), "persistence", "persist_validation_failed", "resource blob save result did not match downloaded content", batch_id) : makeItem(target, false, false, false, false, "persistence", "persist_validation_failed", "resource blob save result did not match downloaded content");
+        return write_failure ? fail(std::move(target), "persistence", "persist_validation_failed", "resource blob save result did not match downloaded content", batch_id, listener) : makeItem(target, false, false, false, false, "persistence", "persist_validation_failed", "resource blob save result did not match downloaded content");
     }
     emitItemEvent(listener, target, "resourceBlobSaved", stagePayload(target, "resource_blob_saved", "\"local_path\":\"" + escapeJson(saved.local_path) + "\"" + ",\"size_bytes\":" + std::to_string(saved.size_bytes) + ",\"checksum\":\"" + escapeJson(saved.checksum) + "\""));
 
@@ -558,7 +633,7 @@ application::model::SongResourceProcessItem SongResourceDownloadWorkflow::downlo
     update.batch_id = batch_id;
     if (!resource_queue_ || !resource_queue_->markSucceeded(std::move(update))) {
         emitItemEvent(listener, target, "resourceDbWritebackFailed", stagePayload(target, "resource_db_writeback_failed", "\"result_code\":\"writeback_failed\",\"local_path\":\"" + escapeJson(saved.local_path) + "\""));
-        return write_failure ? fail(std::move(target), "persistence", "writeback_failed", "resource success writeback failed", batch_id) : makeItem(target, false, false, false, false, "persistence", "writeback_failed", "resource success writeback failed");
+        return write_failure ? fail(std::move(target), "persistence", "writeback_failed", "resource success writeback failed", batch_id, listener) : makeItem(target, false, false, false, false, "persistence", "writeback_failed", "resource success writeback failed");
     }
     emitItemEvent(listener, target, "resourceDbWritebackCompleted", stagePayload(target, "resource_db_writeback_completed", "\"local_path\":\"" + escapeJson(saved.local_path) + "\",\"size_bytes\":" + std::to_string(saved.size_bytes)));
 
@@ -584,6 +659,7 @@ void SongResourceDownloadWorkflow::processRelatedTextResources(const application
                 {
                     std::lock_guard<std::mutex> lock(state->related_mutex);
                     if (!state->processed_related_keys.insert(key).second) {
+                        emitBatchEvent(listener, "relatedResourceDeduplicated", stagePayload(audio_target, "related_resource_deduplicated", "\"related_kind\":\"" + escapeJson(kind) + "\""));
                         continue;
                     }
                 }
@@ -594,11 +670,15 @@ void SongResourceDownloadWorkflow::processRelatedTextResources(const application
             request.remote_url = url;
             request.batch_id = batch_id;
 
+            emitBatchEvent(listener, "relatedResourceClaimStarted", stagePayload(audio_target, "related_resource_claim_started", "\"related_kind\":\"" + escapeJson(kind) + "\""));
             auto related_target = resource_queue_->claimRelated(std::move(request));
             if (!related_target) {
                 auto item = makeRelatedSkippedItem(audio_target, kind);
                 if (listener) {
                     listener->onItemStarted(item);
+                }
+                if (listener) {
+                    listener->onItemEvent(item, "relatedResourceNotClaimed", stagePayload(audio_target, "related_resource_not_claimed", "\"related_kind\":\"" + escapeJson(kind) + "\",\"result_code\":\"related_not_claimed\""));
                 }
                 if (state) {
                     std::lock_guard<std::mutex> lock(state->result_mutex);
@@ -620,6 +700,7 @@ void SongResourceDownloadWorkflow::processRelatedTextResources(const application
             } else {
                 if (listener) {
                     listener->onItemStarted(makeStartedItem(*related_target, true));
+                    listener->onItemEvent(makeStartedItem(*related_target, true), "relatedResourceClaimed", stagePayload(*related_target, "related_resource_claimed", "\"related_kind\":\"" + escapeJson(kind) + "\""));
                 }
                 auto item = processDirectResource(std::move(*related_target), batch_id, state ? state->options : application::model::SongResourceProcessOptions {}, listener);
                 item.related = true;
@@ -697,7 +778,7 @@ bool SongResourceDownloadWorkflow::refreshPacmtoken(ProcessRunState &state, Song
     return true;
 }
 
-application::model::SongResourceProcessItem SongResourceDownloadWorkflow::fail(application::model::SongResourceQueueTarget target, std::string category, std::string code, std::string message, const std::string &batch_id)
+application::model::SongResourceProcessItem SongResourceDownloadWorkflow::fail(application::model::SongResourceQueueTarget target, std::string category, std::string code, std::string message, const std::string &batch_id, SongResourceProcessListener *listener)
 {
     application::model::SongResourceFailureUpdate update;
     update.resource_id = target.resource_id;
@@ -705,13 +786,15 @@ application::model::SongResourceProcessItem SongResourceDownloadWorkflow::fail(a
     update.result_code = std::move(code);
     update.message = trimMessage(std::move(message));
     update.batch_id = batch_id;
+    bool writeback_ok = false;
     if (resource_queue_) {
-        (void)resource_queue_->markFailed(update);
+        writeback_ok = resource_queue_->markFailed(update);
     }
+    emitItemEvent(listener, target, writeback_ok ? "resourceFailureWritebackCompleted" : "resourceFailureWritebackFailed", stagePayload(target, writeback_ok ? "resource_failure_writeback_completed" : "resource_failure_writeback_failed", "\"result_code\":\"" + escapeJson(update.result_code) + "\",\"error_category\":\"" + escapeJson(update.error_category) + "\""));
     return makeItem(target, false, false, false, false, update.error_category, update.result_code, update.message);
 }
 
-application::model::SongResourceProcessItem SongResourceDownloadWorkflow::skip(application::model::SongResourceQueueTarget target, std::string category, std::string code, std::string message, const std::string &batch_id)
+application::model::SongResourceProcessItem SongResourceDownloadWorkflow::skip(application::model::SongResourceQueueTarget target, std::string category, std::string code, std::string message, const std::string &batch_id, SongResourceProcessListener *listener)
 {
     application::model::SongResourceSkipUpdate update;
     update.resource_id = target.resource_id;
@@ -722,9 +805,11 @@ application::model::SongResourceProcessItem SongResourceDownloadWorkflow::skip(a
     update.result_code = std::move(code);
     update.message = trimMessage(std::move(message));
     update.batch_id = batch_id;
+    bool writeback_ok = false;
     if (resource_queue_) {
-        (void)resource_queue_->markSkipped(update);
+        writeback_ok = resource_queue_->markSkipped(update);
     }
+    emitItemEvent(listener, target, writeback_ok ? "resourceSkipWritebackCompleted" : "resourceSkipWritebackFailed", stagePayload(target, writeback_ok ? "resource_skip_writeback_completed" : "resource_skip_writeback_failed", "\"result_code\":\"" + escapeJson(update.result_code) + "\",\"error_category\":\"" + escapeJson(update.error_category) + "\""));
     return makeItem(target, false, true, false, false, update.error_category, update.result_code, update.message);
 }
 

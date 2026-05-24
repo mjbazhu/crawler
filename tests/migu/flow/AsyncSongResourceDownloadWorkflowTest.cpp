@@ -438,13 +438,45 @@ model::SongResourceClaimQuery baseQuery(std::string batch_id)
     return query;
 }
 
+// 记录异步 workflow 阶段事件，用于验证批次事件覆盖关键步骤。
+class RecordingResourceListener : public use_cases::SongResourceProcessListener {
+public:
+    void onBatchEvent(std::string event_type, std::string) override
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        events.push_back(std::move(event_type));
+    }
+
+    void onItemStarted(const model::SongResourceProcessItem &) override {}
+
+    void onItemFinished(const model::SongResourceProcessItem &) override {}
+
+    void onItemEvent(const model::SongResourceProcessItem &, std::string event_type, std::string) override
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        events.push_back(std::move(event_type));
+    }
+
+    bool hasEvent(const std::string &event_type) const
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return std::find(events.begin(), events.end(), event_type) != events.end();
+    }
+
+    std::vector<std::string> events; // 已收到的事件名
+
+private:
+    mutable std::mutex mutex_; // 保护事件记录
+};
+
 model::SongResourceProcessResult runWorkflow(
     use_cases::AsyncSongResourceDownloadWorkflow &workflow,
     std::shared_ptr<ThreadedAsyncRuntime> runtime,
-    model::SongResourceClaimQuery query
+    model::SongResourceClaimQuery query,
+    use_cases::SongResourceProcessListener *listener = nullptr
 )
 {
-    return runtime->runForTest(workflow.processPending(std::move(query)));
+    return runtime->runForTest(workflow.processPending(std::move(query), listener));
 }
 
 void testAsyncWorkflowHonorsConcurrency()
@@ -498,12 +530,16 @@ void testAsyncWorkflowDeduplicatesRelatedResourcesUnderConcurrency()
     query.resource_kind = "audio";
     query.limit = 2;
     query.options.resource_download_concurrency = 2;
-    const auto result = runWorkflow(workflow, runtime, query);
+    RecordingResourceListener listener;
+    const auto result = runWorkflow(workflow, runtime, query, &listener);
 
     require(result.succeeded_count == 2, "both audio resources should succeed");
     require(result.related_succeeded_count == 3, "related lyric/mrc/trc should be saved once");
     require(queue->related_claim_count == 3, "related resources should only be claimed once per kind");
     require(queue->succeeded.size() == 5, "two audio and three related resources should be written back");
+    require(listener.hasEvent("relatedResourceClaimStarted"), "async workflow should emit related claim started event");
+    require(listener.hasEvent("relatedResourceClaimed"), "async workflow should emit related claimed event");
+    require(listener.hasEvent("relatedResourceDeduplicated"), "async workflow should emit related deduplicated event");
 }
 
 void testAsyncWorkflowRetriesAudioWithFreshListenUrl()
@@ -530,7 +566,8 @@ void testAsyncWorkflowRetriesAudioWithFreshListenUrl()
     query.resource_kind = "audio";
     query.limit = 1;
     query.options.resource_download_retries = 1;
-    const auto result = runWorkflow(workflow, runtime, query);
+    RecordingResourceListener listener;
+    const auto result = runWorkflow(workflow, runtime, query, &listener);
 
     require(result.succeeded_count == 1, "network retry should succeed with fresh listen URL");
     require(provider->requests.size() == 2, "audio retry should call listen provider twice");
@@ -539,6 +576,12 @@ void testAsyncWorkflowRetriesAudioWithFreshListenUrl()
     require(fetcher->requested_urls[1] == "https://example.test/fresh.flac", "retry should use fresh URL");
     require(queue->failed.empty(), "intermediate retry failure should not be written back");
     require(queue->succeeded.size() == 1, "final success should be written back once");
+    require(listener.hasEvent("resourceClaimStarted"), "async workflow should emit claim started event");
+    require(listener.hasEvent("resourceClaimCompleted"), "async workflow should emit claim completed event");
+    require(listener.hasEvent("resourceAttemptStarted"), "async workflow should emit attempt started event");
+    require(listener.hasEvent("resourceRetryScheduled"), "async workflow should emit retry scheduled event");
+    require(listener.hasEvent("resourceBlobCommitStarted"), "async workflow should emit blob commit started event");
+    require(listener.hasEvent("resourceDbWritebackCompleted"), "async workflow should emit success writeback event");
 }
 
 void testAsyncWorkflowRefreshesPacmtokenOn440013()
@@ -587,7 +630,8 @@ void testAsyncWorkflowSkipsKnownDigitalAlbumBeforeFetch()
     use_cases::AsyncSongResourceDownloadWorkflow workflow(runtime, queue, provider, parser, std::make_shared<ScriptedAsyncContentFetcher>(), std::make_shared<MemoryAsyncBlobStore>());
     auto query = baseQuery("async-digital-skip");
     query.resource_kind = "audio";
-    const auto result = runWorkflow(workflow, runtime, query);
+    RecordingResourceListener listener;
+    const auto result = runWorkflow(workflow, runtime, query, &listener);
 
     require(result.skipped_count == 1, "known digital album should be skipped");
     require(result.failed_count == 0, "known digital album should not fail");
@@ -595,6 +639,7 @@ void testAsyncWorkflowSkipsKnownDigitalAlbumBeforeFetch()
     require(queue->skipped.size() == 1, "known digital album should use skip writeback");
     require(queue->skipped.front().resource_kind.empty(), "known digital album should skip all resources for the song");
     require(queue->skipped.front().result_code == "digital_album", "known digital album should use stable skip code");
+    require(listener.hasEvent("resourceSkipWritebackCompleted"), "known digital album should emit skip writeback event");
 }
 
 void testAsyncWorkflowSkipsAllSongResourcesOn440016()

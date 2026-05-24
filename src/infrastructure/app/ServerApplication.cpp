@@ -8,6 +8,7 @@
 #include "crawler/infrastructure/app/HttpClientOptionsFactory.h"
 #include "crawler/infrastructure/app/PersistenceAssembly.h"
 #include "crawler/infrastructure/app/RuntimeSettingsSnapshotFactory.h"
+#include "crawler/infrastructure/execution/asio/AsioExecutionContext.h"
 #include "crawler/infrastructure/execution/asio/AsioAsyncRuntime.h"
 #include "crawler/infrastructure/execution/threading/ThreadPool.h"
 #include "crawler/infrastructure/http/client/AsioHttpClient.h"
@@ -21,14 +22,15 @@
 #include "crawler/infrastructure/music/migu/provider/MiguProvider.h"
 #include "crawler/infrastructure/music/migu/provider/MiguRuntimePacmtokenStore.h"
 #include "crawler/infrastructure/observability/logging/ConsoleDiagnosticsSink.h"
+#include "crawler/infrastructure/observability/logging/Logger.h"
 #include "crawler/infrastructure/storage/filesystem/FileStorage.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <exception>
-#include <iostream>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -36,6 +38,14 @@
 namespace orchestrator::modules::crawler::infrastructure::app {
 
 namespace {
+
+namespace logging = orchestrator::modules::crawler::infrastructure::observability::logging;
+
+// 记录组合根生命周期日志，避免裸 stdout/stderr 破坏日志格式。
+void logApp(logging::LogLevel level, std::string_view message)
+{
+    logging::Logger::instance().log(level, "App", message);
+}
 
 // 简单的 URL 判断函数
 bool isUrl(std::string_view value)
@@ -72,6 +82,7 @@ public:
     std::shared_ptr<application::ports::SongResourceContentFetcher> song_resource_content_fetcher_;
     std::shared_ptr<application::ports::AsyncSongResourceProvider> async_song_resource_provider_;
     std::shared_ptr<application::ports::AsyncSongResourceContentFetcher> async_song_resource_content_fetcher_;
+    std::shared_ptr<execution::asio::AsioExecutionContext> async_execution_context_;
     std::shared_ptr<application::ports::AsyncRuntime> async_runtime_;
     std::shared_ptr<application::ports::DiagnosticsSink> diagnostics_;
 
@@ -101,7 +112,7 @@ ServerApplication::~ServerApplication() = default;
 bool ServerApplication::initialize()
 {
     try {
-        std::cout << "[App] Initializing crawler components..." << std::endl;
+        logApp(logging::LogLevel::L_INFO, "Initializing crawler components...");
 
         const int parse_worker_count = (std::max)(1, impl_->config_.parse_worker_threads);
         impl_->parse_worker_pool_ = std::make_shared<execution::threading::ThreadPool>(parse_worker_count);
@@ -142,7 +153,8 @@ bool ServerApplication::initialize()
         impl_->catalog_query_repository_ = std::move(persistence_components->catalog_query_repository);
         impl_->song_resource_queue_ = std::move(persistence_components->song_resource_queue);
         auto blocking_storage_executor = impl_->persistence_worker_pool_ ? std::static_pointer_cast<application::ports::TaskExecutor>(impl_->persistence_worker_pool_) : std::static_pointer_cast<application::ports::TaskExecutor>(impl_->resource_worker_pool_);
-        impl_->async_runtime_ = std::make_shared<execution::asio::AsioAsyncRuntime>(impl_->asio_http_client_->executor(), blocking_storage_executor);
+        impl_->async_execution_context_ = std::make_shared<execution::asio::AsioExecutionContext>(static_cast<std::size_t>((std::max)(1, impl_->config_.outbound_http_io_threads)));
+        impl_->async_runtime_ = std::make_shared<execution::asio::AsioAsyncRuntime>(impl_->async_execution_context_->executor(), blocking_storage_executor);
 
         impl_->diagnostics_ = std::make_shared<observability::logging::ConsoleDiagnosticsSink>();
 
@@ -206,15 +218,17 @@ bool ServerApplication::initialize()
             const auto recovered = impl_->crawler_service_->recoverMiguStale(std::move(recovery_request));
             const int recovered_total = recovered.singer_songs_recovered + recovered.singer_albums_recovered + recovered.album_details_recovered + recovered.album_songs_recovered + recovered.resources_recovered + recovered.batches_recovered;
             if (recovered_total > 0) {
-                std::cout << "[App] Recovered stale Migu running states: singer_songs=" << recovered.singer_songs_recovered
-                          << ", singer_albums=" << recovered.singer_albums_recovered
-                          << ", album_details=" << recovered.album_details_recovered
-                          << ", album_songs=" << recovered.album_songs_recovered
-                          << ", resources=" << recovered.resources_recovered
-                          << ", batches=" << recovered.batches_recovered << std::endl;
+                std::ostringstream out;
+                out << "Recovered stale Migu running states: singer_songs=" << recovered.singer_songs_recovered
+                    << ", singer_albums=" << recovered.singer_albums_recovered
+                    << ", album_details=" << recovered.album_details_recovered
+                    << ", album_songs=" << recovered.album_songs_recovered
+                    << ", resources=" << recovered.resources_recovered
+                    << ", batches=" << recovered.batches_recovered;
+                logApp(logging::LogLevel::L_INFO, out.str());
             }
         } catch (const std::exception &e) {
-            std::cerr << "[App] Stale Migu recovery skipped: " << e.what() << std::endl;
+            logApp(logging::LogLevel::L_WARN, std::string("Stale Migu recovery skipped: ") + e.what());
         }
 
         impl_->crawler_controller_ = std::make_shared<api::controllers::CrawlerController>(
@@ -229,10 +243,10 @@ bool ServerApplication::initialize()
         api::routing::CrawlerRoutes crawler_routes(impl_->crawler_controller_);
         crawler_routes.registerRoutes(*impl_->http_server_);
 
-        std::cout << "[App] Crawler initialization complete." << std::endl;
+        logApp(logging::LogLevel::L_INFO, "Crawler initialization complete.");
         return true;
     } catch (const std::exception &e) {
-        std::cerr << "[App] Initialization failed: " << e.what() << std::endl;
+        logApp(logging::LogLevel::L_ERROR, std::string("Initialization failed: ") + e.what());
         return false;
     }
 }
@@ -258,11 +272,11 @@ void ServerApplication::stop()
 bool ServerApplication::executeCrawl(const std::string &target)
 {
     if (!impl_->crawler_service_) {
-        std::cerr << "[App] CrawlerService not initialized." << std::endl;
+        logApp(logging::LogLevel::L_ERROR, "CrawlerService not initialized.");
         return false;
     }
 
-    std::cout << "[App] CLI Mode: Crawling " << target << "..." << std::endl;
+    logApp(logging::LogLevel::L_INFO, "CLI Mode: Crawling " + target + "...");
     if (isUrl(target)) {
         return impl_->crawler_service_->processUrlSync(target, 20);
     }

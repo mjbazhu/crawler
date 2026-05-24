@@ -388,6 +388,37 @@ model::SongResourceContentFetchResult okContent(std::string content_type = "audi
     return result;
 }
 
+// 记录 workflow 阶段事件，用于验证批次日志覆盖关键步骤。
+class RecordingResourceListener : public use_cases::SongResourceProcessListener {
+public:
+    void onBatchEvent(std::string event_type, std::string) override
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        events.push_back(std::move(event_type));
+    }
+
+    void onItemStarted(const model::SongResourceProcessItem &) override {}
+
+    void onItemFinished(const model::SongResourceProcessItem &) override {}
+
+    void onItemEvent(const model::SongResourceProcessItem &, std::string event_type, std::string) override
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        events.push_back(std::move(event_type));
+    }
+
+    bool hasEvent(const std::string &event_type) const
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return std::find(events.begin(), events.end(), event_type) != events.end();
+    }
+
+    std::vector<std::string> events; // 已收到的事件名
+
+private:
+    mutable std::mutex mutex_; // 保护事件记录
+};
+
 void testWorkflowStreamsContentIntoBlobStore()
 {
     auto queue = std::make_shared<FakeSongResourceQueue>();
@@ -687,7 +718,8 @@ void testWorkflowReportsRelatedFailureAndMissingClaim()
     query.resource_kind = "audio";
     query.limit = 1;
     query.batch_id = "workflow-related-failure-test";
-    const auto result = workflow.processPending(query);
+    RecordingResourceListener listener;
+    const auto result = workflow.processPending(query, &listener);
 
     require(result.succeeded_count == 1, "audio should still succeed when related lyric fails");
     require(result.related_failed_count == 1, "claimed lyric download failure should be counted");
@@ -706,6 +738,10 @@ void testWorkflowReportsRelatedFailureAndMissingClaim()
     require(skipped_related->result_code == "related_not_claimed", "missing related claim should expose stable result code");
     require(skipped_related->synthetic, "missing related claim should be marked synthetic");
     require(result.synthetic_related_skipped_count == 1, "missing related claim should increment synthetic related skip count");
+    require(listener.hasEvent("relatedResourceClaimStarted"), "workflow should emit related claim started event");
+    require(listener.hasEvent("relatedResourceClaimed"), "workflow should emit related claimed event");
+    require(listener.hasEvent("relatedResourceNotClaimed"), "workflow should emit related missing claim event");
+    require(listener.hasEvent("resourceFailureWritebackCompleted"), "workflow should emit related failure writeback event");
 
     std::filesystem::remove_all(root);
 }
@@ -734,7 +770,8 @@ void testWorkflowRetriesNetworkFailureWithFreshListenUrl()
     query.limit = 1;
     query.batch_id = "workflow-retry-fresh-url-test";
     query.options.resource_download_retries = 1;
-    const auto result = workflow.processPending(query);
+    RecordingResourceListener listener;
+    const auto result = workflow.processPending(query, &listener);
 
     require(result.succeeded_count == 1, "network retry should succeed after fresh listen URL");
     require(provider->call_count == 2, "audio retry should request listen URL again");
@@ -743,6 +780,12 @@ void testWorkflowRetriesNetworkFailureWithFreshListenUrl()
     require(fetcher->requested_urls[1] == "https://example.test/fresh.flac", "retry download should use refreshed listen URL");
     require(queue->failed.empty(), "intermediate retry failure should not be written back");
     require(queue->succeeded.size() == 1, "final retry success should be written back once");
+    require(listener.hasEvent("resourceClaimStarted"), "workflow should emit claim started event");
+    require(listener.hasEvent("resourceClaimCompleted"), "workflow should emit claim completed event");
+    require(listener.hasEvent("resourceAttemptStarted"), "workflow should emit attempt started event");
+    require(listener.hasEvent("resourceRetryScheduled"), "workflow should emit retry scheduled event");
+    require(listener.hasEvent("resourceBlobCommitStarted"), "workflow should emit blob commit started event");
+    require(listener.hasEvent("resourceDbWritebackCompleted"), "workflow should emit success writeback event");
 }
 
 void testWorkflowRefreshesPacmtokenOn440013()
@@ -927,7 +970,8 @@ void testWorkflowSkipsKnownDigitalAlbumBeforeFetch()
     query.resource_kind = "audio";
     query.limit = 1;
     query.batch_id = "workflow-known-digital-skip-test";
-    const auto result = workflow.processPending(query);
+    RecordingResourceListener listener;
+    const auto result = workflow.processPending(query, &listener);
 
     require(result.claimed_count == 1, "one known digital album resource should be claimed");
     require(result.succeeded_count == 0, "known digital album resource should not succeed");
@@ -940,6 +984,7 @@ void testWorkflowSkipsKnownDigitalAlbumBeforeFetch()
     require(queue->skipped.front().resource_kind.empty(), "known digital album skip should target all resources");
     require(queue->skipped.front().format_type.empty(), "known digital album skip should cover all resource formats");
     require(queue->skipped.front().result_code == "digital_album", "known digital album skip should use stable local result code");
+    require(listener.hasEvent("resourceSkipWritebackCompleted"), "known digital album should emit skip writeback event");
 }
 
 void testWorkflowDoesNotWriteCompletedWhenBlobValidationFails()

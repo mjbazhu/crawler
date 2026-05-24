@@ -1,20 +1,43 @@
 #include "crawler/infrastructure/app/ServerApplication.h"
+#include "crawler/infrastructure/observability/logging/Logger.h"
 #include "crawler/infrastructure/platform/Environment.h"
 #include "crawler/infrastructure/platform/PlatformUtils.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <csignal>
 #include <cstddef>
+#include <cctype>
 #include <iostream>
 #include <string>
+#include <string_view>
 #include <thread>
+#include <utility>
 
 std::atomic<bool> g_running {true};
 
 void signalHandler(int)
 {
     g_running = false;
+}
+
+std::string lowerAscii(std::string value)
+{
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return value;
+}
+
+orchestrator::modules::crawler::infrastructure::observability::logging::LogLevel parseLogLevel(std::string_view value)
+{
+    namespace logging = orchestrator::modules::crawler::infrastructure::observability::logging;
+    const std::string normalized = lowerAscii(std::string(value));
+    if (normalized == "debug") return logging::LogLevel::L_DEBUG;
+    if (normalized == "warn" || normalized == "warning") return logging::LogLevel::L_WARN;
+    if (normalized == "error") return logging::LogLevel::L_ERROR;
+    return logging::LogLevel::L_INFO;
 }
 
 int main(int argc, char *argv[])
@@ -30,6 +53,17 @@ int main(int argc, char *argv[])
     } else {
         env::Environment::loadDotEnvFile(".env");
     }
+
+    namespace logging = ::orchestrator::modules::crawler::infrastructure::observability::logging;
+    logging::Logger::Options log_options;
+    log_options.level = parseLogLevel(env::Environment::getStringOr("CRAWLER_LOG_LEVEL", "info"));
+    log_options.console_enabled = env::Environment::getBoolOr("CRAWLER_LOG_CONSOLE", true);
+    log_options.text_file_enabled = env::Environment::getBoolOr("CRAWLER_LOG_TEXT_FILE_ENABLED", true);
+    log_options.text_file_path = env::Environment::getStringOr("CRAWLER_LOG_TEXT_FILE", "logs/crawler.log");
+    log_options.json_file_enabled = env::Environment::getBoolOr("CRAWLER_LOG_JSON_FILE_ENABLED", false);
+    log_options.json_file_path = env::Environment::getStringOr("CRAWLER_LOG_JSON_FILE", "logs/crawler.jsonl");
+    logging::Logger::instance().configure(std::move(log_options));
+
     std::signal(SIGINT, signalHandler);
 
     orchestrator::modules::crawler::infrastructure::app::ServerApplication::Config config;
