@@ -34,7 +34,12 @@ void test_singer_index_ingestion_flow()
     metadata.source_item_key = "singer:112";
     metadata.source_singer_id = "112";
     metadata.source_country = "华语";
-    parser->mock_singer_sources_by_body["singers"] = {metadata};
+    auto second_metadata = metadata;
+    second_metadata.name = "林俊杰";
+    second_metadata.normalized_name = "林俊杰";
+    second_metadata.source_item_key = "singer:113";
+    second_metadata.source_singer_id = "113";
+    parser->mock_singer_sources_by_body["singers"] = {metadata, second_metadata};
 
     crawler::application::use_cases::CrawlerService service(
         provider,
@@ -56,10 +61,10 @@ void test_singer_index_ingestion_flow()
         singer_source_repository
     );
 
-    const bool saved = service.crawlSingerIndexAndSaveSync("huayu-nan", 20);
+    const bool saved = service.crawlSingerIndexAndSaveSync("huayu-nan", 0);
     assert(saved);
     assert(provider->last_singer_index_tab == "huayu-nan");
-    assert(singer_source_repository->saved_singers.size() == 1);
+    assert(singer_source_repository->saved_singers.size() == 2);
     assert(singer_source_repository->saved_singers.front().source_singer_id == "112");
     assert(singer_source_repository->saved_singers.front().gender == crawler::domain::Gender::Male);
 

@@ -435,6 +435,20 @@ void testCatalogRoutes()
 {
     auto controller = makeController();
 
+    const auto singer_index_zero_limit = controller->handleStartMiguSingerIndexCrawl(request("POST", "/api/migu/singers/crawl", {}, R"({"tabs":["huayu-nan"],"limit":0})"));
+    require(singer_index_zero_limit.status_code == 202, "singer index crawl should accept limit 0");
+    require(parseBody(singer_index_zero_limit)["limit"].get<int>() == 0, "singer index crawl should preserve limit 0");
+    require(controller->handleStartMiguSingerIndexCrawl(request("POST", "/api/migu/singers/crawl", {}, R"({"tabs":["huayu-nan"],"limit":1000})")).status_code == 202, "singer index crawl should not cap positive limit at 500");
+    require(controller->handleStartMiguSingerIndexCrawl(request("POST", "/api/migu/singers/crawl", {}, R"({"tabs":["huayu-nan"],"limit":-1})")).status_code == 400, "negative singer index limit should return 400");
+    const auto singer_songs_zero_limit = controller->handleStartMiguSingerSongsCrawl(request("POST", "/api/migu/singer-songs/crawl", {}, R"({"singer_ids":[112],"limit":0})"));
+    require(singer_songs_zero_limit.status_code == 202, "singer songs crawl should accept limit 0");
+    require(parseBody(singer_songs_zero_limit)["limit"].get<int>() == 0, "singer songs crawl should preserve limit 0");
+    const auto singer_albums_zero_limit = controller->handleStartMiguSingerAlbumsCrawl(request("POST", "/api/migu/singer-albums/crawl", {}, R"({"singer_ids":[112],"limit":0})"));
+    require(singer_albums_zero_limit.status_code == 202, "singer albums crawl should accept limit 0");
+    require(parseBody(singer_albums_zero_limit)["limit"].get<int>() == 0, "singer albums crawl should preserve limit 0");
+    require(controller->handleStartMiguSingerSongsCrawl(request("POST", "/api/migu/singer-songs/crawl", {}, R"({"singer_ids":[112],"limit":501})")).status_code == 400, "singer songs limit over 500 should return 400");
+    require(controller->handleStartMiguSingerAlbumsCrawl(request("POST", "/api/migu/singer-albums/crawl", {}, R"({"singer_ids":[112],"limit":-1})")).status_code == 400, "negative singer albums limit should return 400");
+
     assertPageResponse(controller->handleListMiguSingers(request("GET", "/api/migu/singers", {{"page", "1"}, {"page_size", "20"}})));
     assertPageResponse(controller->handleListMiguAlbums(request("GET", "/api/migu/albums")));
     assertPageResponse(controller->handleListMiguSongs(request("GET", "/api/migu/songs", {{"status", "0,3"}, {"format", "HQ"}})));

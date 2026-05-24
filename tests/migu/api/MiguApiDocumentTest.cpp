@@ -17,6 +17,12 @@ void requirePath(const nlohmann::json &doc, const std::string &path)
     assert(doc["paths"].contains(path));
 }
 
+// 断言文档片段包含指定语义文本。
+void requireDumpContains(const nlohmann::json &value, const std::string &needle)
+{
+    assert(value.dump().find(needle) != std::string::npos);
+}
+
 } // namespace
 
 int main()
@@ -104,12 +110,32 @@ int main()
     assert(schemas.contains("PacmtokenCurrentResponse"));
     assert(schemas["SyncStatus"]["enum"].is_array());
 
+    const auto &singer_index_limit = schemas["SingerIndexCrawlRequest"]["properties"]["limit"];
+    assert(singer_index_limit["minimum"] == 0);
+    assert(!singer_index_limit.contains("maximum"));
+    requireDumpContains(singer_index_limit, "all singers");
+
+    const auto &singer_ids_limit = schemas["SingerIdsCrawlRequest"]["properties"]["limit"];
+    assert(singer_ids_limit["minimum"] == 0);
+    assert(singer_ids_limit["maximum"] == 500);
+    assert(singer_ids_limit["default"] == 0);
+    requireDumpContains(singer_ids_limit, "all items");
+
     const auto &integrity_properties = schemas["IntegritySummary"]["properties"];
     assert(integrity_properties.contains("singers_songs_running_stale"));
     assert(integrity_properties.contains("singers_albums_running_stale"));
     assert(integrity_properties.contains("albums_details_running_stale"));
     assert(integrity_properties.contains("albums_songs_running_stale"));
     assert(integrity_properties.contains("running_batches_stale"));
+    requireDumpContains(integrity_properties["singers_without_songs"], "song_artist_refs");
+    requireDumpContains(integrity_properties["singers_without_songs"], "not only songs_sync_status");
+    requireDumpContains(integrity_properties["singers_without_albums"], "album_source_refs.source_artist_id");
+    requireDumpContains(integrity_properties["singers_without_albums"], "not only albums_sync_status");
+
+    const auto &overview_properties = schemas["Overview"]["properties"];
+    assert(overview_properties.contains("singer_song_relations"));
+    assert(overview_properties.contains("singer_album_relations"));
+    assert(overview_properties.contains("album_song_relations"));
 
     const auto &schema_status_properties = schemas["SchemaStatus"]["properties"];
     assert(schema_status_properties.contains("schema_version"));
@@ -163,6 +189,26 @@ int main()
     assert(!song_properties.contains("duration_seconds"));
     assert(song_properties.contains("trc_url"));
 
+    const auto &singer_properties = schemas["SingerRecord"]["properties"];
+    assert(singer_properties.contains("songs_count"));
+    assert(singer_properties.contains("albums_count"));
+    requireDumpContains(singer_properties["songs_sync_count"], "song_artist_refs");
+    requireDumpContains(singer_properties["albums_sync_count"], "album_source_refs.source_artist_id");
+    requireDumpContains(singer_properties["songs_sync_status"], "real song_artist_refs");
+    requireDumpContains(singer_properties["songs_sync_status"], "completed (2)");
+    requireDumpContains(singer_properties["albums_sync_status"], "album_source_refs.source_artist_id");
+    requireDumpContains(singer_properties["albums_sync_status"], "completed (2)");
+
+    const auto &album_properties = schemas["AlbumRecord"]["properties"];
+    assert(album_properties.contains("songs_count"));
+    assert(album_properties.contains("album_songs_count"));
+    requireDumpContains(album_properties["album_songs_count"], "album_song_refs");
+
+    const auto &backfill_target_properties = schemas["BackfillQueueTarget"]["properties"];
+    requireDumpContains(backfill_target_properties["sync_status"], "same real-relation derived status as SingerRecord");
+    requireDumpContains(backfill_target_properties["sync_count"], "song_artist_refs");
+    requireDumpContains(backfill_target_properties["sync_count"], "album_source_refs.source_artist_id");
+
     const auto &batch_properties = schemas["BatchTask"]["properties"];
     assert(batch_properties.contains("archived_at"));
     assert(batch_properties.contains("archived_reason"));
@@ -184,6 +230,20 @@ int main()
     const std::string singer_params_dump = singer_params.dump();
     assert(singer_params_dump.find("songs_sync_status") != std::string::npos);
     assert(singer_params_dump.find("albums_sync_status") != std::string::npos);
+    assert(singer_params_dump.find("min_songs_count") != std::string::npos);
+    assert(singer_params_dump.find("max_songs_count") != std::string::npos);
+    assert(singer_params_dump.find("min_albums_count") != std::string::npos);
+    assert(singer_params_dump.find("max_albums_count") != std::string::npos);
+    requireDumpContains(doc["paths"]["/api/migu/singers"]["get"], "Status filters use the same exposed status");
+    requireDumpContains(doc["paths"]["/api/migu/singers/{source_singer_id}"]["get"], "real relationship summary counts");
+    requireDumpContains(doc["paths"]["/api/migu/integrity"]["get"], "relationship existence");
+
+    const auto &album_params = doc["paths"]["/api/migu/albums"]["get"]["parameters"];
+    const std::string album_params_dump = album_params.dump();
+    assert(album_params_dump.find("min_songs_count") != std::string::npos);
+    assert(album_params_dump.find("max_songs_count") != std::string::npos);
+    assert(album_params_dump.find("min_album_songs_count") != std::string::npos);
+    assert(album_params_dump.find("max_album_songs_count") != std::string::npos);
 
     const auto &task_params = doc["paths"]["/api/migu/tasks"]["get"]["parameters"];
     const std::string task_params_dump = task_params.dump();
@@ -202,6 +262,10 @@ int main()
 
     const auto &queue_response = doc["paths"]["/api/migu/backfill/singer-songs/queue"]["get"]["responses"]["200"]["content"]["application/json"]["schema"];
     assert(queue_response["$ref"] == "#/components/schemas/BackfillQueueTargetPage");
+    requireDumpContains(doc["paths"]["/api/migu/backfill/singer-songs/queue"]["get"], "real song_artist_refs summary");
+    requireDumpContains(doc["paths"]["/api/migu/backfill/singer-songs/queue"]["get"], "not returned by the default missing-song queue");
+    requireDumpContains(doc["paths"]["/api/migu/backfill/singer-albums/queue"]["get"], "real album_source_refs.source_artist_id summary");
+    requireDumpContains(doc["paths"]["/api/migu/backfill/singer-albums/queue"]["get"], "not returned by the default missing-album queue");
 
     const auto &error_properties = schemas["ErrorResponse"]["properties"];
     assert(error_properties.contains("error_code"));

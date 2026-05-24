@@ -34,14 +34,15 @@ void require(bool condition, const std::string &message)
 
 // 补池认领测试 fixture 的平台 ID。
 struct ClaimFixture {
-    std::string suffix;               // 唯一后缀
-    std::string singer_failed;        // 歌曲失败的歌手 ID
-    std::string singer_completed;     // 已完成歌手 ID
-    std::string singer_partial;       // 部分完成歌手 ID
-    std::string album_detail_failed;  // 详情失败专辑 ID
-    std::string album_detail_done;    // 详情已完成专辑 ID
-    std::string album_songs_failed;   // 专辑歌曲失败且详情完成的专辑 ID
-    std::string album_songs_blocked;  // 专辑歌曲失败但详情未完成的专辑 ID
+    std::string suffix;              // 唯一后缀
+    std::string singer_failed;       // 歌曲失败的歌手 ID
+    std::string singer_completed;    // 已完成歌手 ID
+    std::string singer_partial;      // 部分完成歌手 ID
+    std::string singer_has_content;  // 已有真实歌曲但状态待处理的歌手 ID
+    std::string album_detail_failed; // 详情失败专辑 ID
+    std::string album_detail_done;   // 详情已完成专辑 ID
+    std::string album_songs_failed;  // 专辑歌曲失败且详情完成的专辑 ID
+    std::string album_songs_blocked; // 专辑歌曲失败但详情未完成的专辑 ID
 };
 
 // 生成跨测试运行唯一后缀。
@@ -68,6 +69,8 @@ boost::asio::awaitable<void> executeSql(const std::shared_ptr<mysql::MySqlConnec
 // 清理补池认领测试 fixture。
 boost::asio::awaitable<void> cleanupClaimFixtures(const std::shared_ptr<mysql::MySqlConnectionPool> &pool)
 {
+    co_await executeSql(pool, "DELETE FROM song_source_refs WHERE source = 'migu' AND source_item_key LIKE 'codex_claim_%'");
+    co_await executeSql(pool, "DELETE FROM songs WHERE normalized_title LIKE 'codex_claim_%'");
     co_await executeSql(pool, "DELETE FROM album_source_refs WHERE source = 'migu' AND source_item_key LIKE 'codex_claim_%'");
     co_await executeSql(pool, "DELETE FROM albums WHERE normalized_title LIKE 'codex_claim_%'");
     co_await executeSql(pool, "DELETE FROM singer_source_refs WHERE source = 'migu' AND source_item_key LIKE 'codex_claim_%'");
@@ -124,6 +127,52 @@ boost::asio::awaitable<void> seedSinger(
     );
 }
 
+// 插入一个已有真实歌曲关系但同步字段仍待处理的歌手。
+boost::asio::awaitable<void> seedSingerWithContent(
+    const std::shared_ptr<mysql::MySqlConnectionPool> &pool,
+    const std::string &suffix,
+    const std::string &source_singer_id
+)
+{
+    const auto now = static_cast<std::uint64_t>(std::time(nullptr));
+    auto connection = co_await pool->coAcquire();
+    boost::mysql::results result;
+    const std::string name = "Codex Claim Singer Has Content " + suffix;
+    co_await connection->async_execute(
+        "INSERT INTO singers (name, normalized_name, gender, status, created_at, updated_at) VALUES ('" + name + "', 'codex_claim_singer_has_content_" + suffix + "', 1, 1, " + std::to_string(now) + ", " + std::to_string(now) + ")",
+        result,
+        boost::asio::use_awaitable
+    );
+    co_await connection->async_execute("SELECT LAST_INSERT_ID()", result, boost::asio::use_awaitable);
+    const auto singer_db_id = mysql::MySqlValueReader::uint64At(result.rows().front(), 0);
+    co_await connection->async_execute(
+        "INSERT INTO singer_source_refs (singer_db_id, source, source_item_key, source_singer_id, source_name_pinyin, source_country, songs_sync_status, albums_sync_status, created_at, updated_at) VALUES (" + std::to_string(singer_db_id) + ", 'migu', 'codex_claim_singer:has_content:" + suffix + "', '" + source_singer_id + "', 'codex', 'huayu', 0, 0, " + std::to_string(now) + ", " + std::to_string(now) + ")",
+        result,
+        boost::asio::use_awaitable
+    );
+
+    const std::string song_title = "Codex Claim Song Has Content " + suffix;
+    co_await connection->async_execute(
+        "INSERT INTO songs (title, normalized_title, created_at, updated_at) VALUES ('" + song_title + "', 'codex_claim_song_has_content_" + suffix + "', " + std::to_string(now) + ", " + std::to_string(now) + ")",
+        result,
+        boost::asio::use_awaitable
+    );
+    co_await connection->async_execute("SELECT LAST_INSERT_ID()", result, boost::asio::use_awaitable);
+    const auto song_db_id = mysql::MySqlValueReader::uint64At(result.rows().front(), 0);
+    co_await connection->async_execute(
+        "INSERT INTO song_source_refs (song_db_id, source, source_item_key, source_song_id, source_content_id, source_resource_type, metadata_status, created_at, updated_at) VALUES (" + std::to_string(song_db_id) + ", 'migu', 'codex_claim_song:has_content:" + suffix + "', 'claim-song-" + suffix + "', 'claim-content-" + suffix + "', '2', 1, " + std::to_string(now) + ", " + std::to_string(now) + ")",
+        result,
+        boost::asio::use_awaitable
+    );
+    co_await connection->async_execute("SELECT LAST_INSERT_ID()", result, boost::asio::use_awaitable);
+    const auto song_source_ref_id = mysql::MySqlValueReader::uint64At(result.rows().front(), 0);
+    co_await connection->async_execute(
+        "INSERT INTO song_artist_refs (song_source_ref_id, singer_source_ref_id, artist_role, artist_order, is_primary, is_seed, created_at, updated_at) VALUES (" + std::to_string(song_source_ref_id) + ", (SELECT id FROM singer_source_refs WHERE source = 'migu' AND source_singer_id = '" + source_singer_id + "' LIMIT 1), 'artist', 1, 1, 1, " + std::to_string(now) + ", " + std::to_string(now) + ")",
+        result,
+        boost::asio::use_awaitable
+    );
+}
+
 // 插入一个专辑和对应来源。
 boost::asio::awaitable<void> seedAlbum(
     const std::shared_ptr<mysql::MySqlConnectionPool> &pool,
@@ -160,6 +209,7 @@ boost::asio::awaitable<ClaimFixture> seedClaimFixture(const std::shared_ptr<mysq
     fixture.singer_failed = "950" + fixture.suffix + "1";
     fixture.singer_completed = "950" + fixture.suffix + "2";
     fixture.singer_partial = "950" + fixture.suffix + "3";
+    fixture.singer_has_content = "950" + fixture.suffix + "4";
     fixture.album_detail_failed = "850" + fixture.suffix + "1";
     fixture.album_detail_done = "850" + fixture.suffix + "2";
     fixture.album_songs_failed = "850" + fixture.suffix + "3";
@@ -168,6 +218,7 @@ boost::asio::awaitable<ClaimFixture> seedClaimFixture(const std::shared_ptr<mysq
     co_await seedSinger(pool, fixture.suffix, "failed", fixture.singer_failed, 3, 3);
     co_await seedSinger(pool, fixture.suffix, "done", fixture.singer_completed, 2, 2);
     co_await seedSinger(pool, fixture.suffix, "partial", fixture.singer_partial, 4, 4);
+    co_await seedSingerWithContent(pool, fixture.suffix, fixture.singer_has_content);
     co_await seedAlbum(pool, fixture.suffix, "detail_failed", fixture.album_detail_failed, 3, 0);
     co_await seedAlbum(pool, fixture.suffix, "detail_done", fixture.album_detail_done, 2, 0);
     co_await seedAlbum(pool, fixture.suffix, "songs_failed", fixture.album_songs_failed, 2, 3);
@@ -189,6 +240,16 @@ void assertSingerClaims(mysql::MySqlMusicCatalogQueryRepository &repository, con
 
     auto duplicate = repository.claimSingerSongs(explicit_query);
     require(duplicate.claimed_count == 0, "second singer songs claim must not reclaim running target");
+
+    model::MiguBackfillTargetQuery content_query;
+    content_query.source_ids = {fixture.singer_has_content};
+    content_query.statuses = {0};
+    auto content_claim = repository.claimSingerSongs(content_query);
+    require(content_claim.claimed_count == 0, "claimSingerSongs should skip singer with real song refs");
+    auto content_singer = repository.findSinger("migu", fixture.singer_has_content);
+    require(content_singer.has_value(), "content singer should exist");
+    require(content_singer->songs_sync_count == 1, "content singer should expose real song count");
+    require(content_singer->songs_sync_status == 2, "content singer should expose completed song status");
 
     model::MiguBackfillTargetQuery filter_query;
     filter_query.statuses = {4};

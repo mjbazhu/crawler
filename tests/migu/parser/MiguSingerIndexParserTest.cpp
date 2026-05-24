@@ -72,10 +72,13 @@ void test_parse_singer_index_sources()
     assert(singer.source_metric == "5959566");
     assert(singer.source_country == "华语");
     assert(singer.avatar_url == "https://d.musicapp.migu.cn/data/oss/resource/00/5l/4k/73263a79db124bc5b554541813652daa.webp");
+    assert(singer.source_index_tab == "huayu-nan");
+    assert(singer.source_index_order == 1);
 
     auto female_singers = parser.parseSingerSources(toBytes(raw), "huayu-nv");
     assert(female_singers.size() == 1);
     assert(female_singers.front().gender == crawler::domain::Gender::Female);
+    assert(female_singers.front().source_index_tab == "huayu-nv");
 
     auto invalid_tab_singers = parser.parseSingerSources(toBytes(raw), "huayu-hot");
     assert(invalid_tab_singers.empty());

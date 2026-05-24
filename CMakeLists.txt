@@ -137,6 +137,12 @@ add_crawler_test(MiguCatalogQueryIntegrationTest tests/migu/integration/MiguCata
 add_crawler_test(MiguBackfillClaimIntegrationTest tests/migu/integration/MiguBackfillClaimIntegrationTest.cpp)
 add_crawler_test(MiguMetadataRecoveryIntegrationTest tests/migu/integration/MiguMetadataRecoveryIntegrationTest.cpp)
 add_crawler_test(MiguSongRelationIntegrationTest tests/migu/integration/MiguSongRelationIntegrationTest.cpp)
+add_executable(MiguSingerSongTableIntegrityProbe tests/migu/integration/MiguSingerSongTableIntegrityProbe.cpp)
+configure_crawler_executable(MiguSingerSongTableIntegrityProbe)
+target_include_directories(MiguSingerSongTableIntegrityProbe
+    PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests
+)
 add_crawler_test(MiguSingerIndexParserTest tests/migu/parser/MiguSingerIndexParserTest.cpp)
 add_crawler_test(MiguAlbumSourceParserTest tests/migu/parser/MiguAlbumSourceParserTest.cpp)
 add_crawler_test(MiguSongResourceParserTest tests/migu/parser/MiguSongResourceParserTest.cpp)

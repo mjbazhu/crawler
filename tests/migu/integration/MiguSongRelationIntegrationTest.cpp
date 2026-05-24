@@ -1,6 +1,8 @@
 #include "migu/support/MySqlTestSupport.h"
 
+#include "crawler/application/model/AlbumSourceMetadata.h"
 #include "crawler/application/model/SongSourceMetadata.h"
+#include "crawler/infrastructure/music/persistence/mysql/MySqlAlbumSourceWriter.h"
 #include "crawler/infrastructure/music/persistence/mysql/MySqlMusicCatalogQueryRepository.h"
 #include "crawler/infrastructure/music/persistence/mysql/MySqlSongSourceRepository.h"
 #include "crawler/infrastructure/music/persistence/mysql/MySqlValueReader.h"
@@ -33,19 +35,17 @@ void require(bool condition, const std::string &message)
     }
 }
 
-// 为专辑 identity_hash 生成 64 字符唯一值。
-std::string identityHash(std::string suffix)
-{
-    std::string value = "codexrelation" + std::move(suffix);
-    value.resize(64, '0');
-    return value;
-}
-
 // 生成跨测试运行唯一的后缀。
 std::string uniqueSuffix()
 {
     const auto ticks = std::chrono::steady_clock::now().time_since_epoch().count();
     return std::to_string(static_cast<long long>(ticks));
+}
+
+// 生成测试专辑 ID，保持歌曲和专辑来源使用同一平台 ID。
+std::string albumIdForSuffix(const std::string &suffix)
+{
+    return "880" + suffix;
 }
 
 // 执行 SQL 并忽略结果。
@@ -72,7 +72,9 @@ boost::asio::awaitable<void> cleanupRelationFixtures(const std::shared_ptr<mysql
     co_await executeSql(pool, "DELETE FROM album_source_refs WHERE source = 'migu' AND source_item_key = 'codex_relation_album:" + suffix + "'");
     co_await executeSql(pool, "DELETE FROM albums WHERE normalized_title = 'codex_relation_album_" + suffix + "'");
     co_await executeSql(pool, "DELETE FROM singer_source_refs WHERE source = 'migu' AND source_item_key = 'codex_relation_singer:" + suffix + "'");
+    co_await executeSql(pool, "DELETE FROM singer_source_refs WHERE source = 'migu' AND source_item_key = 'codex_relation_guest_singer:" + suffix + "'");
     co_await executeSql(pool, "DELETE FROM singers WHERE normalized_name = 'codex_relation_artist_" + suffix + "'");
+    co_await executeSql(pool, "DELETE FROM singers WHERE normalized_name = 'codex_relation_guest_artist_" + suffix + "'");
 }
 
 // 测试结束时兜底清理 fixture。
@@ -99,30 +101,26 @@ private:
     std::string suffix_;                               // 本轮测试唯一后缀
 };
 
-// 插入一个专辑来源，使 album_song_refs 能回填 album_source_ref_id。
-boost::asio::awaitable<std::string> seedAlbumSource(const std::shared_ptr<mysql::MySqlConnectionPool> &pool, const std::string &suffix)
+// 构造专辑来源，覆盖“歌曲先入库、专辑后入库”时的 album_song_refs 回填。
+model::AlbumSourceMetadata makeAlbumFixture(const std::string &suffix)
 {
-    const auto now = static_cast<std::uint64_t>(std::time(nullptr));
-    const std::string album_id = "880" + suffix;
-    const std::string album_title = "Codex Relation Album " + suffix;
-    auto connection = co_await pool->coAcquire();
-    boost::mysql::results result;
-
-    co_await connection->async_execute(
-        "INSERT INTO albums (title, normalized_title, primary_artist_name, release_date, identity_hash, created_at, updated_at) VALUES ('" + album_title + "', 'codex_relation_album_" + suffix + "', 'Codex Relation Artist', '2026-05-20', '" + identityHash(suffix) + "', " + std::to_string(now) + ", " + std::to_string(now) + ")",
-        result,
-        boost::asio::use_awaitable
-    );
-    co_await connection->async_execute("SELECT LAST_INSERT_ID()", result, boost::asio::use_awaitable);
-    const auto album_db_id = mysql::MySqlValueReader::uint64At(result.rows().front(), 0);
-
-    co_await connection->async_execute(
-        "INSERT INTO album_source_refs (album_db_id, source, source_item_key, source_album_id, source_album_kind, source_title, source_artist_id, source_artist_name, detail_sync_status, songs_sync_status, created_at, updated_at) VALUES (" + std::to_string(album_db_id) + ", 'migu', 'codex_relation_album:" + suffix + "', '" + album_id + "', 1, '" + album_title + "', 'artist-primary-" + suffix + "', 'Codex Relation Artist', 2, 0, " + std::to_string(now) + ", " + std::to_string(now) + ")",
-        result,
-        boost::asio::use_awaitable
-    );
-
-    co_return album_id;
+    model::AlbumSourceMetadata album;
+    album.source = "migu";
+    album.title = "Codex Relation Album " + suffix;
+    album.normalized_title = "codex_relation_album_" + suffix;
+    album.artist_name = "Codex Relation Artist";
+    album.source_item_key = "codex_relation_album:" + suffix;
+    album.source_album_id = albumIdForSuffix(suffix);
+    album.source_resource_type = "5";
+    album.source_res_type = "1";
+    album.source_album_kind = 1;
+    album.source_title = album.title;
+    album.source_artist_id = "artist-primary-" + suffix;
+    album.source_artist_name = "Codex Relation Artist";
+    album.cover_url = "https://example.invalid/relation-album.webp";
+    album.release_date = "2026-05-20";
+    album.detail_sync_status = 2;
+    return album;
 }
 
 // 插入入口歌手来源，使 song_artist_refs 能关联 singer_source_refs.id。
@@ -144,6 +142,21 @@ boost::asio::awaitable<void> seedSingerSource(const std::shared_ptr<mysql::MySql
 
     co_await connection->async_execute(
         "INSERT INTO singer_source_refs (singer_db_id, source, source_item_key, source_singer_id, source_name_pinyin, source_country, source_tag, source_metric, songs_sync_status, albums_sync_status, created_at, updated_at) VALUES (" + std::to_string(singer_db_id) + ", 'migu', 'codex_relation_singer:" + suffix + "', '" + artist_id + "', 'codex', 'huayu', 'test', '1', 2, 2, " + std::to_string(now) + ", " + std::to_string(now) + ")",
+        result,
+        boost::asio::use_awaitable
+    );
+
+    const std::string guest_id = "artist-guest-" + suffix;
+    const std::string guest_name = "Codex Guest Artist " + suffix;
+    co_await connection->async_execute(
+        "INSERT INTO singers (name, normalized_name, gender, status, created_at, updated_at) VALUES ('" + guest_name + "', 'codex_relation_guest_artist_" + suffix + "', 1, 1, " + std::to_string(now) + ", " + std::to_string(now) + ")",
+        result,
+        boost::asio::use_awaitable
+    );
+    co_await connection->async_execute("SELECT LAST_INSERT_ID()", result, boost::asio::use_awaitable);
+    const auto guest_db_id = mysql::MySqlValueReader::uint64At(result.rows().front(), 0);
+    co_await connection->async_execute(
+        "INSERT INTO singer_source_refs (singer_db_id, source, source_item_key, source_singer_id, source_name_pinyin, source_country, source_tag, source_metric, songs_sync_status, albums_sync_status, created_at, updated_at) VALUES (" + std::to_string(guest_db_id) + ", 'migu', 'codex_relation_guest_singer:" + suffix + "', '" + guest_id + "', 'codex', 'huayu', 'test', '1', 2, 2, " + std::to_string(now) + ", " + std::to_string(now) + ")",
         result,
         boost::asio::use_awaitable
     );
@@ -174,8 +187,8 @@ model::SongSourceMetadata makeSongFixture(const std::string &suffix, const std::
     song.album_track_no = 7;
     song.album_song_order = 7;
 
-    song.artist_refs.push_back({"artist-primary-" + suffix, "Codex Primary Artist " + suffix, "https://example.invalid/primary.webp", "primary", "artist", 1, true, true});
-    song.artist_refs.push_back({"artist-guest-" + suffix, "Codex Guest Artist " + suffix, "https://example.invalid/guest.webp", "guest", "artist", 2, false, false});
+    song.artist_refs.push_back({"artist-primary-" + suffix, "Codex Primary Artist " + suffix, "artist", 1, true, true});
+    song.artist_refs.push_back({"artist-guest-" + suffix, "Codex Guest Artist " + suffix, "artist", 2, false, false});
 
     song.audio_formats.push_back({"PQ", "2", "020007", "020007", 3844182, 3844182});
     song.audio_formats.push_back({"HQ", "2", "020010", "020010", 9610138, 9610138});
@@ -192,11 +205,11 @@ void assertSongRelations(const std::shared_ptr<mysql::MySqlConnectionPool> &pool
     const auto artist_refs = support::runOnExecutor(pool->executor(), scalarCount(pool, "SELECT COUNT(*) FROM song_artist_refs ar JOIN song_source_refs r ON r.id = ar.song_source_ref_id WHERE r.source_content_id = '" + source_content_id + "'"), "count song artist refs");
     require(artist_refs == 2, "expected two song artist refs");
 
-    const auto linked_seed_refs = support::runOnExecutor(pool->executor(), scalarCount(pool, "SELECT COUNT(*) FROM song_artist_refs ar JOIN song_source_refs r ON r.id = ar.song_source_ref_id WHERE r.source_content_id = '" + source_content_id + "' AND ar.source_artist_id = 'artist-primary-" + suffix + "' AND ar.is_seed = 1 AND ar.singer_source_ref_id IS NOT NULL"), "count linked seed artist refs");
+    const auto linked_seed_refs = support::runOnExecutor(pool->executor(), scalarCount(pool, "SELECT COUNT(*) FROM song_artist_refs ar JOIN song_source_refs r ON r.id = ar.song_source_ref_id JOIN singer_source_refs ssr ON ssr.id = ar.singer_source_ref_id WHERE r.source_content_id = '" + source_content_id + "' AND ssr.source_singer_id = 'artist-primary-" + suffix + "' AND ar.is_seed = 1"), "count linked seed artist refs");
     require(linked_seed_refs == 1, "expected seed artist ref linked to singer_source_refs");
 
-    const auto unresolved_guest_refs = support::runOnExecutor(pool->executor(), scalarCount(pool, "SELECT COUNT(*) FROM song_artist_refs ar JOIN song_source_refs r ON r.id = ar.song_source_ref_id WHERE r.source_content_id = '" + source_content_id + "' AND ar.source_artist_id = 'artist-guest-" + suffix + "' AND ar.singer_source_ref_id IS NULL"), "count unresolved guest artist refs");
-    require(unresolved_guest_refs == 1, "expected unknown guest artist to keep source id/name without singer_source_refs link");
+    const auto linked_guest_refs = support::runOnExecutor(pool->executor(), scalarCount(pool, "SELECT COUNT(*) FROM song_artist_refs ar JOIN song_source_refs r ON r.id = ar.song_source_ref_id JOIN singer_source_refs ssr ON ssr.id = ar.singer_source_ref_id WHERE r.source_content_id = '" + source_content_id + "' AND ssr.source_singer_id = 'artist-guest-" + suffix + "'"), "count linked guest artist refs");
+    require(linked_guest_refs == 1, "expected guest artist ref linked to singer_source_refs");
 
     const auto album_refs = support::runOnExecutor(pool->executor(), scalarCount(pool, "SELECT COUNT(*) FROM album_song_refs abr JOIN song_source_refs r ON r.id = abr.song_source_ref_id WHERE r.source_content_id = '" + source_content_id + "' AND abr.source_album_id = '" + album_id + "' AND abr.disc_no = 2 AND abr.track_no = 7"), "count album song refs");
     require(album_refs == 1, "expected one album song ref with disc and track");
@@ -221,6 +234,14 @@ void assertSongRelations(const std::shared_ptr<mysql::MySqlConnectionPool> &pool
     require(album_songs.total == 1, "album query should use album_song_refs");
 }
 
+// 验证专辑来源后入库时会回填 album_song_refs.album_source_ref_id。
+void assertAlbumSongBackfilled(const std::shared_ptr<mysql::MySqlConnectionPool> &pool, const std::string &suffix)
+{
+    const std::string source_content_id = "670" + suffix;
+    const auto missing_album_source_ref = support::runOnExecutor(pool->executor(), scalarCount(pool, "SELECT COUNT(*) FROM album_song_refs abr JOIN song_source_refs r ON r.id = abr.song_source_ref_id WHERE r.source_content_id = '" + source_content_id + "' AND abr.album_source_ref_id IS NULL"), "count missing album source ref after album save");
+    require(missing_album_source_ref == 0, "album source save should backfill album_song_refs.album_source_ref_id");
+}
+
 } // namespace
 
 int main()
@@ -232,13 +253,20 @@ int main()
         support::runOnExecutor(pool->executor(), cleanupRelationFixtures(pool, suffix), "initial relation fixture cleanup");
 
         support::runOnExecutor(pool->executor(), seedSingerSource(pool, suffix), "seed singer source");
-        const std::string album_id = support::runOnExecutor(pool->executor(), seedAlbumSource(pool, suffix), "seed album source");
+        const std::string album_id = albumIdForSuffix(suffix);
         mysql::MySqlSongSourceRepository song_repository(pool);
+        mysql::MySqlAlbumSourceWriter album_repository(pool);
         mysql::MySqlMusicCatalogQueryRepository catalog_repository(pool);
 
         const auto song = makeSongFixture(suffix, album_id);
         require(song_repository.saveBatch({song}), "song source saveBatch should succeed");
         assertSongRelations(pool, catalog_repository, suffix, album_id);
+        const auto missing_before_album_save = support::runOnExecutor(pool->executor(), scalarCount(pool, "SELECT COUNT(*) FROM album_song_refs abr JOIN song_source_refs r ON r.id = abr.song_source_ref_id WHERE r.source_content_id = '670" + suffix + "' AND abr.album_source_ref_id IS NULL"), "count missing album source ref before album save");
+        require(missing_before_album_save == 1, "song source should keep album_song_refs unresolved before album source exists");
+
+        const auto album = makeAlbumFixture(suffix);
+        require(album_repository.saveBatch({album}), "album source saveBatch should succeed");
+        assertAlbumSongBackfilled(pool, suffix);
 
         const auto schema_status = catalog_repository.schemaStatus();
         require(schema_status.ok, "schema status should be ok");

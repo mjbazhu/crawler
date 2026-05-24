@@ -65,13 +65,58 @@ crawler::application::model::SongSourceMetadata makeSong(std::string content_id,
     return song;
 }
 
+void testSingerSongUnlimitedIngestionFlow()
+{
+    auto provider = std::make_shared<crawler::tests::MockMusicProvider>();
+    provider->mock_singer_songs_response = makeResponse("song-list");
+
+    auto parser = std::make_shared<crawler::tests::MockMetadataParser>();
+    parser->mock_song_sources_by_body["song-list"] = {
+        makeSong("600927000001", "600927015009001083"),
+        makeSong("600927000002", "600927015009001083"),
+    };
+
+    auto song_source_repository = std::make_shared<crawler::tests::MockSongSourceRepository>();
+    auto parse_executor = std::make_shared<threading::ThreadPool>(1);
+    auto batch_executor = std::make_shared<threading::ThreadPool>(1);
+    auto page_executor = std::make_shared<threading::ThreadPool>(1);
+
+    use_cases::CrawlerService service(
+        provider,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        parser,
+        parse_executor,
+        batch_executor,
+        page_executor,
+        nullptr,
+        1,
+        1,
+        0,
+        std::chrono::minutes(1),
+        crawler::application::model::CrawlerRuntimeSettings {},
+        song_source_repository
+    );
+
+    const bool saved = service.crawlSingerSongsAndSaveSync(112, 0);
+    require(saved, "saved singer songs with unlimited limit");
+    require(provider->last_singer_id == 112, "singer song provider id");
+    require(song_source_repository->save_calls == 1, "song source repository save calls");
+    require(song_source_repository->saved_songs.size() == 2, "unlimited singer songs should save all parsed songs");
+}
+
 void testSingerAlbumIngestionFlow()
 {
     auto provider = std::make_shared<crawler::tests::MockMusicProvider>();
     provider->mock_singer_albums_response = makeResponse("album-list");
 
     auto parser = std::make_shared<crawler::tests::MockMetadataParser>();
-    parser->mock_album_sources_by_body["album-list"] = {makeAlbum("600927015009001083", 0, "1")};
+    parser->mock_album_sources_by_body["album-list"] = {
+        makeAlbum("600927015009001083", 0, "1"),
+        makeAlbum("600927015009001084", 0, "1"),
+    };
 
     auto album_source_repository = std::make_shared<crawler::tests::MockAlbumSourceRepository>();
     auto parse_executor = std::make_shared<threading::ThreadPool>(1);
@@ -99,12 +144,12 @@ void testSingerAlbumIngestionFlow()
         album_source_repository
     );
 
-    const bool saved = service.crawlSingerAlbumsAndSaveSync(112, 10);
+    const bool saved = service.crawlSingerAlbumsAndSaveSync(112, 0);
     require(saved, "saved");
     require(provider->last_singer_id == 112, "provider->last_singer_id == 112");
     require(provider->last_album_detail_id.empty(), "album detail should not run in list flow");
     require(album_source_repository->save_calls == 1, "album_source_repository->save_calls == 1");
-    require(album_source_repository->saved_albums.size() == 1, "album_source_repository->saved_albums.size() == 1");
+    require(album_source_repository->saved_albums.size() == 2, "unlimited singer albums should save all parsed albums");
     require(album_source_repository->saved_albums.back().detail_sync_status == 0, "album list detail_sync_status == 0");
     require(album_source_repository->saved_albums.back().source_artist_id == "112", "album list source artist id");
 }
@@ -171,6 +216,7 @@ void testPendingAlbumDetailIngestionFlow()
 
 int main()
 {
+    testSingerSongUnlimitedIngestionFlow();
     testSingerAlbumIngestionFlow();
     testPendingAlbumDetailIngestionFlow();
     std::cout << "MiguSingerAlbumIngestionFlowTest passed." << std::endl;

@@ -36,11 +36,13 @@ void require(bool condition, const std::string &message)
 
 // 测试 fixture 生成的来源 ID 集合。
 struct CatalogFixture {
-    std::string suffix;           // 唯一后缀
-    std::string singer_source_id; // 平台歌手 ID
-    std::string album_source_id;  // 平台专辑 ID
-    std::string song_source_id;   // 第一个平台歌曲 ID
-    std::string content_id;       // 第一个平台内容 ID
+    std::string suffix;                      // 唯一后缀
+    std::string singer_source_id;            // 平台歌手 ID
+    std::string album_source_id;             // 平台专辑 ID
+    std::string song_source_id;              // 第一个平台歌曲 ID
+    std::string content_id;                  // 第一个平台内容 ID
+    std::string summarized_singer_source_id; // 真实汇总修正歌手 ID
+    std::string summarized_album_source_id;  // 真实汇总修正专辑 ID
 };
 
 // 为专辑 identity_hash 生成 64 字符唯一值。
@@ -106,6 +108,8 @@ boost::asio::awaitable<CatalogFixture> seedCatalogFixture(const std::shared_ptr<
     fixture.album_source_id = "810" + fixture.suffix;
     fixture.song_source_id = "710" + fixture.suffix;
     fixture.content_id = "610" + fixture.suffix;
+    fixture.summarized_singer_source_id = "920" + fixture.suffix;
+    fixture.summarized_album_source_id = "820" + fixture.suffix;
 
     const auto now = static_cast<std::uint64_t>(std::time(nullptr));
     auto connection = co_await pool->coAcquire();
@@ -126,6 +130,21 @@ boost::asio::awaitable<CatalogFixture> seedCatalogFixture(const std::shared_ptr<
         boost::asio::use_awaitable
     );
 
+    const std::string summarized_singer_name = "Codex Catalog Summary Singer " + fixture.suffix;
+    co_await connection->async_execute(
+        "INSERT INTO singers (name, normalized_name, gender, status, created_at, updated_at) VALUES ('" + summarized_singer_name + "', 'codex_catalog_summary_singer_" + fixture.suffix + "', 1, 1, " + std::to_string(now) + ", " + std::to_string(now) + ")",
+        result,
+        boost::asio::use_awaitable
+    );
+    co_await connection->async_execute("SELECT LAST_INSERT_ID()", result, boost::asio::use_awaitable);
+    const auto summarized_singer_db_id = mysql::MySqlValueReader::uint64At(result.rows().front(), 0);
+
+    co_await connection->async_execute(
+        "INSERT INTO singer_source_refs (singer_db_id, source, source_item_key, source_singer_id, source_name_pinyin, source_country, source_tag, source_metric, avatar_url, songs_sync_status, albums_sync_status, created_at, updated_at) VALUES (" + std::to_string(summarized_singer_db_id) + ", 'migu', 'codex_catalog_summary_singer:" + fixture.suffix + "', '" + fixture.summarized_singer_source_id + "', 'codex', 'huayu', 'test', '1', 'https://example.invalid/summary-singer.webp', 0, 0, " + std::to_string(now) + ", " + std::to_string(now) + ")",
+        result,
+        boost::asio::use_awaitable
+    );
+
     const std::string album_title = "Codex Catalog Album " + fixture.suffix;
     co_await connection->async_execute(
         "INSERT INTO albums (title, normalized_title, primary_artist_name, release_date, identity_hash, created_at, updated_at) VALUES ('" + album_title + "', 'codex_catalog_album_" + fixture.suffix + "', '" + singer_name + "', '2026-01-01', '" + identityHash(fixture.suffix) + "', " + std::to_string(now) + ", " + std::to_string(now) + ")",
@@ -137,6 +156,21 @@ boost::asio::awaitable<CatalogFixture> seedCatalogFixture(const std::shared_ptr<
 
     co_await connection->async_execute(
         "INSERT INTO album_source_refs (album_db_id, source, source_item_key, source_album_id, source_resource_type, source_res_type, source_action, source_album_kind, source_title, source_artist_id, source_artist_name, cover_url, total_count, release_date, publish_date, play_num, play_num_desc, detail_sync_status, detail_sync_error, songs_sync_status, songs_sync_count, songs_sync_error, created_at, updated_at) VALUES (" + std::to_string(album_db_id) + ", 'migu', 'codex_catalog_album:" + fixture.suffix + "', '" + fixture.album_source_id + "', '5', '1', 'mgmusic://digital-album-info?id=" + fixture.album_source_id + "', 2, '" + album_title + "', '" + fixture.singer_source_id + "', '" + singer_name + "', 'https://example.invalid/album.webp', '2', '2026-01-01', '2026-01-02', 9, '9', 3, 'fixture detail failed', 4, 1, 'fixture songs partial', " + std::to_string(now) + ", " + std::to_string(now) + ")",
+        result,
+        boost::asio::use_awaitable
+    );
+
+    const std::string summarized_album_title = "Codex Catalog Summary Album " + fixture.suffix;
+    co_await connection->async_execute(
+        "INSERT INTO albums (title, normalized_title, primary_artist_name, release_date, identity_hash, created_at, updated_at) VALUES ('" + summarized_album_title + "', 'codex_catalog_summary_album_" + fixture.suffix + "', '" + summarized_singer_name + "', '2026-01-01', '" + identityHash("summary_" + fixture.suffix) + "', " + std::to_string(now) + ", " + std::to_string(now) + ")",
+        result,
+        boost::asio::use_awaitable
+    );
+    co_await connection->async_execute("SELECT LAST_INSERT_ID()", result, boost::asio::use_awaitable);
+    const auto summarized_album_db_id = mysql::MySqlValueReader::uint64At(result.rows().front(), 0);
+
+    co_await connection->async_execute(
+        "INSERT INTO album_source_refs (album_db_id, source, source_item_key, source_album_id, source_resource_type, source_res_type, source_album_kind, source_title, source_artist_id, source_artist_name, detail_sync_status, songs_sync_status, created_at, updated_at) VALUES (" + std::to_string(summarized_album_db_id) + ", 'migu', 'codex_catalog_summary_album:" + fixture.suffix + "', '" + fixture.summarized_album_source_id + "', '5', '1', 2, '" + summarized_album_title + "', '" + fixture.summarized_singer_source_id + "', '" + summarized_singer_name + "', 2, 2, " + std::to_string(now) + ", " + std::to_string(now) + ")",
         result,
         boost::asio::use_awaitable
     );
@@ -159,7 +193,19 @@ boost::asio::awaitable<CatalogFixture> seedCatalogFixture(const std::shared_ptr<
     const auto song_ref_id = mysql::MySqlValueReader::uint64At(result.rows().front(), 0);
 
     co_await connection->async_execute(
-        "INSERT INTO song_artist_refs (song_source_ref_id, singer_source_ref_id, source, source_artist_id, source_artist_name, artist_role, artist_order, is_primary, is_seed, created_at, updated_at) VALUES (" + std::to_string(song_ref_id) + ", (SELECT id FROM singer_source_refs WHERE source = 'migu' AND source_singer_id = '" + fixture.singer_source_id + "' LIMIT 1), 'migu', '" + fixture.singer_source_id + "', '" + singer_name + "', 'artist', 1, 1, 1, " + std::to_string(now) + ", " + std::to_string(now) + ")",
+        "INSERT INTO song_artist_refs (song_source_ref_id, singer_source_ref_id, artist_role, artist_order, is_primary, is_seed, created_at, updated_at) VALUES (" + std::to_string(song_ref_id) + ", (SELECT id FROM singer_source_refs WHERE source = 'migu' AND source_singer_id = '" + fixture.singer_source_id + "' LIMIT 1), 'artist', 1, 1, 1, " + std::to_string(now) + ", " + std::to_string(now) + ")",
+        result,
+        boost::asio::use_awaitable
+    );
+
+    co_await connection->async_execute(
+        "INSERT INTO song_artist_refs (song_source_ref_id, singer_source_ref_id, artist_role, artist_order, is_primary, is_seed, created_at, updated_at) VALUES (" + std::to_string(song_ref_id) + ", (SELECT id FROM singer_source_refs WHERE source = 'migu' AND source_singer_id = '" + fixture.summarized_singer_source_id + "' LIMIT 1), 'artist', 2, 0, 0, " + std::to_string(now) + ", " + std::to_string(now) + ")",
+        result,
+        boost::asio::use_awaitable
+    );
+
+    co_await connection->async_execute(
+        "INSERT INTO album_song_refs (album_source_ref_id, song_source_ref_id, source, source_album_id, source_song_id, source_content_id, disc_no, track_no, song_order, created_at, updated_at) VALUES ((SELECT id FROM album_source_refs WHERE source = 'migu' AND source_album_id = '" + fixture.album_source_id + "' LIMIT 1), " + std::to_string(song_ref_id) + ", 'migu', '" + fixture.album_source_id + "', '" + fixture.song_source_id + "', '" + fixture.content_id + "', 1, 1, 1, " + std::to_string(now) + ", " + std::to_string(now) + ")",
         result,
         boost::asio::use_awaitable
     );
@@ -196,7 +242,13 @@ boost::asio::awaitable<CatalogFixture> seedCatalogFixture(const std::shared_ptr<
     const auto song_two_ref_id = mysql::MySqlValueReader::uint64At(result.rows().front(), 0);
 
     co_await connection->async_execute(
-        "INSERT INTO song_artist_refs (song_source_ref_id, singer_source_ref_id, source, source_artist_id, source_artist_name, artist_role, artist_order, is_primary, is_seed, created_at, updated_at) VALUES (" + std::to_string(song_two_ref_id) + ", (SELECT id FROM singer_source_refs WHERE source = 'migu' AND source_singer_id = '" + fixture.singer_source_id + "' LIMIT 1), 'migu', '" + fixture.singer_source_id + "', '" + singer_name + "', 'artist', 1, 1, 1, " + std::to_string(now) + ", " + std::to_string(now) + ")",
+        "INSERT INTO song_artist_refs (song_source_ref_id, singer_source_ref_id, artist_role, artist_order, is_primary, is_seed, created_at, updated_at) VALUES (" + std::to_string(song_two_ref_id) + ", (SELECT id FROM singer_source_refs WHERE source = 'migu' AND source_singer_id = '" + fixture.singer_source_id + "' LIMIT 1), 'artist', 1, 1, 1, " + std::to_string(now) + ", " + std::to_string(now) + ")",
+        result,
+        boost::asio::use_awaitable
+    );
+
+    co_await connection->async_execute(
+        "INSERT INTO album_song_refs (album_source_ref_id, song_source_ref_id, source, source_album_id, source_song_id, source_content_id, disc_no, track_no, song_order, created_at, updated_at) VALUES ((SELECT id FROM album_source_refs WHERE source = 'migu' AND source_album_id = '" + fixture.album_source_id + "' LIMIT 1), " + std::to_string(song_two_ref_id) + ", 'migu', '" + fixture.album_source_id + "', '" + song_two_id + "', '" + content_two_id + "', 1, 2, 2, " + std::to_string(now) + ", " + std::to_string(now) + ")",
         result,
         boost::asio::use_awaitable
     );
@@ -212,7 +264,29 @@ void assertCatalogQueries(mysql::MySqlMusicCatalogQueryRepository &repository, c
     auto singers = repository.listSingers(singer_query);
     require(singers.total == 1, "expected one singer fixture");
     require(singers.items.front().source_singer_id == fixture.singer_source_id, "unexpected singer source id");
+    require(singers.items.front().songs_sync_count == 2, "singer songs summary should use song_artist_refs");
+    require(singers.items.front().albums_sync_count == 1, "singer albums summary should use album_source_refs");
     require(repository.findSinger("migu", fixture.singer_source_id).has_value(), "findSinger should find fixture");
+
+    model::MiguSingerCatalogQuery singer_count_query;
+    singer_count_query.keyword = fixture.singer_source_id;
+    singer_count_query.min_songs_count = 2;
+    singer_count_query.max_albums_count = 1;
+    require(repository.listSingers(singer_count_query).total == 1, "singer count filters should include matching fixture");
+    singer_count_query.min_albums_count = 2;
+    require(repository.listSingers(singer_count_query).total == 0, "singer count filters should exclude non-matching fixture");
+
+    auto summarized = repository.findSinger("migu", fixture.summarized_singer_source_id);
+    require(summarized.has_value(), "findSinger should find summarized fixture");
+    require(summarized->songs_sync_count == 1, "summarized singer songs count should be derived from real refs");
+    require(summarized->albums_sync_count == 1, "summarized singer albums count should be derived from real refs");
+    require(summarized->songs_sync_status == 2, "summarized singer songs status should become completed");
+    require(summarized->albums_sync_status == 2, "summarized singer albums status should become completed");
+
+    model::MiguSingerCatalogQuery pending_singer_query;
+    pending_singer_query.keyword = fixture.summarized_singer_source_id;
+    pending_singer_query.songs_sync_statuses = {0, 3, 4};
+    require(repository.listSingers(pending_singer_query).total == 0, "summarized singer should not stay in missing songs queue");
 
     model::MiguAlbumCatalogQuery album_query;
     album_query.keyword = fixture.album_source_id;
@@ -221,7 +295,17 @@ void assertCatalogQueries(mysql::MySqlMusicCatalogQueryRepository &repository, c
     auto albums = repository.listAlbums(album_query);
     require(albums.total == 1, "expected one album fixture");
     require(albums.items.front().source_album_id == fixture.album_source_id, "unexpected album source id");
-    require(repository.findAlbum("migu", fixture.album_source_id).has_value(), "findAlbum should find fixture");
+    require(albums.items.front().songs_sync_count == 2, "album songs count should use album_song_refs");
+    auto album_detail = repository.findAlbum("migu", fixture.album_source_id);
+    require(album_detail.has_value(), "findAlbum should find fixture");
+    require(album_detail->songs_sync_count == 2, "album detail songs count should use album_song_refs");
+
+    model::MiguAlbumCatalogQuery album_count_query;
+    album_count_query.keyword = fixture.album_source_id;
+    album_count_query.min_songs_count = 2;
+    require(repository.listAlbums(album_count_query).total == 1, "album count filters should include matching fixture");
+    album_count_query.max_songs_count = 1;
+    require(repository.listAlbums(album_count_query).total == 0, "album count filters should exclude non-matching fixture");
 
     model::MiguSongCatalogQuery song_query;
     song_query.source_singer_id = fixture.singer_source_id;
@@ -244,15 +328,20 @@ void assertCatalogQueries(mysql::MySqlMusicCatalogQueryRepository &repository, c
     require(resources.items.front().status == 3, "expected failed resource status");
 
     const auto after = repository.integrity("migu", 60);
-    require(after.singers_without_songs >= before.singers_without_songs + 1, "integrity singers_without_songs did not increase");
-    require(after.singers_without_albums >= before.singers_without_albums + 1, "integrity singers_without_albums did not increase");
+    require(after.singers_without_songs == before.singers_without_songs, "integrity singers_without_songs should use real song refs");
+    require(after.singers_without_albums == before.singers_without_albums, "integrity singers_without_albums should use real album refs");
     require(after.albums_without_details >= before.albums_without_details + 1, "integrity albums_without_details did not increase");
     require(after.songs_without_resource_tasks >= before.songs_without_resource_tasks + 1, "integrity songs_without_resource_tasks did not increase");
     require(after.resources_failed >= before.resources_failed + 1, "integrity resources_failed did not increase");
     require(after.resources_running_stale >= before.resources_running_stale + 1, "integrity resources_running_stale did not increase");
+
+    const auto overview = repository.overview();
+    require(overview.singer_song_relations >= 3, "overview should include singer-song relation count");
+    require(overview.singer_album_relations >= 2, "overview should include singer-album relation count");
+    require(overview.album_song_relations >= 2, "overview should include album-song relation count");
 }
 
-// 验证 reset 治理 SQL 会清空对应同步状态。
+// 验证 reset 治理 SQL 不会让已有真实关系的歌手重新暴露为缺内容。
 void assertBackfillReset(mysql::MySqlMusicCatalogQueryRepository &repository, const CatalogFixture &fixture)
 {
     model::MiguBackfillTargetQuery singer_reset;
@@ -265,8 +354,10 @@ void assertBackfillReset(mysql::MySqlMusicCatalogQueryRepository &repository, co
 
     const auto singer = repository.findSinger("migu", fixture.singer_source_id);
     require(singer.has_value(), "singer should still exist after reset");
-    require(singer->songs_sync_status == 0, "singer songs status should reset to 0");
-    require(singer->albums_sync_status == 0, "singer albums status should reset to 0");
+    require(singer->songs_sync_status == 2, "singer songs status should stay completed when real refs exist");
+    require(singer->songs_sync_count == 2, "singer songs count should stay derived after reset");
+    require(singer->albums_sync_status == 2, "singer albums status should stay completed when real refs exist");
+    require(singer->albums_sync_count == 1, "singer albums count should stay derived after reset");
 
     model::MiguBackfillTargetQuery album_reset;
     album_reset.source_ids = {fixture.album_source_id};
