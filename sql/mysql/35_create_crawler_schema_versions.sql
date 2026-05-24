@@ -16,8 +16,8 @@ INSERT INTO crawler_schema_versions (
 )
 VALUES (
     'crawler_mysql',
-    2026052107,
-    'singer source refs cleanup',
+    2026052111,
+    'song artist refs strict singer relation',
     UNIX_TIMESTAMP(),
     UNIX_TIMESTAMP()
 )

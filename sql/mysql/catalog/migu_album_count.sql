@@ -7,3 +7,5 @@ WHERE r.source = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci
   AND (? = -1 OR r.source_album_kind = ?)
   AND (? = 0 OR r.detail_sync_status IN (?, ?, ?, ?, ?))
   AND (? = 0 OR r.songs_sync_status IN (?, ?, ?, ?, ?))
+  AND (? = -1 OR (SELECT COUNT(DISTINCT abr.song_source_ref_id) FROM album_song_refs abr WHERE abr.source = r.source AND abr.source_album_id = r.source_album_id) >= ?)
+  AND (? = -1 OR (SELECT COUNT(DISTINCT abr.song_source_ref_id) FROM album_song_refs abr WHERE abr.source = r.source AND abr.source_album_id = r.source_album_id) <= ?)

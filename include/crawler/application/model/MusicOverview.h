@@ -14,6 +14,9 @@ struct MusicOverview {
     std::uint64_t song_sources = 0;        // 平台歌曲来源数量
     std::uint64_t albums = 0;              // 公共专辑数量
     std::uint64_t album_sources = 0;       // 平台专辑来源数量
+    std::uint64_t singer_song_relations = 0;  // 歌手-歌曲关系数量，来自 song_artist_refs
+    std::uint64_t singer_album_relations = 0; // 歌手-专辑关系数量，来自 album_source_refs.source_artist_id
+    std::uint64_t album_song_relations = 0;   // 专辑-歌曲关系数量，来自 album_song_refs
     std::map<int, std::uint64_t> singer_song_sync;  // 歌手歌曲同步状态分布
     std::map<int, std::uint64_t> singer_album_sync; // 歌手专辑同步状态分布
     std::map<int, std::uint64_t> album_detail_sync; // 专辑详情同步状态分布

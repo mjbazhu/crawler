@@ -18,10 +18,8 @@ struct SongSourceAudioFormat {
 
 // 歌曲与平台歌手的关系参数，支持合唱和多歌手顺序。
 struct SongSourceArtistRef {
-    std::string source_artist_id;       // 平台歌手 ID
-    std::string source_artist_name;     // 平台歌手名称
-    std::string source_artist_image;    // 平台歌手头像
-    std::string source_name_spelling;   // 平台歌手拼音或排序名
+    std::string source_artist_id;       // 平台歌手 ID，仅用于入库前关联 singer_source_refs
+    std::string source_artist_name;     // 平台歌手名称，仅作为解析阶段显示和调试信息
     std::string role = "artist";        // 歌手角色，当前 Migu singerList 统一为 artist
     std::uint32_t artist_order = 0;     // 歌手在平台返回列表中的顺序，从 1 开始
     bool is_primary = false;            // 是否主歌手

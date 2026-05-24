@@ -8,6 +8,15 @@ SET albums_sync_status = 1,
 WHERE source = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci
   AND (? = '' OR source_singer_id = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci)
   AND albums_sync_status IN (?, ?, ?, ?, ?)
+  AND NOT (
+      COALESCE(albums_sync_error, '') = ''
+      AND EXISTS (
+          SELECT 1
+          FROM album_source_refs al
+          WHERE al.source = singer_source_refs.source
+            AND al.source_artist_id = singer_source_refs.source_singer_id
+      )
+  )
   AND (? = '' OR singer_db_id IN (SELECT s.id FROM singers s WHERE s.name LIKE CONCAT('%', CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci, '%')) OR source_singer_id LIKE CONCAT('%', CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci, '%'))
   AND (? = '' OR source_country = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci)
   AND (? = -1 OR singer_db_id IN (SELECT s.id FROM singers s WHERE s.gender = ?))

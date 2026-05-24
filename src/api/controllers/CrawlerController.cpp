@@ -218,6 +218,16 @@ std::optional<int> optionalIntQuery(const http::HttpRequest &req, const std::str
     }
 }
 
+std::optional<int> optionalIntQuery(const http::HttpRequest &req, std::initializer_list<const char *> names)
+{
+    for (const char *name : names) {
+        if (auto value = optionalIntQuery(req, name)) {
+            return value;
+        }
+    }
+    return std::nullopt;
+}
+
 std::vector<int> parseStatusList(std::string value)
 {
     std::replace(value.begin(), value.end(), '|', ',');
@@ -392,12 +402,14 @@ json singerToJson(const application::model::MiguSingerCatalogRecord &singer)
         {"avatar_url", singer.avatar_url},
         {"songs_sync_status", singer.songs_sync_status},
         {"songs_synced_at", singer.songs_synced_at == 0 ? json(nullptr) : json(singer.songs_synced_at)},
+        {"songs_count", singer.songs_sync_count},
         {"songs_sync_count", singer.songs_sync_count},
         {"songs_sync_error", singer.songs_sync_error},
         {"songs_last_batch_id", nullableString(singer.songs_last_batch_id)},
         {"songs_running_batch_id", nullableString(singer.songs_running_batch_id)},
         {"albums_sync_status", singer.albums_sync_status},
         {"albums_synced_at", singer.albums_synced_at == 0 ? json(nullptr) : json(singer.albums_synced_at)},
+        {"albums_count", singer.albums_sync_count},
         {"albums_sync_count", singer.albums_sync_count},
         {"albums_sync_error", singer.albums_sync_error},
         {"albums_last_batch_id", nullableString(singer.albums_last_batch_id)},
@@ -437,6 +449,8 @@ json albumToJson(const application::model::MiguAlbumCatalogRecord &album)
         {"detail_running_batch_id", nullableString(album.detail_running_batch_id)},
         {"songs_sync_status", album.songs_sync_status},
         {"songs_synced_at", album.songs_synced_at == 0 ? json(nullptr) : json(album.songs_synced_at)},
+        {"songs_count", album.songs_sync_count},
+        {"album_songs_count", album.songs_sync_count},
         {"songs_sync_count", album.songs_sync_count},
         {"songs_sync_error", album.songs_sync_error},
         {"songs_last_batch_id", nullableString(album.songs_last_batch_id)},
@@ -699,6 +713,10 @@ application::model::MiguSingerCatalogQuery singerCatalogQueryFromRequest(const h
     query.gender = optionalIntQuery(req, "gender");
     query.songs_sync_statuses = statusQuery(req, {"songs_sync_status", "songs_status"});
     query.albums_sync_statuses = statusQuery(req, {"albums_sync_status", "albums_status"});
+    query.min_songs_count = optionalIntQuery(req, {"min_songs_count", "songs_count_min"});
+    query.max_songs_count = optionalIntQuery(req, {"max_songs_count", "songs_count_max"});
+    query.min_albums_count = optionalIntQuery(req, {"min_albums_count", "albums_count_min"});
+    query.max_albums_count = optionalIntQuery(req, {"max_albums_count", "albums_count_max"});
     return query;
 }
 
@@ -712,6 +730,8 @@ application::model::MiguAlbumCatalogQuery albumCatalogQueryFromRequest(const htt
     query.album_kind = optionalIntQuery(req, "kind");
     query.detail_sync_statuses = statusQuery(req, {"detail_sync_status", "detail_status"});
     query.songs_sync_statuses = statusQuery(req, {"songs_sync_status", "songs_status"});
+    query.min_songs_count = optionalIntQuery(req, {"min_songs_count", "songs_count_min", "min_album_songs_count", "album_songs_count_min"});
+    query.max_songs_count = optionalIntQuery(req, {"max_songs_count", "songs_count_max", "max_album_songs_count", "album_songs_count_max"});
     return query;
 }
 
@@ -1747,6 +1767,9 @@ http::HttpResponse CrawlerController::handleGetMiguOverview(http::HttpRequest)
     body["song_sources"] = overview.song_sources;
     body["albums"] = overview.albums;
     body["album_sources"] = overview.album_sources;
+    body["singer_song_relations"] = overview.singer_song_relations;
+    body["singer_album_relations"] = overview.singer_album_relations;
+    body["album_song_relations"] = overview.album_song_relations;
     body["singer_song_sync"] = distributionToJson(overview.singer_song_sync);
     body["singer_album_sync"] = distributionToJson(overview.singer_album_sync);
     body["album_detail_sync"] = distributionToJson(overview.album_detail_sync);

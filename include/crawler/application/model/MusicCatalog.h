@@ -24,6 +24,10 @@ struct MiguSingerCatalogQuery : CatalogPageQuery {
     std::optional<int> gender;                // 性别过滤，空表示不限
     std::vector<int> songs_sync_statuses;     // 歌曲列表同步状态过滤
     std::vector<int> albums_sync_statuses;    // 专辑列表同步状态过滤
+    std::optional<int> min_songs_count;       // 最小已关联歌曲数，空表示不限
+    std::optional<int> max_songs_count;       // 最大已关联歌曲数，空表示不限
+    std::optional<int> min_albums_count;      // 最小已关联专辑数，空表示不限
+    std::optional<int> max_albums_count;      // 最大已关联专辑数，空表示不限
 };
 
 // Migu 专辑目录查询参数。
@@ -34,6 +38,8 @@ struct MiguAlbumCatalogQuery : CatalogPageQuery {
     std::optional<int> album_kind;            // 专辑类型过滤，空表示不限
     std::vector<int> detail_sync_statuses;    // 详情同步状态过滤
     std::vector<int> songs_sync_statuses;     // 专辑歌曲同步状态过滤
+    std::optional<int> min_songs_count;       // 最小已关联专辑歌曲数，空表示不限
+    std::optional<int> max_songs_count;       // 最大已关联专辑歌曲数，空表示不限
 };
 
 // Migu 歌曲目录查询参数。

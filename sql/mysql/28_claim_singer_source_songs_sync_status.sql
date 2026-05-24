@@ -9,3 +9,13 @@ WHERE source = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci
       songs_sync_status IN (?, ?, ?, ?, ?)
       OR (? = 1 AND songs_sync_status = 1 AND updated_at <= UNIX_TIMESTAMP() - ?)
   )
+  AND NOT (
+      COALESCE(songs_sync_error, '') = ''
+      AND EXISTS (
+          SELECT 1
+          FROM song_artist_refs ar
+          JOIN song_source_refs sr ON sr.id = ar.song_source_ref_id
+          WHERE sr.source = singer_source_refs.source
+            AND ar.singer_source_ref_id = singer_source_refs.id
+      )
+  )

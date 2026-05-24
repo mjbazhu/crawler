@@ -123,16 +123,13 @@ boost::asio::awaitable<bool> MySqlSongSourceRepository::coSaveBatch(std::vector<
             co_await MySqlTransactionRunner::executeStatements(connection, insert_song_sql_);
 
             for (const auto &artist_ref : artistRefsForSong(song)) {
-                if (artist_ref.source_artist_id.empty() && artist_ref.source_artist_name.empty()) {
+                if (artist_ref.source_artist_id.empty()) {
                     continue;
                 }
 
                 co_await connection->async_execute(
                     set_artist_vars_statement.bind(
                         artist_ref.source_artist_id,
-                        artist_ref.source_artist_name,
-                        artist_ref.source_artist_image,
-                        artist_ref.source_name_spelling,
                         artist_ref.role.empty() ? std::string {"artist"} : artist_ref.role,
                         artist_ref.artist_order,
                         artist_ref.is_primary ? 1 : 0,

@@ -179,14 +179,14 @@ MySqlMusicCatalogQueryRepository::MySqlMusicCatalogQueryRepository(std::shared_p
                                                                                                                                 song_find_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.song_find)),
                                                                                                                                 resource_list_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.resource_list)),
                                                                                                                                 resource_count_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.resource_count)),
-                                                                                                                               resource_find_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.resource_find)),
-                                                                                                                               resource_retry_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.resource_retry)),
-                                                                                                                               resource_reset_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.resource_reset)),
-                                                                                                                               resource_recover_stale_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.resource_recover_stale)),
-                                                                                                                               governance_event_insert_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.governance_event_insert)),
-                                                                                                                               governance_event_list_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.governance_event_list)),
-                                                                                                                               governance_event_count_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.governance_event_count)),
-                                                                                                                               integrity_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.integrity)),
+                                                                                                                                resource_find_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.resource_find)),
+                                                                                                                                resource_retry_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.resource_retry)),
+                                                                                                                                resource_reset_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.resource_reset)),
+                                                                                                                                resource_recover_stale_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.resource_recover_stale)),
+                                                                                                                                governance_event_insert_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.governance_event_insert)),
+                                                                                                                                governance_event_list_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.governance_event_list)),
+                                                                                                                                governance_event_count_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.governance_event_count)),
+                                                                                                                                integrity_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.integrity)),
                                                                                                                                 schema_status_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.schema_status)),
                                                                                                                                 album_source_find_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.album_source_find)),
                                                                                                                                 claim_singer_songs_select_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.claim_singer_songs_select)),
@@ -379,6 +379,12 @@ boost::asio::awaitable<application::model::MusicOverview> MySqlMusicCatalogQuery
     overview.albums = scalarCount(result);
     co_await connection->async_execute("SELECT COUNT(*) FROM album_source_refs WHERE source = 'migu'", result, boost::asio::use_awaitable);
     overview.album_sources = scalarCount(result);
+    co_await connection->async_execute("SELECT COUNT(*) FROM song_artist_refs ar JOIN song_source_refs sr ON sr.id = ar.song_source_ref_id WHERE sr.source = 'migu'", result, boost::asio::use_awaitable);
+    overview.singer_song_relations = scalarCount(result);
+    co_await connection->async_execute("SELECT COUNT(*) FROM album_source_refs WHERE source = 'migu' AND COALESCE(source_artist_id, '') <> ''", result, boost::asio::use_awaitable);
+    overview.singer_album_relations = scalarCount(result);
+    co_await connection->async_execute("SELECT COUNT(*) FROM album_song_refs WHERE source = 'migu'", result, boost::asio::use_awaitable);
+    overview.album_song_relations = scalarCount(result);
 
     co_await connection->async_execute("SELECT songs_sync_status, COUNT(*) FROM singer_source_refs WHERE source = 'migu' GROUP BY songs_sync_status", result, boost::asio::use_awaitable);
     readDistribution(result, overview.singer_song_sync);
@@ -403,16 +409,20 @@ boost::asio::awaitable<application::model::MiguSingerCatalogPage> MySqlMusicCata
     const auto songs = statusSlots(query.songs_sync_statuses);
     const auto albums = statusSlots(query.albums_sync_statuses);
     const int gender = optionalOrMinusOne(query.gender);
+    const int min_songs_count = optionalOrMinusOne(query.min_songs_count);
+    const int max_songs_count = optionalOrMinusOne(query.max_songs_count);
+    const int min_albums_count = optionalOrMinusOne(query.min_albums_count);
+    const int max_albums_count = optionalOrMinusOne(query.max_albums_count);
     const auto offset = static_cast<std::uint64_t>((query.page - 1) * query.page_size);
     auto connection = co_await pool_->coAcquire();
     boost::mysql::results result;
 
     auto count_statement = co_await connection->async_prepare_statement(singer_count_sql_, boost::asio::use_awaitable);
-    co_await connection->async_execute(count_statement.bind(query.source, query.keyword, query.keyword, query.keyword, query.country, query.country, gender, gender, hasStatuses(query.songs_sync_statuses), songs[0], songs[1], songs[2], songs[3], songs[4], hasStatuses(query.albums_sync_statuses), albums[0], albums[1], albums[2], albums[3], albums[4]), result, boost::asio::use_awaitable);
+    co_await connection->async_execute(count_statement.bind(query.source, query.keyword, query.keyword, query.keyword, query.country, query.country, gender, gender, hasStatuses(query.songs_sync_statuses), songs[0], songs[1], songs[2], songs[3], songs[4], hasStatuses(query.albums_sync_statuses), albums[0], albums[1], albums[2], albums[3], albums[4], min_songs_count, min_songs_count, max_songs_count, max_songs_count, min_albums_count, min_albums_count, max_albums_count, max_albums_count), result, boost::asio::use_awaitable);
     page.total = scalarCount(result);
 
     auto list_statement = co_await connection->async_prepare_statement(singer_list_sql_, boost::asio::use_awaitable);
-    co_await connection->async_execute(list_statement.bind(query.source, query.keyword, query.keyword, query.keyword, query.country, query.country, gender, gender, hasStatuses(query.songs_sync_statuses), songs[0], songs[1], songs[2], songs[3], songs[4], hasStatuses(query.albums_sync_statuses), albums[0], albums[1], albums[2], albums[3], albums[4], static_cast<std::uint64_t>(query.page_size), offset), result, boost::asio::use_awaitable);
+    co_await connection->async_execute(list_statement.bind(query.source, query.keyword, query.keyword, query.keyword, query.country, query.country, gender, gender, hasStatuses(query.songs_sync_statuses), songs[0], songs[1], songs[2], songs[3], songs[4], hasStatuses(query.albums_sync_statuses), albums[0], albums[1], albums[2], albums[3], albums[4], min_songs_count, min_songs_count, max_songs_count, max_songs_count, min_albums_count, min_albums_count, max_albums_count, max_albums_count, static_cast<std::uint64_t>(query.page_size), offset), result, boost::asio::use_awaitable);
     for (boost::mysql::row_view row : result.rows()) {
         page.items.push_back(mapSinger(row));
     }
@@ -440,16 +450,18 @@ boost::asio::awaitable<application::model::MiguAlbumCatalogPage> MySqlMusicCatal
     const auto details = statusSlots(query.detail_sync_statuses);
     const auto songs = statusSlots(query.songs_sync_statuses);
     const int kind = optionalOrMinusOne(query.album_kind);
+    const int min_songs_count = optionalOrMinusOne(query.min_songs_count);
+    const int max_songs_count = optionalOrMinusOne(query.max_songs_count);
     const auto offset = static_cast<std::uint64_t>((query.page - 1) * query.page_size);
     auto connection = co_await pool_->coAcquire();
     boost::mysql::results result;
 
     auto count_statement = co_await connection->async_prepare_statement(album_count_sql_, boost::asio::use_awaitable);
-    co_await connection->async_execute(count_statement.bind(query.source, query.keyword, query.keyword, query.keyword, query.artist, query.artist, query.artist, query.artist, kind, kind, hasStatuses(query.detail_sync_statuses), details[0], details[1], details[2], details[3], details[4], hasStatuses(query.songs_sync_statuses), songs[0], songs[1], songs[2], songs[3], songs[4]), result, boost::asio::use_awaitable);
+    co_await connection->async_execute(count_statement.bind(query.source, query.keyword, query.keyword, query.keyword, query.artist, query.artist, query.artist, query.artist, kind, kind, hasStatuses(query.detail_sync_statuses), details[0], details[1], details[2], details[3], details[4], hasStatuses(query.songs_sync_statuses), songs[0], songs[1], songs[2], songs[3], songs[4], min_songs_count, min_songs_count, max_songs_count, max_songs_count), result, boost::asio::use_awaitable);
     page.total = scalarCount(result);
 
     auto list_statement = co_await connection->async_prepare_statement(album_list_sql_, boost::asio::use_awaitable);
-    co_await connection->async_execute(list_statement.bind(query.source, query.keyword, query.keyword, query.keyword, query.artist, query.artist, query.artist, query.artist, kind, kind, hasStatuses(query.detail_sync_statuses), details[0], details[1], details[2], details[3], details[4], hasStatuses(query.songs_sync_statuses), songs[0], songs[1], songs[2], songs[3], songs[4], static_cast<std::uint64_t>(query.page_size), offset), result, boost::asio::use_awaitable);
+    co_await connection->async_execute(list_statement.bind(query.source, query.keyword, query.keyword, query.keyword, query.artist, query.artist, query.artist, query.artist, kind, kind, hasStatuses(query.detail_sync_statuses), details[0], details[1], details[2], details[3], details[4], hasStatuses(query.songs_sync_statuses), songs[0], songs[1], songs[2], songs[3], songs[4], min_songs_count, min_songs_count, max_songs_count, max_songs_count, static_cast<std::uint64_t>(query.page_size), offset), result, boost::asio::use_awaitable);
     for (boost::mysql::row_view row : result.rows()) {
         page.items.push_back(mapAlbum(row));
     }
@@ -480,11 +492,11 @@ boost::asio::awaitable<application::model::MiguSongCatalogPage> MySqlMusicCatalo
     boost::mysql::results result;
 
     auto count_statement = co_await connection->async_prepare_statement(song_count_sql_, boost::asio::use_awaitable);
-    co_await connection->async_execute(count_statement.bind(query.source, query.keyword, query.keyword, query.keyword, query.keyword, query.artist, query.artist, query.artist, query.artist, query.artist, query.album, query.album, query.album, query.album, query.source_singer_id, query.source_singer_id, query.source_singer_id, query.source_album_id, query.source_album_id, query.source_album_id, hasStatuses(query.resource_statuses), statuses[0], statuses[1], statuses[2], statuses[3], statuses[4], query.format_type, query.format_type), result, boost::asio::use_awaitable);
+    co_await connection->async_execute(count_statement.bind(query.source, query.keyword, query.keyword, query.keyword, query.keyword, query.artist, query.artist, query.artist, query.album, query.album, query.album, query.album, query.source_singer_id, query.source_singer_id, query.source_album_id, query.source_album_id, query.source_album_id, hasStatuses(query.resource_statuses), statuses[0], statuses[1], statuses[2], statuses[3], statuses[4], query.format_type, query.format_type), result, boost::asio::use_awaitable);
     page.total = scalarCount(result);
 
     auto list_statement = co_await connection->async_prepare_statement(song_list_sql_, boost::asio::use_awaitable);
-    co_await connection->async_execute(list_statement.bind(query.source, query.keyword, query.keyword, query.keyword, query.keyword, query.artist, query.artist, query.artist, query.artist, query.artist, query.album, query.album, query.album, query.album, query.source_singer_id, query.source_singer_id, query.source_singer_id, query.source_album_id, query.source_album_id, query.source_album_id, hasStatuses(query.resource_statuses), statuses[0], statuses[1], statuses[2], statuses[3], statuses[4], query.format_type, query.format_type, static_cast<std::uint64_t>(query.page_size), offset), result, boost::asio::use_awaitable);
+    co_await connection->async_execute(list_statement.bind(query.source, query.keyword, query.keyword, query.keyword, query.keyword, query.artist, query.artist, query.artist, query.album, query.album, query.album, query.album, query.source_singer_id, query.source_singer_id, query.source_album_id, query.source_album_id, query.source_album_id, hasStatuses(query.resource_statuses), statuses[0], statuses[1], statuses[2], statuses[3], statuses[4], query.format_type, query.format_type, static_cast<std::uint64_t>(query.page_size), offset), result, boost::asio::use_awaitable);
     for (boost::mysql::row_view row : result.rows()) {
         page.items.push_back(mapSong(row));
     }
@@ -705,7 +717,7 @@ boost::asio::awaitable<application::model::MiguSchemaStatus> MySqlMusicCatalogQu
 {
     application::model::MiguSchemaStatus status;
     status.checked_at = nowSeconds();
-    status.latest_available_version = 2026052107;
+    status.latest_available_version = 2026052111;
     auto connection = co_await pool_->coAcquire();
     boost::mysql::results result;
     co_await connection->async_execute(schema_status_sql_, result, boost::asio::use_awaitable);

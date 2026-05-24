@@ -99,8 +99,6 @@ std::optional<application::model::SongSourceMetadata> parseSongSourceFromSongObj
             application::model::SongSourceArtistRef artist_ref;
             artist_ref.source_artist_id = JsonUtils::getString(singer, "id");
             artist_ref.source_artist_name = JsonUtils::getString(singer, "name");
-            artist_ref.source_artist_image = JsonUtils::getString(singer, "img");
-            artist_ref.source_name_spelling = JsonUtils::getString(singer, "nameSpelling");
             artist_ref.artist_order = artist_order;
             artist_ref.is_primary = artist_order == 1;
             if (!artist_ref.source_artist_id.empty() || !artist_ref.source_artist_name.empty()) {

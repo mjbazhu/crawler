@@ -12,8 +12,8 @@ SELECT
     COALESCE(r.source_title_pinyin, ''),
     COALESCE(r.source_album_id, ''),
     COALESCE(r.source_album_name, ''),
-    COALESCE((SELECT COALESCE(NULLIF(ar.source_artist_id, ''), sr.source_singer_id, '') FROM song_artist_refs ar LEFT JOIN singer_source_refs sr ON sr.id = ar.singer_source_ref_id WHERE ar.song_source_ref_id = r.id ORDER BY ar.is_seed DESC, ar.is_primary DESC, ar.artist_order ASC, ar.id ASC LIMIT 1), ''),
-    COALESCE((SELECT COALESCE(NULLIF(ar.source_artist_name, ''), sra.name, '') FROM song_artist_refs ar LEFT JOIN singer_source_refs sr ON sr.id = ar.singer_source_ref_id LEFT JOIN singers sra ON sra.id = sr.singer_db_id WHERE ar.song_source_ref_id = r.id ORDER BY ar.is_seed DESC, ar.is_primary DESC, ar.artist_order ASC, ar.id ASC LIMIT 1), ''),
+    COALESCE((SELECT sr.source_singer_id FROM song_artist_refs ar JOIN singer_source_refs sr ON sr.id = ar.singer_source_ref_id WHERE ar.song_source_ref_id = r.id ORDER BY ar.is_seed DESC, ar.is_primary DESC, ar.artist_order ASC, ar.id ASC LIMIT 1), ''),
+    COALESCE((SELECT sra.name FROM song_artist_refs ar JOIN singer_source_refs sr ON sr.id = ar.singer_source_ref_id JOIN singers sra ON sra.id = sr.singer_db_id WHERE ar.song_source_ref_id = r.id ORDER BY ar.is_seed DESC, ar.is_primary DESC, ar.artist_order ASC, ar.id ASC LIMIT 1), ''),
     COALESCE(r.cover_url, ''),
     COALESCE(r.lyric_url, ''),
     COALESCE(r.mrc_url, ''),
@@ -39,9 +39,9 @@ LEFT JOIN (
 ) res ON res.song_source_ref_id = r.id
 WHERE r.source = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci
   AND (? = '' OR s.title LIKE CONCAT('%', CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci, '%') OR r.source_song_id LIKE CONCAT('%', CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci, '%') OR r.source_content_id LIKE CONCAT('%', CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci, '%'))
-  AND (? = '' OR EXISTS (SELECT 1 FROM song_artist_refs ar WHERE ar.song_source_ref_id = r.id AND (ar.source_artist_name LIKE CONCAT('%', CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci, '%') OR ar.source_artist_id = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci OR EXISTS (SELECT 1 FROM singer_source_refs sr JOIN singers sra ON sra.id = sr.singer_db_id WHERE sr.id = ar.singer_source_ref_id AND (sra.name LIKE CONCAT('%', CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci, '%') OR sr.source_singer_id = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci)))))
+  AND (? = '' OR EXISTS (SELECT 1 FROM song_artist_refs ar JOIN singer_source_refs sr ON sr.id = ar.singer_source_ref_id JOIN singers sra ON sra.id = sr.singer_db_id WHERE ar.song_source_ref_id = r.id AND (sra.name LIKE CONCAT('%', CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci, '%') OR sr.source_singer_id = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci)))
   AND (? = '' OR r.source_album_name LIKE CONCAT('%', CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci, '%') OR r.source_album_id = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci OR EXISTS (SELECT 1 FROM album_song_refs abr WHERE abr.song_source_ref_id = r.id AND abr.source_album_id = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci))
-  AND (? = '' OR EXISTS (SELECT 1 FROM song_artist_refs ar WHERE ar.song_source_ref_id = r.id AND (ar.source_artist_id = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci OR EXISTS (SELECT 1 FROM singer_source_refs sr WHERE sr.id = ar.singer_source_ref_id AND sr.source_singer_id = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci))))
+  AND (? = '' OR EXISTS (SELECT 1 FROM song_artist_refs ar JOIN singer_source_refs sr ON sr.id = ar.singer_source_ref_id WHERE ar.song_source_ref_id = r.id AND sr.source_singer_id = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci))
   AND (? = '' OR r.source_album_id = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci OR EXISTS (SELECT 1 FROM album_song_refs abr WHERE abr.song_source_ref_id = r.id AND abr.source_album_id = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci))
   AND (? = 0 OR EXISTS (SELECT 1 FROM song_resources sr WHERE sr.song_source_ref_id = r.id AND sr.status IN (?, ?, ?, ?, ?)))
   AND (? = '' OR EXISTS (SELECT 1 FROM song_source_audio_formats af WHERE af.song_source_ref_id = r.id AND af.format_type = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci))

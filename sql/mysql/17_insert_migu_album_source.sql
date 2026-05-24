@@ -120,6 +120,14 @@ INSERT INTO album_source_refs (
 
 SET @album_source_ref_id := LAST_INSERT_ID();
 
+UPDATE album_song_refs
+SET
+    album_source_ref_id = @album_source_ref_id,
+    updated_at = UNIX_TIMESTAMP()
+WHERE source = @source
+  AND source_album_id = @source_album_id
+  AND (album_source_ref_id IS NULL OR album_source_ref_id <> @album_source_ref_id);
+
 INSERT INTO migu_dalbum_details (
     album_source_ref_id,
     source_album_id,

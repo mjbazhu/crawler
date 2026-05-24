@@ -13,15 +13,64 @@ SELECT
     COALESCE(r.source_tag, ''),
     COALESCE(r.source_metric, ''),
     COALESCE(r.avatar_url, ''),
-    r.songs_sync_status,
-    r.songs_synced_at,
-    r.songs_sync_count,
+    CASE
+        WHEN EXISTS (
+            SELECT 1
+            FROM song_artist_refs ar
+            JOIN song_source_refs sr ON sr.id = ar.song_source_ref_id
+            WHERE sr.source = r.source
+              AND ar.singer_source_ref_id = r.id
+            LIMIT 1
+        ) AND COALESCE(r.songs_sync_error, '') = '' AND r.songs_sync_status <> 1 THEN 2
+        ELSE r.songs_sync_status
+    END,
+    CASE
+        WHEN EXISTS (
+            SELECT 1
+            FROM song_artist_refs ar
+            JOIN song_source_refs sr ON sr.id = ar.song_source_ref_id
+            WHERE sr.source = r.source
+              AND ar.singer_source_ref_id = r.id
+            LIMIT 1
+        ) AND COALESCE(r.songs_sync_error, '') = '' AND r.songs_synced_at = 0 THEN r.updated_at
+        ELSE r.songs_synced_at
+    END,
+    (
+        SELECT COUNT(DISTINCT ar.song_source_ref_id)
+        FROM song_artist_refs ar
+        JOIN song_source_refs sr ON sr.id = ar.song_source_ref_id
+        WHERE sr.source = r.source
+          AND ar.singer_source_ref_id = r.id
+    ),
     COALESCE(r.songs_sync_error, ''),
     COALESCE((SELECT bi.batch_id FROM crawl_batch_items bi WHERE bi.source = r.source AND bi.item_type = 'singerSongs' AND bi.source_singer_id = r.source_singer_id ORDER BY bi.updated_at DESC, bi.id DESC LIMIT 1), ''),
     COALESCE((SELECT bi.batch_id FROM crawl_batch_items bi WHERE bi.source = r.source AND bi.item_type = 'singerSongs' AND bi.source_singer_id = r.source_singer_id AND bi.state = 'Running' ORDER BY bi.updated_at DESC, bi.id DESC LIMIT 1), ''),
-    r.albums_sync_status,
-    r.albums_synced_at,
-    r.albums_sync_count,
+    CASE
+        WHEN EXISTS (
+            SELECT 1
+            FROM album_source_refs al
+            WHERE al.source = r.source
+              AND al.source_artist_id = r.source_singer_id
+            LIMIT 1
+        ) AND COALESCE(r.albums_sync_error, '') = '' AND r.albums_sync_status <> 1 THEN 2
+        ELSE r.albums_sync_status
+    END,
+    CASE
+        WHEN EXISTS (
+            SELECT 1
+            FROM album_source_refs al
+            WHERE al.source = r.source
+              AND al.source_artist_id = r.source_singer_id
+            LIMIT 1
+        ) AND COALESCE(r.albums_sync_error, '') = '' AND r.albums_synced_at = 0 THEN r.updated_at
+        ELSE r.albums_synced_at
+    END,
+    (
+        SELECT COUNT(DISTINCT al.id)
+        FROM album_source_refs al
+        WHERE al.source = r.source
+          AND al.source_artist_id = r.source_singer_id
+    ),
     COALESCE(r.albums_sync_error, ''),
     COALESCE((SELECT bi.batch_id FROM crawl_batch_items bi WHERE bi.source = r.source AND bi.item_type = 'singerAlbums' AND bi.source_singer_id = r.source_singer_id ORDER BY bi.updated_at DESC, bi.id DESC LIMIT 1), ''),
     COALESCE((SELECT bi.batch_id FROM crawl_batch_items bi WHERE bi.source = r.source AND bi.item_type = 'singerAlbums' AND bi.source_singer_id = r.source_singer_id AND bi.state = 'Running' ORDER BY bi.updated_at DESC, bi.id DESC LIMIT 1), ''),
