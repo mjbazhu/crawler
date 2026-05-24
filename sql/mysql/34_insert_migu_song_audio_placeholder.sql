@@ -31,5 +31,5 @@ VALUES (
     @now
 )
 ON DUPLICATE KEY UPDATE
-    status = IF(status = 2, status, VALUES(status)),
+    status = IF(status IN (2, 4), status, VALUES(status)),
     updated_at = VALUES(updated_at);

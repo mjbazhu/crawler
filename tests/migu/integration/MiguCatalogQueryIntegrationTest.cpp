@@ -3,6 +3,7 @@
 #include "crawler/application/model/MusicCatalog.h"
 #include "crawler/infrastructure/music/persistence/mysql/MySqlMusicCatalogQueryRepository.h"
 #include "crawler/infrastructure/music/persistence/mysql/MySqlSongResourceQueue.h"
+#include "crawler/infrastructure/music/persistence/mysql/MySqlSongSourceRepository.h"
 #include "crawler/infrastructure/music/persistence/mysql/MySqlValueReader.h"
 
 #include <boost/asio/use_awaitable.hpp>
@@ -66,7 +67,7 @@ boost::asio::awaitable<void> executeSql(const std::shared_ptr<mysql::MySqlConnec
 // 删除所有 catalog 集成测试 fixture。
 boost::asio::awaitable<void> cleanupCatalogFixtures(const std::shared_ptr<mysql::MySqlConnectionPool> &pool)
 {
-    co_await executeSql(pool, "DELETE FROM song_source_refs WHERE source = 'migu' AND source_item_key LIKE 'codex_catalog_%'");
+    co_await executeSql(pool, "DELETE FROM song_source_refs WHERE source = 'migu' AND (source_item_key LIKE 'codex_catalog_%' OR source_song_id LIKE 'codex_catalog_%' OR source_content_id LIKE 'codex_catalog_%')");
     co_await executeSql(pool, "DELETE FROM songs WHERE normalized_title LIKE 'codex_catalog_%'");
     co_await executeSql(pool, "DELETE FROM album_source_refs WHERE source = 'migu' AND source_item_key LIKE 'codex_catalog_%'");
     co_await executeSql(pool, "DELETE FROM albums WHERE normalized_title LIKE 'codex_catalog_%'");
@@ -281,6 +282,76 @@ void assertBackfillReset(mysql::MySqlMusicCatalogQueryRepository &repository, co
     require(album->songs_sync_status == 0, "album songs status should reset to 0");
 }
 
+// 创建用于资源 upsert 防回退验证的歌曲来源。
+model::SongSourceMetadata makeUpsertSong(std::string suffix, bool with_audio_format)
+{
+    model::SongSourceMetadata song;
+    song.source = "migu";
+    song.source_song_id = "codex_catalog_upsert_song_" + suffix + (with_audio_format ? "_audio" : "_placeholder");
+    song.source_content_id = "codex_catalog_upsert_content_" + suffix + (with_audio_format ? "_audio" : "_placeholder");
+    song.source_resource_type = "2";
+    song.title = "Codex Catalog Upsert Song " + suffix + (with_audio_format ? " Audio" : " Placeholder");
+    song.normalized_title = "codex_catalog_upsert_song_" + suffix + (with_audio_format ? "_audio" : "_placeholder");
+    song.source_duration_seconds = 180;
+    song.cover_url = "https://example.invalid/upsert.webp";
+    song.lyric_url = "https://example.invalid/upsert.lrc";
+    song.mrc_url = "https://example.invalid/upsert.mrc";
+    song.trc_url = "https://example.invalid/upsert.trc";
+    song.copyright_id = "codex-upsert-" + suffix;
+    if (with_audio_format) {
+        model::SongSourceAudioFormat format;
+        format.format_type = "PQ";
+        format.resource_type = "2";
+        format.iformat = "020010";
+        format.aformat = "020010";
+        format.isize = 123;
+        format.asize = 123;
+        song.audio_formats.push_back(std::move(format));
+    }
+    return song;
+}
+
+// 查询单个资源当前状态。
+int resourceStatus(mysql::MySqlMusicCatalogQueryRepository &repository, const std::string &source_content_id, const std::string &kind, const std::string &format_type)
+{
+    model::MiguResourceQueueQuery query;
+    query.keyword = source_content_id;
+    query.resource_kind = kind;
+    query.format_type = format_type;
+    auto resources = repository.listResources(query);
+    require(resources.total == 1, "expected exactly one resource for " + kind + ":" + format_type);
+    return resources.items.front().status;
+}
+
+// 验证歌曲重复入库不会把永久跳过的资源重新置为待处理。
+void assertResourceUpsertPreservesSkipped(mysql::MySqlMusicCatalogQueryRepository &repository, const std::shared_ptr<mysql::MySqlConnectionPool> &pool, const CatalogFixture &fixture)
+{
+    mysql::MySqlSongSourceRepository song_repository(pool);
+
+    auto audio_song = makeUpsertSong(fixture.suffix, true);
+    require(song_repository.saveBatch({audio_song}), "initial audio upsert song save should succeed");
+    support::runOnExecutor(
+        pool->executor(),
+        executeSql(pool, "UPDATE song_resources sr JOIN song_source_refs r ON r.id = sr.song_source_ref_id SET sr.status = 4, sr.last_error = 'fixture skipped', sr.error_category = 'resource', sr.result_code = 'digital_album' WHERE r.source = 'migu' AND r.source_content_id = '" + audio_song.source_content_id + "' AND ((sr.resource_kind = 'audio' AND sr.format_type = 'PQ') OR (sr.resource_kind = 'lyric' AND sr.format_type = ''))"),
+        "mark audio and lyric resources skipped"
+    );
+
+    require(song_repository.saveBatch({audio_song}), "second audio upsert song save should succeed");
+    require(resourceStatus(repository, audio_song.source_content_id, "audio", "PQ") == 4, "audio format upsert should preserve skipped status");
+    require(resourceStatus(repository, audio_song.source_content_id, "lyric", "") == 4, "text resource upsert should preserve skipped status");
+
+    auto placeholder_song = makeUpsertSong(fixture.suffix, false);
+    require(song_repository.saveBatch({placeholder_song}), "initial placeholder song save should succeed");
+    support::runOnExecutor(
+        pool->executor(),
+        executeSql(pool, "UPDATE song_resources sr JOIN song_source_refs r ON r.id = sr.song_source_ref_id SET sr.status = 4, sr.last_error = 'fixture skipped', sr.error_category = 'resource', sr.result_code = 'digital_album' WHERE r.source = 'migu' AND r.source_content_id = '" + placeholder_song.source_content_id + "' AND sr.resource_kind = 'audio' AND sr.format_type = ''"),
+        "mark placeholder resource skipped"
+    );
+
+    require(song_repository.saveBatch({placeholder_song}), "second placeholder song save should succeed");
+    require(resourceStatus(repository, placeholder_song.source_content_id, "audio", "") == 4, "audio placeholder upsert should preserve skipped status");
+}
+
 // 验证资源队列 retry/reset/recover-stale 只治理状态，不执行资源获取。
 void assertResourceGovernance(mysql::MySqlMusicCatalogQueryRepository &repository, const CatalogFixture &fixture, const std::shared_ptr<mysql::MySqlConnectionPool> &pool)
 {
@@ -364,6 +435,7 @@ int main()
 
         assertCatalogQueries(repository, fixture, before);
         assertResourceGovernance(repository, fixture, pool);
+        assertResourceUpsertPreservesSkipped(repository, pool, fixture);
         assertBackfillReset(repository, fixture);
 
         std::cout << "MiguCatalogQueryIntegrationTest passed" << std::endl;

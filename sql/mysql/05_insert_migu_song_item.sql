@@ -128,5 +128,5 @@ VALUES
     (@song_source_ref_id, 'trc', '', NULLIF(@trc_url, ''), NULL, 0, NULL, 0, 0, NULL, 0, @now, @now)
 ON DUPLICATE KEY UPDATE
     remote_url = COALESCE(VALUES(remote_url), remote_url),
-    status = IF(status = 2, status, VALUES(status)),
+    status = IF(status IN (2, 4), status, VALUES(status)),
     updated_at = VALUES(updated_at);
