@@ -48,6 +48,13 @@
 
 当前已知需要持续关注的残余风险：`CrawlerService.h` 仍暴露 deprecated 聚合构造函数；`MusicCollectionWorkflow` 仍是兼容门面；`AlbumSourceSyncQueue` 同时覆盖详情与歌曲同步状态；`AsioHttpSession.h` 和 `AsioHttpCoroutineRequest.h` 仍是接近 300 行的模板状态机。`MiguParser`、`AsioHttpClient.cpp`、`MySqlAlbumSourceRepository` 已完成第一轮职责拆分，后续只按新增职责继续下沉到细分 parser、HTTP helper 或 MySQL adapter。
 
+## Git 提交规范
+
+- 提交信息统一使用 Conventional Commits 形式：`type(scope): 简体中文摘要`。
+- `type` 和 `scope` 使用英文小写，常用类型包括 `feat`、`fix`、`test`、`docs`、`refactor`、`chore`；冒号后的摘要必须使用简体中文。
+- 提交正文如需说明背景、风险或验证方式，也使用简体中文；代码标识符、命令、路径和错误码保持原文。
+- 同一提交只包含一个明确职责范围内的改动；配置、领域/application、API、基础设施、SQL/migration、测试和文档应按实际边界分批提交。
+
 ## 目标分层
 
 当前代码必须按 `api`、`application`、`domain`、`infrastructure` 四层组织。公共头文件根目录固定为 `include/crawler/**`，实现根目录固定为 `src/**`。旧的 `service`、`core`、`db`、`http`、`http_server`、`provider`、`parser`、`storage`、`utils` 顶层目录已迁移完毕，后续不得恢复或新增这些旧目录。
