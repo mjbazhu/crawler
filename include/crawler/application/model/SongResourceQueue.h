@@ -31,7 +31,7 @@ struct SongResourceProcessOptionOverrides {
 // 歌曲资源队列认领查询。
 struct SongResourceClaimQuery {
     std::string source = "migu";                         // 音乐平台标识
-    std::string resource_kind = "audio";                 // 资源类型过滤，空字符串表示不过滤
+    std::string resource_kind;                           // 资源类型过滤，空字符串表示不过滤
     std::string source_content_id;                       // 指定平台 contentId，空字符串表示不过滤
     std::string format_type;                             // 指定音质档位，空字符串表示不过滤
     std::vector<int> statuses {0, 3};                    // 可认领状态，默认待获取和失败；4 跳过不再认领
@@ -64,7 +64,7 @@ struct SongResourceQueueTarget {
     int retry_count = 0;                  // 重试次数
 };
 
-// 关联文本资源认领请求，用于 audio 响应带出的 lrc/mrc URL。
+// 关联文本资源认领请求，用于 audio 响应带出的 lrc/mrc/trc URL。
 struct SongResourceRelatedClaimRequest {
     std::uint64_t song_source_ref_id = 0; // 同一首歌的平台来源 ID
     std::string resource_kind;            // lyric、mrc 或 trc
@@ -96,7 +96,7 @@ struct SongResourceFailureUpdate {
 struct SongResourceSkipUpdate {
     std::uint64_t resource_id = 0;           // 当前 song_resources.id，兜底单条跳过
     std::uint64_t song_source_ref_id = 0;    // 同一首歌的平台来源 ID；非 0 时可批量跳过
-    std::string resource_kind = "audio";     // 跳过资源类型；空字符串表示该歌曲全部资源
+    std::string resource_kind;               // 跳过资源类型；空字符串表示该歌曲全部资源
     std::string format_type;                 // 指定音质档位；空字符串表示匹配类型全部跳过
     std::string error_category = "resource"; // 跳过分类
     std::string result_code = "skipped";     // 结果编码
@@ -133,9 +133,9 @@ struct SongResourceProcessResult {
     int succeeded_count = 0;                    // 主资源成功数量
     int failed_count = 0;                       // 主资源失败数量
     int skipped_count = 0;                      // 主资源跳过数量
-    int related_succeeded_count = 0;            // 关联歌词资源成功数量
-    int related_failed_count = 0;               // 关联歌词资源失败数量
-    int related_skipped_count = 0;              // 关联歌词资源跳过数量
+    int related_succeeded_count = 0;            // 关联文本资源成功数量
+    int related_failed_count = 0;               // 关联文本资源失败数量
+    int related_skipped_count = 0;              // 关联文本资源跳过数量
     int synthetic_related_skipped_count = 0;    // 无资源任务可认领的合成关联跳过数量
     std::vector<SongResourceProcessItem> items; // 处理明细
 };

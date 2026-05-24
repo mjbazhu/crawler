@@ -37,7 +37,7 @@ public:
         std::shared_ptr<application::ports::MiguPacmtokenStore> pacmtoken_store = nullptr
     );
 
-    // 异步处理一批待下载资源；主资源并发处理，关联歌词按歌曲去重。
+    // 异步处理一批待下载资源；主资源并发处理，关联 lyric/mrc/trc 按歌曲去重。
     application::async::Task<application::model::SongResourceProcessResult> processPending(application::model::SongResourceClaimQuery query, SongResourceProcessListener *listener = nullptr);
 
 private:
@@ -57,15 +57,15 @@ private:
     application::async::Task<void> notifyItemEvent(SongResourceProcessListener *listener, application::model::SongResourceProcessItem item, std::string event_type, std::string payload);
     application::async::Task<void> notifyPacmtokenRefreshed(SongResourceProcessListener *listener, bool refreshed, std::size_t pacmtoken_length, std::uint64_t updated_at);
 
-    std::shared_ptr<application::ports::AsyncRuntime> runtime_;                         // application async runtime
-    std::shared_ptr<application::ports::AsyncSongResourceQueue> resource_queue_;         // 异步资源队列
-    std::shared_ptr<application::ports::AsyncSongResourceProvider> resource_provider_;   // 异步资源 URL provider
-    std::shared_ptr<application::ports::SongResourceParser> resource_parser_;            // 响应 parser
+    std::shared_ptr<application::ports::AsyncRuntime> runtime_;                            // application async runtime
+    std::shared_ptr<application::ports::AsyncSongResourceQueue> resource_queue_;           // 异步资源队列
+    std::shared_ptr<application::ports::AsyncSongResourceProvider> resource_provider_;     // 异步资源 URL provider
+    std::shared_ptr<application::ports::SongResourceParser> resource_parser_;              // 响应 parser
     std::shared_ptr<application::ports::AsyncSongResourceContentFetcher> content_fetcher_; // 异步流式内容下载器
-    std::shared_ptr<application::ports::AsyncSongResourceBlobStore> blob_store_;         // 异步 blob store
-    SongResourcePathPlanner path_planner_;                                               // 相对路径规划器
-    std::shared_ptr<application::ports::MiguPacmtokenRefresher> pacmtoken_refresher_;    // 同步 pacmtoken 刷新 port
-    std::shared_ptr<application::ports::MiguPacmtokenStore> pacmtoken_store_;            // pacmtoken 运行期存储
+    std::shared_ptr<application::ports::AsyncSongResourceBlobStore> blob_store_;           // 异步 blob store
+    SongResourcePathPlanner path_planner_;                                                 // 相对路径规划器
+    std::shared_ptr<application::ports::MiguPacmtokenRefresher> pacmtoken_refresher_;      // 同步 pacmtoken 刷新 port
+    std::shared_ptr<application::ports::MiguPacmtokenStore> pacmtoken_store_;              // pacmtoken 运行期存储
 };
 
 } // namespace orchestrator::modules::crawler::application::use_cases

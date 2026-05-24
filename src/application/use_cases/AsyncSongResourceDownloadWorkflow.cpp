@@ -225,14 +225,14 @@ std::size_t normalizedResourceConcurrency(const application::model::SongResource
 } // namespace
 
 struct AsyncSongResourceDownloadWorkflow::ProcessRunState {
-    application::model::SongResourceProcessOptions options;          // 本次批处理有效选项
-    application::model::SongResourceProcessResult result;            // 批次聚合结果
-    std::mutex result_mutex;                                         // 保护 result
-    std::mutex related_mutex;                                        // 保护关联资源去重
-    std::mutex pacmtoken_mutex;                                      // 保护 pacmtoken 刷新状态
-    std::unordered_set<std::string> processed_related_keys;          // 同一批次内关联资源去重键
-    std::uint64_t last_pacmtoken_refresh_at = 0;                     // 最近刷新时间
-    bool pacmtoken_refreshing = false;                               // 是否已有协程在刷新 token
+    application::model::SongResourceProcessOptions options; // 本次批处理有效选项
+    application::model::SongResourceProcessResult result;   // 批次聚合结果
+    std::mutex result_mutex;                                // 保护 result
+    std::mutex related_mutex;                               // 保护关联资源去重
+    std::mutex pacmtoken_mutex;                             // 保护 pacmtoken 刷新状态
+    std::unordered_set<std::string> processed_related_keys; // 同一批次内关联资源去重键
+    std::uint64_t last_pacmtoken_refresh_at = 0;            // 最近刷新时间
+    bool pacmtoken_refreshing = false;                      // 是否已有协程在刷新 token
 };
 
 AsyncSongResourceDownloadWorkflow::AsyncSongResourceDownloadWorkflow(
@@ -414,6 +414,9 @@ application::async::Task<application::model::SongResourceProcessItem> AsyncSongR
             if (isPermanentResourceSkip(code)) {
                 co_await notifyItemEvent(listener, makeStartedItem(target, false), "resourceUrlRejected", stagePayload(target, "resource_url_rejected", "\"attempt\":" + std::to_string(attempt) + ",\"result_code\":\"" + escapeJson(code) + "\""));
                 const std::string category = permanentResourceSkipCategory(code);
+                if (state && resource_queue_) {
+                    co_await processRelatedTextResources(target, fetch_result, batch_id, state, listener);
+                }
                 co_await notifyItemEvent(listener, makeStartedItem(target, false), "resourceAttemptFinished", stagePayload(target, "resource_attempt_finished", "\"attempt\":" + std::to_string(attempt) + ",\"result_code\":\"" + escapeJson(code) + "\",\"error_category\":\"" + escapeJson(category) + "\""));
                 co_return co_await skip(std::move(target), category, std::move(code), std::move(message), batch_id, listener);
             }
@@ -754,7 +757,7 @@ application::async::Task<application::model::SongResourceProcessItem> AsyncSongR
     application::model::SongResourceSkipUpdate update;
     update.resource_id = target.resource_id;
     update.song_source_ref_id = target.song_source_ref_id;
-    update.resource_kind.clear();
+    update.resource_kind = target.resource_kind;
     update.format_type.clear();
     update.error_category = std::move(category);
     update.result_code = std::move(code);

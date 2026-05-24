@@ -69,6 +69,12 @@ bool isAudioResource(const std::string &resource_kind)
     return resource_kind == "audio";
 }
 
+// 判断资源类型是否为 listen 响应带出的关联文本资源。
+bool isRelatedTextResource(const std::string &resource_kind)
+{
+    return resource_kind == "lyric" || resource_kind == "mrc" || resource_kind == "trc";
+}
+
 // 判断来源专辑是否已知为数字专辑。
 bool isKnownDigitalAlbum(const application::model::SongResourceQueueTarget &target)
 {
@@ -130,7 +136,7 @@ void emitItemEvent(SongResourceProcessListener *listener, const application::mod
     if (!listener) {
         return;
     }
-    listener->onItemEvent(makeStartedItem(target, target.resource_kind == "lyric" || target.resource_kind == "mrc" || target.resource_kind == "trc"), event_type, payload);
+    listener->onItemEvent(makeStartedItem(target, isRelatedTextResource(target.resource_kind)), event_type, payload);
 }
 
 // 记录批次阶段事件。
@@ -186,7 +192,7 @@ application::model::SongResourceProcessItem makeRelatedSkippedItem(const applica
     return makeItem(target, false, true, true, true, "resource", "related_not_claimed", "related resource task not found or already processed");
 }
 
-// 构造同一批次内关联歌词资源的去重键。
+// 构造同一批次内关联文本资源的去重键。
 std::string relatedResourceKey(const application::model::SongResourceQueueTarget &audio_target, const std::string &kind)
 {
     return std::to_string(audio_target.song_source_ref_id) + ":" + audio_target.source_song_id + ":" + kind;
@@ -445,6 +451,9 @@ application::model::SongResourceProcessItem SongResourceDownloadWorkflow::proces
             if (isPermanentResourceSkip(code)) {
                 emitItemEvent(listener, target, "resourceUrlRejected", stagePayload(target, "resource_url_rejected", "\"attempt\":" + std::to_string(attempt) + ",\"result_code\":\"" + escapeJson(code) + "\""));
                 const std::string category = permanentResourceSkipCategory(code);
+                if (batch_result && resource_queue_) {
+                    processRelatedTextResources(target, fetch_result, batch_id, *batch_result, listener, state);
+                }
                 emitItemEvent(listener, target, "resourceAttemptFinished", stagePayload(target, "resource_attempt_finished", "\"attempt\":" + std::to_string(attempt) + ",\"result_code\":\"" + escapeJson(code) + "\",\"error_category\":\"" + escapeJson(category) + "\""));
                 return skip(std::move(target), category, std::move(code), std::move(message), batch_id, listener);
             }
@@ -799,7 +808,7 @@ application::model::SongResourceProcessItem SongResourceDownloadWorkflow::skip(a
     application::model::SongResourceSkipUpdate update;
     update.resource_id = target.resource_id;
     update.song_source_ref_id = target.song_source_ref_id;
-    update.resource_kind.clear();
+    update.resource_kind = target.resource_kind;
     update.format_type.clear();
     update.error_category = std::move(category);
     update.result_code = std::move(code);

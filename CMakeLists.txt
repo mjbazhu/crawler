@@ -144,6 +144,7 @@ target_include_directories(MiguSingerSongTableIntegrityProbe
     ${CMAKE_CURRENT_SOURCE_DIR}/tests
 )
 add_crawler_test(MiguSingerIndexParserTest tests/migu/parser/MiguSingerIndexParserTest.cpp)
+add_crawler_test(MiguSongSourceParserTest tests/migu/parser/MiguSongSourceParserTest.cpp)
 add_crawler_test(MiguAlbumSourceParserTest tests/migu/parser/MiguAlbumSourceParserTest.cpp)
 add_crawler_test(MiguSongResourceParserTest tests/migu/parser/MiguSongResourceParserTest.cpp)
 add_crawler_test(SongResourceDownloadStorageTest tests/migu/resource/SongResourceDownloadStorageTest.cpp)

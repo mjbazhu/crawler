@@ -51,7 +51,7 @@ std::vector<char> bytes(std::string text)
 class FakeSongResourceQueue : public ports::SongResourceQueue {
 public:
     std::vector<model::SongResourceQueueTarget> pending;         // 主资源待认领队列
-    std::vector<model::SongResourceQueueTarget> related_targets; // 关联歌词资源队列
+    std::vector<model::SongResourceQueueTarget> related_targets; // 关联文本资源队列
     std::vector<model::SongResourceSuccessUpdate> succeeded;     // 成功回写记录
     std::vector<model::SongResourceFailureUpdate> failed;        // 失败回写记录
     std::vector<model::SongResourceSkipUpdate> skipped;          // 跳过回写记录
@@ -358,11 +358,11 @@ ports::SongResourceProvider::Response listenResponse(std::string url, std::strin
 }
 
 // 构造 listen 返回 cannotCode 的平台限制响应。
-ports::SongResourceProvider::Response listenRestrictedResponse(std::string code, std::string message)
+ports::SongResourceProvider::Response listenRestrictedResponse(std::string code, std::string message, std::string extra = {})
 {
     ports::SongResourceProvider::Response response;
     response.status_code = 200;
-    response.body = bytes(std::string(R"({"code":"000000","info":"操作成功","data":{"dialogInfo":{"text":")") + message + R"("},"cannotCode":")" + code + R"("}})");
+    response.body = bytes(std::string(R"({"code":"000000","info":"操作成功","data":{"dialogInfo":{"text":")") + message + R"("},"cannotCode":")" + code + R"(")" + extra + "}}");
     return response;
 }
 
@@ -397,9 +397,11 @@ public:
         events.push_back(std::move(event_type));
     }
 
-    void onItemStarted(const model::SongResourceProcessItem &) override {}
+    void onItemStarted(const model::SongResourceProcessItem &) override
+    {}
 
-    void onItemFinished(const model::SongResourceProcessItem &) override {}
+    void onItemFinished(const model::SongResourceProcessItem &) override
+    {}
 
     void onItemEvent(const model::SongResourceProcessItem &, std::string event_type, std::string) override
     {
@@ -828,7 +830,7 @@ void testWorkflowRefreshesPacmtokenOn440013()
     require(queue->failed.empty(), "440013 recovered by refresh should not be written as failure");
 }
 
-void testWorkflowSkipsDigitalAlbumAudio()
+void testWorkflowSkipsAllAudioFormatsOn440016()
 {
     auto queue = std::make_shared<FakeSongResourceQueue>();
     queue->pending = {audioTarget()};
@@ -857,10 +859,58 @@ void testWorkflowSkipsDigitalAlbumAudio()
     require(result.items.front().error_category == "resource", "digital album skip item should expose resource category");
     require(queue->failed.empty(), "digital album should not use failure writeback");
     require(queue->skipped.size() == 1, "digital album should use skip writeback");
-    require(queue->skipped.front().song_source_ref_id == 11, "skip should target the whole song source ref");
-    require(queue->skipped.front().resource_kind.empty(), "skip should target all resources for the song");
-    require(queue->skipped.front().format_type.empty(), "skip should cover all resource formats for the song");
+    require(queue->skipped.front().song_source_ref_id == 11, "skip should target the song source ref");
+    require(queue->skipped.front().resource_kind == "audio", "440016 should only target audio resources");
+    require(queue->skipped.front().format_type.empty(), "440016 should mark all audio formats skipped for the song");
     require(queue->skipped.front().result_code == "440016", "skip result code should preserve Migu cannotCode");
+}
+
+void testWorkflowDownloadsRelatedTextWhenAudioRestricted()
+{
+    const struct {
+        const char *code;
+        const char *message;
+    } cases[] = {
+        {"440015", "应版权方要求，该数字专辑购买后即可无限畅享"},
+        {"440016", "应版权方要求，该数字专辑需要购买后即可畅享"},
+    };
+
+    for (const auto &test_case : cases) {
+        auto queue = std::make_shared<FakeSongResourceQueue>();
+        queue->pending = {audioTarget()};
+        queue->related_targets = {relatedTarget(301, "lyric"), relatedTarget(302, "mrc"), relatedTarget(303, "trc")};
+
+        auto provider = std::make_shared<crawler::tests::MockMusicProvider>();
+        provider->mock_song_resource_response = listenRestrictedResponse(
+            test_case.code,
+            test_case.message,
+            R"(,"lrcUrl":"https://example.test/lyric","mrcUrl":"https://example.test/mrc","trcUrl":"https://example.test/trc")"
+        );
+
+        auto fetcher = std::make_shared<ScriptedContentFetcher>();
+        auto parser = std::make_shared<migu_parser::MiguSongResourceParser>();
+        use_cases::SongResourceDownloadWorkflow workflow(queue, provider, parser, fetcher, std::make_shared<MemoryBlobStore>());
+
+        model::SongResourceClaimQuery query;
+        query.source = "migu";
+        query.resource_kind = "audio";
+        query.limit = 1;
+        query.batch_id = std::string("workflow-restricted-related-test-") + test_case.code;
+        const auto result = workflow.processPending(query);
+
+        require(result.skipped_count == 1, std::string(test_case.code) + " should skip the audio task");
+        require(result.failed_count == 0, std::string(test_case.code) + " should not fail the audio task");
+        require(result.related_succeeded_count == 3, std::string(test_case.code) + " should still save lyric/mrc/trc");
+        require(result.related_failed_count == 0, std::string(test_case.code) + " should not fail related text resources");
+        require(result.related_skipped_count == 0, std::string(test_case.code) + " should not skip related text resources");
+        require(queue->skipped.size() == 1, std::string(test_case.code) + " should write one audio skip");
+        require(queue->skipped.front().resource_kind == "audio", std::string(test_case.code) + " skip should only target audio");
+        require(queue->succeeded.size() == 3, std::string(test_case.code) + " should write lyric/mrc/trc success");
+        require(std::count_if(result.items.begin(), result.items.end(), [](const model::SongResourceProcessItem &item) {
+                    return item.related && item.ok;
+                }) == 3,
+                std::string(test_case.code) + " should report three related text successes");
+    }
 }
 
 void testWorkflowSkipsPermanentListenRestrictions()
@@ -901,9 +951,9 @@ void testWorkflowSkipsPermanentListenRestrictions()
         require(result.items.front().result_code == test_case.code, std::string(test_case.code) + " should preserve platform code");
         require(queue->failed.empty(), std::string(test_case.code) + " should not use failure writeback");
         require(queue->skipped.size() == 1, std::string(test_case.code) + " should use skip writeback");
-        require(queue->skipped.front().song_source_ref_id == 11, std::string(test_case.code) + " skip should target whole song");
-        require(queue->skipped.front().resource_kind.empty(), std::string(test_case.code) + " skip should cover all resource kinds");
-        require(queue->skipped.front().format_type.empty(), std::string(test_case.code) + " skip should cover all formats");
+        require(queue->skipped.front().song_source_ref_id == 11, std::string(test_case.code) + " skip should target song source ref");
+        require(queue->skipped.front().resource_kind == "audio", std::string(test_case.code) + " skip should only cover audio");
+        require(queue->skipped.front().format_type.empty(), std::string(test_case.code) + " skip should cover all audio formats");
     }
 }
 
@@ -980,9 +1030,9 @@ void testWorkflowSkipsKnownDigitalAlbumBeforeFetch()
     require(result.items.size() == 1 && result.items.front().error_category == "resource", "known digital album skip item should expose resource category");
     require(provider->last_song_resource_request.content_id.empty(), "known digital album should not call listen provider");
     require(queue->skipped.size() == 1, "known digital album should use skip writeback");
-    require(queue->skipped.front().song_source_ref_id == 11, "known digital album skip should target whole song");
-    require(queue->skipped.front().resource_kind.empty(), "known digital album skip should target all resources");
-    require(queue->skipped.front().format_type.empty(), "known digital album skip should cover all resource formats");
+    require(queue->skipped.front().song_source_ref_id == 11, "known digital album skip should target song source ref");
+    require(queue->skipped.front().resource_kind == "audio", "known digital album skip should only target audio");
+    require(queue->skipped.front().format_type.empty(), "known digital album skip should cover all audio formats");
     require(queue->skipped.front().result_code == "digital_album", "known digital album skip should use stable local result code");
     require(listener.hasEvent("resourceSkipWritebackCompleted"), "known digital album should emit skip writeback event");
 }
@@ -1031,7 +1081,8 @@ int main()
         testWorkflowReportsRelatedFailureAndMissingClaim();
         testWorkflowRetriesNetworkFailureWithFreshListenUrl();
         testWorkflowRefreshesPacmtokenOn440013();
-        testWorkflowSkipsDigitalAlbumAudio();
+        testWorkflowSkipsAllAudioFormatsOn440016();
+        testWorkflowDownloadsRelatedTextWhenAudioRestricted();
         testWorkflowSkipsPermanentListenRestrictions();
         testWorkflowFailsLoginRestrictedAudioAsRetryableResource();
         testWorkflowSkipsKnownDigitalAlbumBeforeFetch();

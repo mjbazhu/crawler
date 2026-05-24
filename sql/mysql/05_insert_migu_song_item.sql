@@ -1,6 +1,7 @@
 -- Migu 歌曲来源核心入库模板。
 -- C++ 代码只负责绑定变量并执行本模板，不在代码中拼写业务 SQL。
--- 本模板写入 songs、song_source_refs，并生成 cover、lyric、mrc、trc 资源任务。
+-- 本模板写入 songs、song_source_refs，并在 URL 非空时生成 cover、lyric、mrc、trc 资源任务。
+-- @cover_url 已在 05_set_migu_song_item_vars.sql 归一化为可请求地址。
 
 SET @now := UNIX_TIMESTAMP();
 SET @normalized_title := COALESCE(NULLIF(@normalized_title, ''), @title);
@@ -96,7 +97,7 @@ ON DUPLICATE KEY UPDATE
     source_album_id = VALUES(source_album_id),
     source_album_name = VALUES(source_album_name),
     source_album_pinyin = VALUES(source_album_pinyin),
-    cover_url = VALUES(cover_url),
+    cover_url = COALESCE(NULLIF(VALUES(cover_url), ''), cover_url),
     lyric_url = VALUES(lyric_url),
     mrc_url = VALUES(mrc_url),
     trc_url = VALUES(trc_url),
@@ -121,12 +122,54 @@ INSERT INTO song_resources (
     created_at,
     updated_at
 )
-VALUES
-    (@song_source_ref_id, 'cover', '', NULLIF(@cover_url, ''), NULL, 0, NULL, 0, 0, NULL, 0, @now, @now),
-    (@song_source_ref_id, 'lyric', '', NULLIF(@lyric_url, ''), NULL, 0, NULL, 0, 0, NULL, 0, @now, @now),
-    (@song_source_ref_id, 'mrc', '', NULLIF(@mrc_url, ''), NULL, 0, NULL, 0, 0, NULL, 0, @now, @now),
-    (@song_source_ref_id, 'trc', '', NULLIF(@trc_url, ''), NULL, 0, NULL, 0, 0, NULL, 0, @now, @now)
+SELECT @song_source_ref_id, 'cover', '', NULLIF(@cover_url, ''), NULL, 0, NULL, 0, 0, NULL, 0, @now, @now
+WHERE NULLIF(@cover_url, '') IS NOT NULL
+UNION ALL
+SELECT @song_source_ref_id, 'lyric', '', NULLIF(@lyric_url, ''), NULL, 0, NULL, 0, 0, NULL, 0, @now, @now
+WHERE NULLIF(@lyric_url, '') IS NOT NULL
+UNION ALL
+SELECT @song_source_ref_id, 'mrc', '', NULLIF(@mrc_url, ''), NULL, 0, NULL, 0, 0, NULL, 0, @now, @now
+WHERE NULLIF(@mrc_url, '') IS NOT NULL
+UNION ALL
+SELECT @song_source_ref_id, 'trc', '', NULLIF(@trc_url, ''), NULL, 0, NULL, 0, 0, NULL, 0, @now, @now
+WHERE NULLIF(@trc_url, '') IS NOT NULL
 ON DUPLICATE KEY UPDATE
     remote_url = COALESCE(VALUES(remote_url), remote_url),
     status = IF(status IN (2, 4), status, VALUES(status)),
     updated_at = VALUES(updated_at);
+
+DELETE FROM song_resources
+WHERE song_source_ref_id = @song_source_ref_id
+  AND format_type = ''
+  AND resource_kind = 'cover'
+  AND NULLIF(@cover_url, '') IS NULL
+  AND COALESCE(local_path, '') = ''
+  AND size_bytes = 0
+  AND status IN (0, 3, 4);
+
+DELETE FROM song_resources
+WHERE song_source_ref_id = @song_source_ref_id
+  AND format_type = ''
+  AND resource_kind = 'lyric'
+  AND NULLIF(@lyric_url, '') IS NULL
+  AND COALESCE(local_path, '') = ''
+  AND size_bytes = 0
+  AND status IN (0, 3, 4);
+
+DELETE FROM song_resources
+WHERE song_source_ref_id = @song_source_ref_id
+  AND format_type = ''
+  AND resource_kind = 'mrc'
+  AND NULLIF(@mrc_url, '') IS NULL
+  AND COALESCE(local_path, '') = ''
+  AND size_bytes = 0
+  AND status IN (0, 3, 4);
+
+DELETE FROM song_resources
+WHERE song_source_ref_id = @song_source_ref_id
+  AND format_type = ''
+  AND resource_kind = 'trc'
+  AND NULLIF(@trc_url, '') IS NULL
+  AND COALESCE(local_path, '') = ''
+  AND size_bytes = 0
+  AND status IN (0, 3, 4);

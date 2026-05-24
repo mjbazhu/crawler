@@ -150,8 +150,8 @@ private:
 // 顺序 listen provider，用于验证重试会重新获取临时 URL。
 class SequenceAsyncSongResourceProvider : public ports::AsyncSongResourceProvider {
 public:
-    std::vector<std::optional<Response>> responses;         // 顺序响应脚本
-    std::vector<model::SongResourceFetchRequest> requests;  // 请求记录
+    std::vector<std::optional<Response>> responses;        // 顺序响应脚本
+    std::vector<model::SongResourceFetchRequest> requests; // 请求记录
 
     app_async::Task<std::optional<Response>> fetchSongResource(model::SongResourceFetchRequest request) override
     {
@@ -173,10 +173,10 @@ private:
 
 // 流式下载脚本响应。
 struct StreamScript {
-    bool ok = true;                         // 是否下载成功
-    std::string content_type = "audio/flac"; // 响应 Content-Type
-    std::vector<std::string> chunks {"ok"}; // 成功时交付的分片
-    std::string error_category = "network"; // 失败分类
+    bool ok = true;                             // 是否下载成功
+    std::string content_type = "audio/flac";    // 响应 Content-Type
+    std::vector<std::string> chunks {"ok"};     // 成功时交付的分片
+    std::string error_category = "network";     // 失败分类
     std::string result_code = "network_failed"; // 失败编码
     std::string message = "download failed";    // 失败说明
 };
@@ -184,11 +184,11 @@ struct StreamScript {
 // 可延迟的异步流式 fetcher，用于验证并发和重试。
 class ScriptedAsyncContentFetcher : public ports::AsyncSongResourceContentFetcher {
 public:
-    std::chrono::milliseconds delay {0};                         // 每次下载延迟
+    std::chrono::milliseconds delay {0};                               // 每次下载延迟
     std::unordered_map<std::string, std::deque<StreamScript>> scripts; // URL 到顺序脚本
-    std::vector<std::string> requested_urls;                     // 下载 URL 记录
-    std::atomic<int> active {0};                                 // 当前活跃下载数
-    std::atomic<int> max_active {0};                             // 最大观察并发数
+    std::vector<std::string> requested_urls;                           // 下载 URL 记录
+    std::atomic<int> active {0};                                       // 当前活跃下载数
+    std::atomic<int> max_active {0};                                   // 最大观察并发数
 
     app_async::Task<model::SongResourceContentStreamResult> streamSongResourceContent(
         model::SongResourceContentFetchRequest request,
@@ -304,7 +304,7 @@ private:
 // 内存异步 blob store。
 class MemoryAsyncBlobStore : public ports::AsyncSongResourceBlobStore {
 public:
-    bool fail_commit = false;                              // 是否让 commit 失败
+    bool fail_commit = false;                                     // 是否让 commit 失败
     std::vector<model::SongResourceBlobStreamSaveRequest> opened; // 打开记录
 
     app_async::Task<std::unique_ptr<ports::AsyncBlobWriteSession>> open(model::SongResourceBlobStreamSaveRequest request) override
@@ -362,9 +362,9 @@ public:
     }
 
 private:
-    mutable std::mutex mutex_;            // 保护 token 状态
-    std::optional<std::string> token_;    // 当前 token
-    std::uint64_t updated_at_ = 0;        // 最近更新时间
+    mutable std::mutex mutex_;         // 保护 token 状态
+    std::optional<std::string> token_; // 当前 token
+    std::uint64_t updated_at_ = 0;     // 最近更新时间
 };
 
 model::SongResourceQueueTarget audioTarget(std::uint64_t id = 101, std::string format = "ZQ24")
@@ -415,11 +415,11 @@ ports::AsyncSongResourceProvider::Response restrictedResponse()
     return response;
 }
 
-ports::AsyncSongResourceProvider::Response listenRestrictedResponse(std::string code, std::string message)
+ports::AsyncSongResourceProvider::Response listenRestrictedResponse(std::string code, std::string message, std::string extra = {})
 {
     ports::AsyncSongResourceProvider::Response response;
     response.status_code = 200;
-    response.body = bytes(std::string(R"({"code":"000000","info":"操作成功","data":{"dialogInfo":{"text":")") + message + R"("},"cannotCode":")" + code + R"("}})");
+    response.body = bytes(std::string(R"({"code":"000000","info":"操作成功","data":{"dialogInfo":{"text":")") + message + R"("},"cannotCode":")" + code + R"(")" + extra + "}}");
     return response;
 }
 
@@ -447,9 +447,11 @@ public:
         events.push_back(std::move(event_type));
     }
 
-    void onItemStarted(const model::SongResourceProcessItem &) override {}
+    void onItemStarted(const model::SongResourceProcessItem &) override
+    {}
 
-    void onItemFinished(const model::SongResourceProcessItem &) override {}
+    void onItemFinished(const model::SongResourceProcessItem &) override
+    {}
 
     void onItemEvent(const model::SongResourceProcessItem &, std::string event_type, std::string) override
     {
@@ -637,12 +639,12 @@ void testAsyncWorkflowSkipsKnownDigitalAlbumBeforeFetch()
     require(result.failed_count == 0, "known digital album should not fail");
     require(provider->requests.empty(), "known digital album should not call listen provider");
     require(queue->skipped.size() == 1, "known digital album should use skip writeback");
-    require(queue->skipped.front().resource_kind.empty(), "known digital album should skip all resources for the song");
+    require(queue->skipped.front().resource_kind == "audio", "known digital album should only skip audio resources");
     require(queue->skipped.front().result_code == "digital_album", "known digital album should use stable skip code");
     require(listener.hasEvent("resourceSkipWritebackCompleted"), "known digital album should emit skip writeback event");
 }
 
-void testAsyncWorkflowSkipsAllSongResourcesOn440016()
+void testAsyncWorkflowSkipsAudioOn440016()
 {
     auto runtime = std::make_shared<ThreadedAsyncRuntime>();
     auto queue = std::make_shared<FakeAsyncSongResourceQueue>();
@@ -660,10 +662,55 @@ void testAsyncWorkflowSkipsAllSongResourcesOn440016()
     require(result.failed_count == 0, "440016 should not be failed");
     require(queue->failed.empty(), "440016 should not use failure writeback");
     require(queue->skipped.size() == 1, "440016 should use skip writeback");
-    require(queue->skipped.front().song_source_ref_id == 11, "440016 skip should target whole song");
-    require(queue->skipped.front().resource_kind.empty(), "440016 skip should cover all resource kinds");
-    require(queue->skipped.front().format_type.empty(), "440016 skip should cover all formats");
+    require(queue->skipped.front().song_source_ref_id == 11, "440016 skip should target song source ref");
+    require(queue->skipped.front().resource_kind == "audio", "440016 skip should only cover audio");
+    require(queue->skipped.front().format_type.empty(), "440016 should mark all audio formats skipped for the song");
     require(queue->skipped.front().result_code == "440016", "440016 skip should preserve platform code");
+}
+
+void testAsyncWorkflowDownloadsRelatedTextWhenAudioRestricted()
+{
+    const struct {
+        const char *code;
+        const char *message;
+    } cases[] = {
+        {"440015", "应版权方要求，该数字专辑购买后即可无限畅享"},
+        {"440016", "数字专辑需要购买后下载"},
+    };
+
+    for (const auto &test_case : cases) {
+        auto runtime = std::make_shared<ThreadedAsyncRuntime>();
+        auto queue = std::make_shared<FakeAsyncSongResourceQueue>();
+        queue->pending = {audioTarget()};
+        queue->related_targets = {relatedTarget(301, "lyric"), relatedTarget(302, "mrc"), relatedTarget(303, "trc")};
+
+        auto provider = std::make_shared<SequenceAsyncSongResourceProvider>();
+        provider->responses = {
+            listenRestrictedResponse(
+                test_case.code,
+                test_case.message,
+                R"(,"lrcUrl":"https://example.test/lyric","mrcUrl":"https://example.test/mrc","trcUrl":"https://example.test/trc")"
+            ),
+        };
+        auto parser = std::make_shared<migu_parser::MiguSongResourceParser>();
+        use_cases::AsyncSongResourceDownloadWorkflow workflow(runtime, queue, provider, parser, std::make_shared<ScriptedAsyncContentFetcher>(), std::make_shared<MemoryAsyncBlobStore>());
+        auto query = baseQuery(std::string("async-restricted-related-") + test_case.code);
+        query.resource_kind = "audio";
+        const auto result = runWorkflow(workflow, runtime, query);
+
+        require(result.skipped_count == 1, std::string(test_case.code) + " should skip the audio task");
+        require(result.failed_count == 0, std::string(test_case.code) + " should not fail the audio task");
+        require(result.related_succeeded_count == 3, std::string(test_case.code) + " should still save lyric/mrc/trc");
+        require(result.related_failed_count == 0, std::string(test_case.code) + " should not fail related text resources");
+        require(result.related_skipped_count == 0, std::string(test_case.code) + " should not skip related text resources");
+        require(queue->skipped.size() == 1, std::string(test_case.code) + " should write one audio skip");
+        require(queue->skipped.front().resource_kind == "audio", std::string(test_case.code) + " skip should only target audio");
+        require(queue->succeeded.size() == 3, std::string(test_case.code) + " should write lyric/mrc/trc success");
+        require(std::count_if(result.items.begin(), result.items.end(), [](const model::SongResourceProcessItem &item) {
+                    return item.related && item.ok;
+                }) == 3,
+                std::string(test_case.code) + " should report three related text successes");
+    }
 }
 
 void testAsyncWorkflowSkipsPermanentListenRestrictions()
@@ -697,9 +744,9 @@ void testAsyncWorkflowSkipsPermanentListenRestrictions()
         require(result.items.front().result_code == test_case.code, std::string(test_case.code) + " should preserve platform code");
         require(queue->failed.empty(), std::string(test_case.code) + " should not use failure writeback");
         require(queue->skipped.size() == 1, std::string(test_case.code) + " should use skip writeback");
-        require(queue->skipped.front().song_source_ref_id == 11, std::string(test_case.code) + " skip should target whole song");
-        require(queue->skipped.front().resource_kind.empty(), std::string(test_case.code) + " skip should cover all resource kinds");
-        require(queue->skipped.front().format_type.empty(), std::string(test_case.code) + " skip should cover all formats");
+        require(queue->skipped.front().song_source_ref_id == 11, std::string(test_case.code) + " skip should target song source ref");
+        require(queue->skipped.front().resource_kind == "audio", std::string(test_case.code) + " skip should only cover audio");
+        require(queue->skipped.front().format_type.empty(), std::string(test_case.code) + " skip should cover all audio formats");
     }
 }
 
@@ -739,7 +786,8 @@ int main()
         testAsyncWorkflowRetriesAudioWithFreshListenUrl();
         testAsyncWorkflowRefreshesPacmtokenOn440013();
         testAsyncWorkflowSkipsKnownDigitalAlbumBeforeFetch();
-        testAsyncWorkflowSkipsAllSongResourcesOn440016();
+        testAsyncWorkflowSkipsAudioOn440016();
+        testAsyncWorkflowDownloadsRelatedTextWhenAudioRestricted();
         testAsyncWorkflowSkipsPermanentListenRestrictions();
         testAsyncWorkflowDoesNotWriteCompletedWhenCommitFails();
         std::cout << "AsyncSongResourceDownloadWorkflowTest passed." << std::endl;

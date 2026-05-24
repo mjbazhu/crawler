@@ -5,6 +5,7 @@
 
 #include <cctype>
 #include <cstdint>
+#include <string_view>
 #include <utility>
 
 namespace orchestrator::modules::crawler::infrastructure::music::migu::parser::detail {
@@ -12,6 +13,8 @@ namespace orchestrator::modules::crawler::infrastructure::music::migu::parser::d
 using json::JsonUtils;
 
 namespace {
+
+constexpr std::string_view kMiguResourcePrefix = "https://d.musicapp.migu.cn";
 
 // 从平台 Disc 文本中提取第一个正整数，提取不到时返回 0。
 std::uint32_t parseDiscNo(const std::string &disc_name)
@@ -27,6 +30,24 @@ std::uint32_t parseDiscNo(const std::string &disc_name)
         }
     }
     return found ? value : 0;
+}
+
+// 将 Migu 图片相对路径补齐为可直接请求的资源地址。
+std::string normalizeMiguResourceUrl(std::string resource_url)
+{
+    if (resource_url.empty() || resource_url.starts_with("http://") || resource_url.starts_with("https://")) {
+        return resource_url;
+    }
+    if (resource_url.starts_with("//")) {
+        return "https:" + resource_url;
+    }
+    if (resource_url.starts_with('/')) {
+        return std::string(kMiguResourcePrefix) + resource_url;
+    }
+    if (resource_url.starts_with("data/oss/")) {
+        return std::string(kMiguResourcePrefix) + "/" + resource_url;
+    }
+    return resource_url;
 }
 
 } // namespace
@@ -71,16 +92,18 @@ std::optional<application::model::SongSourceMetadata> parseSongSourceFromSongObj
         wrapper ? JsonUtils::getString(*wrapper, "txt3") : std::string {},
     });
     metadata.source_album_pinyin = JsonUtils::getString(song_item, "albumPinyin");
-    metadata.cover_url = firstNonEmpty({
-        JsonUtils::getString(song_item, "img3"),
-        JsonUtils::getString(song_item, "img2"),
-        JsonUtils::getString(song_item, "img1"),
-        JsonUtils::getString(song_item, "landscapImg"),
-        JsonUtils::getString(song_item, "img"),
-        album_context ? selectImageUrl(JsonUtils::getArray(*album_context, "imgItem")) : std::string {},
-        album_context ? selectImageUrl(JsonUtils::getArray(*album_context, "imgItems")) : std::string {},
-        wrapper ? JsonUtils::getString(*wrapper, "img") : std::string {},
-    });
+    metadata.cover_url = normalizeMiguResourceUrl(
+        firstNonEmpty({
+            JsonUtils::getString(song_item, "img3"),
+            JsonUtils::getString(song_item, "img2"),
+            JsonUtils::getString(song_item, "img1"),
+            JsonUtils::getString(song_item, "landscapImg"),
+            JsonUtils::getString(song_item, "img"),
+            album_context ? selectImageUrl(JsonUtils::getArray(*album_context, "imgItem")) : std::string {},
+            album_context ? selectImageUrl(JsonUtils::getArray(*album_context, "imgItems")) : std::string {},
+            wrapper ? JsonUtils::getString(*wrapper, "img") : std::string {},
+        })
+    );
     metadata.lyric_url = JsonUtils::getString(song_item, "lrcUrl");
     metadata.mrc_url = JsonUtils::getString(song_item, "mrcUrl");
     metadata.trc_url = JsonUtils::getString(song_item, "trcUrl");

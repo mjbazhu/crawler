@@ -70,7 +70,7 @@ public:
         std::shared_ptr<application::ports::MiguPacmtokenStore> pacmtoken_store = nullptr
     );
 
-    // 处理一批待下载资源；默认处理 audio，并顺手只认领一次 lyric/mrc/trc。
+    // 处理一批待下载资源；默认不过滤资源类型，audio 成功或受限时顺手只认领一次 lyric/mrc/trc。
     application::model::SongResourceProcessResult processPending(application::model::SongResourceClaimQuery query, SongResourceProcessListener *listener = nullptr);
 
     // 处理单条已认领资源，供测试或手动编排使用。

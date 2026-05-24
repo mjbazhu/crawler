@@ -173,7 +173,7 @@ boost::asio::awaitable<std::optional<application::model::SongResourceQueueTarget
         boost::mysql::pooled_connection connection = co_await pool_->coAcquire();
         boost::mysql::statement claim_statement = co_await connection->async_prepare_statement(related_claim_update_sql_, boost::asio::use_awaitable);
         boost::mysql::results claim_result;
-        co_await connection->async_execute(claim_statement.bind(request.remote_url, request.batch_id, request.song_source_ref_id, request.resource_kind), claim_result, boost::asio::use_awaitable);
+        co_await connection->async_execute(claim_statement.bind(request.song_source_ref_id, request.resource_kind, request.remote_url, request.batch_id, request.remote_url, request.song_source_ref_id), claim_result, boost::asio::use_awaitable);
         if (claim_result.affected_rows() == 0) {
             co_return std::nullopt;
         }

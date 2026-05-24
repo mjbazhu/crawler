@@ -30,5 +30,7 @@
 - `V2026052109__song_artist_refs_relationship_only.sql`：把 `song_artist_refs` 收敛为纯歌曲-歌手关系表，删除平台来源、头像和拼音冗余字段，并调整关系去重约束。
 - `V2026052110__singer_index_memberships.sql`：新增歌手分类归属表，记录唯一歌手来源出现在哪些 Migu 分类 tab 中，避免在 `singer_source_refs` 中重复保存同一平台歌手。
 - `V2026052111__song_artist_refs_strict_singer_relation.sql`：把 `song_artist_refs` 进一步收敛为强关系表，要求 `singer_source_ref_id` 非空并删除平台歌手 ID/名称冗余字段。
+- `V2026052402__migu_song_cover_url_prefix.sql`：补齐历史 Migu 歌曲封面相对路径的请求前缀，并同步修复 `song_resources` 中的 cover 远程地址。
+- `V2026052403__migu_text_resource_queue_cleanup.sql`：清理历史 Migu 空封面/歌词资源占位，并恢复被 440015/440016 连带跳过的封面、歌词、mrc、trc 资源任务。
 
 `tests/` 存放集成测试和真实调试测试使用的校验 SQL，生产代码不应依赖该目录。

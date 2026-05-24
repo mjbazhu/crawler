@@ -163,9 +163,13 @@ int main()
     assert(schemas["ResourceProcessItem"]["required"].dump().find("synthetic") != std::string::npos);
     assert(schemas["ResourceProcessRequest"]["properties"].contains("async"));
     assert(schemas["ResourceProcessRequest"]["properties"].contains("options"));
+    requireDumpContains(schemas["ResourceProcessRequest"], "Omitted kind does not filter resource kinds");
+    requireDumpContains(schemas["ResourceProcessRequest"], "audio, cover, lyric, mrc and trc");
     assert(schemas["ResourceProcessOptions"]["properties"].contains("resource_download_concurrency"));
     assert(schemas["ResourceProcessOptions"]["properties"].contains("pacmtoken_refresh_interval_seconds"));
     assert(schemas["ResourceProcessResponse"]["properties"].contains("synthetic_related_skipped_count"));
+    requireDumpContains(doc["paths"]["/api/migu/resources/process"]["post"], "Omitted kind processes all resource kinds");
+    requireDumpContains(doc["paths"]["/api/migu/resources/process"]["post"], "440016");
     assert(doc["paths"]["/api/migu/resources/process"]["post"]["responses"].contains("202"));
     assert(doc["paths"]["/api/migu/singer-songs/crawl-from-db/preview"]["post"]["responses"].contains("200"));
     assert(schemas["SingerFromDbPreviewItem"]["properties"].contains("singer_id"));

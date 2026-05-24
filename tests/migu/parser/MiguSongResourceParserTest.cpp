@@ -109,6 +109,31 @@ void testParseCannotCode()
     require(result.message == "会员专属音质，请先登录", "dialog text should become result message");
 }
 
+void testParseCannotCodeKeepsRelatedTextUrls()
+{
+    const std::string raw = R"({
+        "code": "000000",
+        "info": "操作成功",
+        "data": {
+            "dialogInfo": {
+                "text": "数字专辑需要购买后下载"
+            },
+            "cannotCode": "440016",
+            "lrcUrl": "https://d.musicapp.migu.cn/data/oss/resource/00/1y/hd/y5",
+            "mrcUrl": "https://d.musicapp.migu.cn/data/oss/resource/00/1y/hd/y6",
+            "trcUrl": "https://d.musicapp.migu.cn/data/oss/resource/00/1y/hd/y7"
+        }
+    })";
+
+    migu_parser::MiguSongResourceParser parser;
+    const auto result = parser.parseSongResource(toBytes(raw));
+    require(!result.ok, "cannotCode without audio url should not be ok");
+    require(result.code == "440016", "cannotCode should become result code");
+    require(result.lyric_url == "https://d.musicapp.migu.cn/data/oss/resource/00/1y/hd/y5", "cannotCode lrc url should be preserved");
+    require(result.mrc_url == "https://d.musicapp.migu.cn/data/oss/resource/00/1y/hd/y6", "cannotCode mrc url should be preserved");
+    require(result.trc_url == "https://d.musicapp.migu.cn/data/oss/resource/00/1y/hd/y7", "cannotCode trc url should be preserved");
+}
+
 void testParseMissingData()
 {
     const std::string raw = R"({
@@ -139,6 +164,7 @@ int main()
         testParseNonSuccessCode();
         testParseMissingUrl();
         testParseCannotCode();
+        testParseCannotCodeKeepsRelatedTextUrls();
         testParseMissingData();
         testParseInvalidJson();
         std::cout << "MiguSongResourceParserTest passed." << std::endl;

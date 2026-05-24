@@ -642,7 +642,7 @@ void buildSchemas(json &schemas)
     };
     schemas["ResourceProcessRequest"] = {
         {"type", "object"},
-        {"description", "Claims pending Migu resource records, fetches the resource URL when needed, downloads content, stores bytes and writes back status. Use async=true for long-running batches. Audio resources use the runtime pacmtoken stored through POST /api/migu/pacmtoken/refresh and may auto-refresh it during processing; tokens are not written to batch tables or logs."},
+        {"description", "Claims pending Migu resource records, fetches the resource URL when needed, downloads content, stores bytes and writes back status. By default it claims status 0/3 across all resource kinds; filter.kind/resource_kind can limit processing to audio, cover, lyric, mrc or trc. Use async=true for long-running batches. Audio resources use the runtime pacmtoken stored through POST /api/migu/pacmtoken/refresh and may auto-refresh it during processing; tokens are not written to batch tables or logs."},
         {"properties",
          {
              {"source", {{"type", "string"}, {"enum", json::array({"migu"})}, {"default", "migu"}}},
@@ -650,7 +650,7 @@ void buildSchemas(json &schemas)
              {"offset", {{"type", "integer"}, {"minimum", 0}, {"default", 0}}},
              {"async", {{"type", "boolean"}, {"default", false}, {"description", "When true, returns 202 with batch_id and processes resources in the background."}}},
              {"batch_id", {{"type", "string"}, {"description", "Optional caller-provided batch id; generated when omitted."}}},
-             {"filter", {{"type", "object"}, {"additionalProperties", true}, {"description", "Supports status/resource_status/resourceStatus/statuses, kind/resource_kind/resourceKind, format/format_type/formatType and content_id/contentId/source_content_id/sourceContentId."}}},
+             {"filter", {{"type", "object"}, {"additionalProperties", true}, {"description", "Supports status/resource_status/resourceStatus/statuses, kind/resource_kind/resourceKind, format/format_type/formatType and content_id/contentId/source_content_id/sourceContentId. Omitted status defaults to 0 and 3. Omitted kind does not filter resource kinds; valid kinds are audio, cover, lyric, mrc and trc."}}},
              {"options", ref("#/components/schemas/ResourceProcessOptions")},
          }},
     };
@@ -1391,7 +1391,7 @@ std::string OpenApiDocumentFactory::miguDocumentJson()
     doc["paths"]["/api/migu/resources/process"]["post"] = {
         {"tags", json::array({"migu"})},
         {"summary", "Process Migu resource queue"},
-        {"description", "Claims pending resource records, obtains temporary Migu resource URLs, downloads content, saves bytes and writes results back to MySQL. Known digital albums are skipped without requesting resource URLs. Set async=true for long-running background processing; item and event rows are written in real time."},
+        {"description", "Claims pending resource records, obtains temporary Migu resource URLs, downloads content, saves bytes and writes results back to MySQL. Omitted kind processes all resource kinds; use filter.kind to select audio, cover, lyric, mrc or trc. Known digital albums are skipped without requesting resource URLs; when an audio response returns 440016, all audio formats for that song are marked skipped while cover/lyric/mrc/trc remain eligible. Set async=true for long-running background processing; item and event rows are written in real time."},
         {"requestBody", requestBody(ref("#/components/schemas/ResourceProcessRequest"))},
         {"responses", {{"200", {{"description", "Resource processing result"}, {"content", jsonContent(ref("#/components/schemas/ResourceProcessResponse"))}}}, {"202", {{"description", "Resource processing accepted"}, {"content", jsonContent(ref("#/components/schemas/ResourceProcessAcceptedResponse"))}}}, {"400", errorResponse("Invalid resource process request")}, {"503", errorResponse("Resource workflow is not configured")}}},
     };
