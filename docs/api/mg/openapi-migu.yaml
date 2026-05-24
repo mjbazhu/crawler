@@ -128,15 +128,19 @@ paths:
     get:
       tags: [migu]
       summary: List Migu singers
-      description: Supports q, gender, country, songs_sync_status and albums_sync_status.
+      description: Supports q, gender, country, songs_sync_status and albums_sync_status. Song and album summary counts are derived from real relationships, using song_artist_refs for songs and album_source_refs.source_artist_id for albums. Status filters use the exposed status, so singers with real content and no sync error are treated as completed (2) instead of pending (0), while running (1) remains running.
       parameters:
         - { name: page, in: query, required: false, schema: { type: integer, minimum: 1, default: 1 } }
         - { name: page_size, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 20 } }
         - { name: q, in: query, required: false, schema: { type: string, maxLength: 128 } }
         - { name: gender, in: query, required: false, schema: { type: integer, minimum: 0, maximum: 3 } }
         - { name: country, in: query, required: false, schema: { type: string, maxLength: 128 } }
-        - { name: songs_sync_status, in: query, required: false, schema: { type: string, pattern: '^[0-4](,[0-4])*$' } }
-        - { name: albums_sync_status, in: query, required: false, schema: { type: string, pattern: '^[0-4](,[0-4])*$' } }
+        - { name: songs_sync_status, in: query, required: false, description: "Comma-separated exposed singer-song sync statuses. Real song_artist_refs with no sync error are exposed as completed (2).", schema: { type: string, pattern: '^[0-4](,[0-4])*$' } }
+        - { name: albums_sync_status, in: query, required: false, description: "Comma-separated exposed singer-album sync statuses. Real album_source_refs.source_artist_id relations with no sync error are exposed as completed (2).", schema: { type: string, pattern: '^[0-4](,[0-4])*$' } }
+        - { name: min_songs_count, in: query, required: false, description: "Minimum real song relation count from song_artist_refs.", schema: { type: integer, minimum: 0 } }
+        - { name: max_songs_count, in: query, required: false, description: "Maximum real song relation count from song_artist_refs.", schema: { type: integer, minimum: 0 } }
+        - { name: min_albums_count, in: query, required: false, description: "Minimum real album relation count from album_source_refs.source_artist_id.", schema: { type: integer, minimum: 0 } }
+        - { name: max_albums_count, in: query, required: false, description: "Maximum real album relation count from album_source_refs.source_artist_id.", schema: { type: integer, minimum: 0 } }
       responses:
         '200': { $ref: '#/components/responses/SingerRecordPage' }
         '400': { $ref: '#/components/responses/BadRequest' }
@@ -144,6 +148,7 @@ paths:
     get:
       tags: [migu]
       summary: Get Migu singer
+      description: Returns one singer by Migu source_singer_id with real relationship summary counts from song_artist_refs and album_source_refs.source_artist_id. When real content exists and no sync error is stored, the exposed sync status is completed (2) instead of pending (0), except running (1) remains running.
       parameters:
         - { name: source_singer_id, in: path, required: true, schema: { type: string } }
       responses:
@@ -183,6 +188,10 @@ paths:
         - { name: kind, in: query, required: false, schema: { type: integer, minimum: 0, maximum: 2 } }
         - { name: detail_sync_status, in: query, required: false, schema: { type: string, pattern: '^[0-4](,[0-4])*$' } }
         - { name: songs_sync_status, in: query, required: false, schema: { type: string, pattern: '^[0-4](,[0-4])*$' } }
+        - { name: min_songs_count, in: query, required: false, description: "Minimum real album-song relation count from album_song_refs.", schema: { type: integer, minimum: 0 } }
+        - { name: max_songs_count, in: query, required: false, description: "Maximum real album-song relation count from album_song_refs.", schema: { type: integer, minimum: 0 } }
+        - { name: min_album_songs_count, in: query, required: false, description: "Alias of min_songs_count for album-song relation filtering.", schema: { type: integer, minimum: 0 } }
+        - { name: max_album_songs_count, in: query, required: false, description: "Alias of max_songs_count for album-song relation filtering.", schema: { type: integer, minimum: 0 } }
       responses:
         '200': { $ref: '#/components/responses/AlbumRecordPage' }
         '400': { $ref: '#/components/responses/BadRequest' }
@@ -199,6 +208,10 @@ paths:
         - { name: kind, in: query, required: false, schema: { type: integer, minimum: 0, maximum: 2 } }
         - { name: detail_sync_status, in: query, required: false, schema: { type: string, pattern: '^[0-4](,[0-4])*$' } }
         - { name: songs_sync_status, in: query, required: false, schema: { type: string, pattern: '^[0-4](,[0-4])*$' } }
+        - { name: min_songs_count, in: query, required: false, description: "Minimum real album-song relation count from album_song_refs.", schema: { type: integer, minimum: 0 } }
+        - { name: max_songs_count, in: query, required: false, description: "Maximum real album-song relation count from album_song_refs.", schema: { type: integer, minimum: 0 } }
+        - { name: min_album_songs_count, in: query, required: false, description: "Alias of min_songs_count for album-song relation filtering.", schema: { type: integer, minimum: 0 } }
+        - { name: max_album_songs_count, in: query, required: false, description: "Alias of max_songs_count for album-song relation filtering.", schema: { type: integer, minimum: 0 } }
       responses:
         '200': { $ref: '#/components/responses/AlbumRecordPage' }
         '400': { $ref: '#/components/responses/BadRequest' }
@@ -447,17 +460,24 @@ paths:
     get:
       tags: [migu]
       summary: List Migu backfill queue
+      description: Singer-song and singer-album queue targets use the same real relationship summary as /api/migu/singers. singer-songs derives sync_count from song_artist_refs; singer-albums derives sync_count from album_source_refs.source_artist_id. Singers that already have real content and no sync error are exposed as completed (2) and are not returned by the default missing singer queues.
       parameters:
         - { name: type, in: path, required: true, schema: { type: string, enum: [singer-songs, singer-albums, album-details, album-songs] } }
         - { name: page, in: query, required: false, schema: { type: integer, minimum: 1, default: 1 } }
         - { name: page_size, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 20 } }
         - { name: q, in: query, required: false, schema: { type: string, maxLength: 128 } }
-        - { name: status, in: query, required: false, schema: { type: string, pattern: '^[0-4](,[0-4])*$' } }
-        - { name: sync_status, in: query, required: false, schema: { type: string, pattern: '^[0-4](,[0-4])*$' } }
+        - { name: status, in: query, required: false, description: "Comma-separated effective metadata sync statuses. Defaults to 0,3,4. Singer queues derive completed status from real song_artist_refs or album_source_refs.source_artist_id when content exists and no sync error is stored.", schema: { type: string, pattern: '^[0-4](,[0-4])*$' } }
+        - { name: sync_status, in: query, required: false, description: "Alias of status with the same effective real-relation status semantics.", schema: { type: string, pattern: '^[0-4](,[0-4])*$' } }
         - { name: country, in: query, required: false, schema: { type: string, maxLength: 128 } }
         - { name: gender, in: query, required: false, schema: { type: integer, minimum: 0, maximum: 3 } }
         - { name: artist, in: query, required: false, schema: { type: string, maxLength: 128 } }
         - { name: kind, in: query, required: false, schema: { type: integer, minimum: 0, maximum: 2 } }
+        - { name: min_songs_count, in: query, required: false, description: "Minimum real relation count. Singer-song queues use song_artist_refs; album queues use album_song_refs.", schema: { type: integer, minimum: 0 } }
+        - { name: max_songs_count, in: query, required: false, description: "Maximum real relation count. Singer-song queues use song_artist_refs; album queues use album_song_refs.", schema: { type: integer, minimum: 0 } }
+        - { name: min_albums_count, in: query, required: false, description: "Minimum real singer-album relation count. Applies to singer queues.", schema: { type: integer, minimum: 0 } }
+        - { name: max_albums_count, in: query, required: false, description: "Maximum real singer-album relation count. Applies to singer queues.", schema: { type: integer, minimum: 0 } }
+        - { name: min_album_songs_count, in: query, required: false, description: "Alias of min_songs_count for album queues.", schema: { type: integer, minimum: 0 } }
+        - { name: max_album_songs_count, in: query, required: false, description: "Alias of max_songs_count for album queues.", schema: { type: integer, minimum: 0 } }
       responses:
         '200': { $ref: '#/components/responses/BackfillQueuePage' }
         '400': { $ref: '#/components/responses/BadRequest' }
@@ -543,7 +563,7 @@ paths:
     get:
       tags: [migu]
       summary: Get Migu catalog integrity
-      description: Returns lightweight counts for unfinished metadata, stale metadata running states, stale batches and stale resource tasks.
+      description: Returns lightweight counts for unfinished metadata, stale metadata running states, stale batches and stale resource tasks. Singer missing-song and missing-album counts use real relationship existence, using song_artist_refs for songs and album_source_refs.source_artist_id for albums, not only sync status fields.
       parameters:
         - name: stale_after_seconds
           in: query
@@ -1145,17 +1165,23 @@ components:
         source_metric: { type: string }
         avatar_url: { type: string }
         songs_sync_status:
-          $ref: '#/components/schemas/SyncStatus'
-        songs_synced_at: { nullable: true, type: integer, minimum: 0 }
-        songs_sync_count: { type: integer, minimum: 0 }
-        songs_sync_error: { type: string }
+          allOf:
+            - $ref: '#/components/schemas/SyncStatus'
+          description: Exposed singer-song sync status. It is derived from real song_artist_refs, so when the singer has related songs and no sync error, pending or partial stored state is exposed as completed (2); running (1) remains running.
+        songs_synced_at: { nullable: true, type: integer, minimum: 0, description: "Unix timestamp of the last singer-song sync or summary repair." }
+        songs_count: { type: integer, minimum: 0, description: "Frontend display alias of songs_sync_count." }
+        songs_sync_count: { type: integer, minimum: 0, description: "Distinct related song count derived from song_artist_refs for this Migu source_singer_id." }
+        songs_sync_error: { type: string, description: "Last singer-song sync error. A non-empty error prevents real-content summary repair from exposing the status as completed." }
         songs_last_batch_id: { nullable: true, type: string }
         songs_running_batch_id: { nullable: true, type: string }
         albums_sync_status:
-          $ref: '#/components/schemas/SyncStatus'
-        albums_synced_at: { nullable: true, type: integer, minimum: 0 }
-        albums_sync_count: { type: integer, minimum: 0 }
-        albums_sync_error: { type: string }
+          allOf:
+            - $ref: '#/components/schemas/SyncStatus'
+          description: Exposed singer-album sync status. It is derived from album_source_refs.source_artist_id, so when the singer has related albums and no sync error, pending or partial stored state is exposed as completed (2); running (1) remains running.
+        albums_synced_at: { nullable: true, type: integer, minimum: 0, description: "Unix timestamp of the last singer-album sync or summary repair." }
+        albums_count: { type: integer, minimum: 0, description: "Frontend display alias of albums_sync_count." }
+        albums_sync_count: { type: integer, minimum: 0, description: "Related album count derived from album_source_refs.source_artist_id for this Migu source_singer_id." }
+        albums_sync_error: { type: string, description: "Last singer-album sync error. A non-empty error prevents real-content summary repair from exposing the status as completed." }
         albums_last_batch_id: { nullable: true, type: string }
         albums_running_batch_id: { nullable: true, type: string }
         created_at: { type: integer, minimum: 0 }
@@ -1193,7 +1219,9 @@ components:
         songs_sync_status:
           $ref: '#/components/schemas/SyncStatus'
         songs_synced_at: { nullable: true, type: integer, minimum: 0 }
-        songs_sync_count: { type: integer, minimum: 0 }
+        songs_count: { type: integer, minimum: 0, description: "Frontend display alias of album_songs_count." }
+        album_songs_count: { type: integer, minimum: 0, description: "Distinct related song count derived from album_song_refs for this source_album_id." }
+        songs_sync_count: { type: integer, minimum: 0, description: "Same real album-song relation count as album_songs_count." }
         songs_sync_error: { type: string }
         songs_last_batch_id: { nullable: true, type: string }
         songs_running_batch_id: { nullable: true, type: string }
@@ -1588,8 +1616,8 @@ components:
         target_name: { type: string }
         owner_name: { type: string }
         source: { type: string, enum: [migu] }
-        sync_status: { nullable: true, type: integer, minimum: 0, maximum: 4 }
-        sync_count: { type: integer, minimum: 0 }
+        sync_status: { nullable: true, type: integer, minimum: 0, maximum: 4, description: "Effective metadata sync status for this queue type. Singer-song and singer-album queues use the same real-relation derived status as SingerRecord, so real content with no sync error is completed (2) instead of pending (0)." }
+        sync_count: { type: integer, minimum: 0, description: "Effective synced item count for this queue type. Singer-song queues derive it from song_artist_refs; singer-album queues derive it from album_source_refs.source_artist_id." }
         last_error: { type: string }
         last_batch_id: { nullable: true, type: string }
         running_batch_id: { nullable: true, type: string }
@@ -1597,8 +1625,8 @@ components:
         eligible_actions:
           type: array
           items: { type: string, enum: [retry, reset, recover-stale] }
-        eligible: { type: boolean }
-        reason: { type: string }
+        eligible: { type: boolean, description: "Whether the target is claimable under the requested status filter after applying the effective real-relation summary." }
+        reason: { type: string, description: "Eligibility reason such as pending, failed, partial, running, completed, not_found or status_not_selected." }
     BackfillQueueTargetPage:
       allOf:
         - $ref: '#/components/schemas/CatalogPage'
@@ -1708,8 +1736,8 @@ components:
       type: object
       required: [singers_without_songs, singers_without_albums, albums_without_details, albums_without_songs, songs_without_resource_tasks, resources_failed, resources_running_stale, singers_songs_running_stale, singers_albums_running_stale, albums_details_running_stale, albums_songs_running_stale, running_batches_stale, generated_at]
       properties:
-        singers_without_songs: { type: integer, minimum: 0 }
-        singers_without_albums: { type: integer, minimum: 0 }
+        singers_without_songs: { type: integer, minimum: 0, description: "Singer sources without any real song_artist_refs relation. This is based on relationship existence, not only songs_sync_status." }
+        singers_without_albums: { type: integer, minimum: 0, description: "Singer sources without any real album_source_refs.source_artist_id relation. This is based on relationship existence, not only albums_sync_status." }
         albums_without_details: { type: integer, minimum: 0 }
         albums_without_songs: { type: integer, minimum: 0 }
         songs_without_resource_tasks: { type: integer, minimum: 0 }
@@ -1778,10 +1806,9 @@ components:
             $ref: '#/components/schemas/SingerTab'
         limit:
           type: integer
-          minimum: 1
-          maximum: 500
+          minimum: 0
           default: 20
-          description: Maximum items per selected target.
+          description: Maximum singers per selected category. Use 0 to crawl all singers parsed from each category.
         start_index:
           type: integer
           minimum: 0
@@ -1832,10 +1859,10 @@ components:
             $ref: '#/components/schemas/MiguId'
         limit:
           type: integer
-          minimum: 1
+          minimum: 0
           maximum: 500
-          default: 20
-          description: Maximum items per selected target.
+          default: 0
+          description: Maximum items per selected target. Use 0 to crawl all items for each selected singer.
         start_index:
           type: integer
           minimum: 0
@@ -2326,7 +2353,7 @@ components:
         minimum: 0
     Overview:
       type: object
-      required: [singers, singer_sources, songs, song_sources, albums, album_sources, album_detail_sync, album_song_sync, resource_status]
+      required: [singers, singer_sources, songs, song_sources, albums, album_sources, singer_song_relations, singer_album_relations, album_song_relations, album_detail_sync, album_song_sync, resource_status]
       properties:
         singers:
           type: integer
@@ -2346,6 +2373,18 @@ components:
         album_sources:
           type: integer
           minimum: 0
+        singer_song_relations:
+          type: integer
+          minimum: 0
+          description: Total Migu singer-song relation rows derived from song_artist_refs.
+        singer_album_relations:
+          type: integer
+          minimum: 0
+          description: Total Migu singer-album relation rows derived from album_source_refs.source_artist_id.
+        album_song_relations:
+          type: integer
+          minimum: 0
+          description: Total Migu album-song relation rows derived from album_song_refs.
         singer_song_sync:
           $ref: '#/components/schemas/StatusDistribution'
         singer_album_sync:

@@ -28,7 +28,7 @@ OpenAPI：
 17. 需要内存级实时当前项时调用 `GET /api/migu/tasks/progress?batch_id=...`。
 18. 需要停止时调用 `POST /api/migu/tasks/stop`。
 
-`limit` 表示每个手动目标或每次专辑补齐最多处理的数量，范围 `1..500`。从库歌手批量接口使用 `max_targets` 控制认领歌手数，使用 `limit_per_singer` 控制每个歌手最多抓取数量。
+`limit` 表示每个手动目标或每次专辑补齐最多处理的数量。歌手歌曲/专辑采集的 `limit=0` 表示获取该歌手全部歌曲/专辑，正数表示每个歌手最多获取数量，范围 `1..500`。`POST /api/migu/singers/crawl` 例外：`limit=0` 表示每个歌手分类全部获取，正数不设 500 上限。从库歌手批量接口使用 `max_targets` 控制认领歌手数，使用 `limit_per_singer` 控制每个歌手最多抓取数量。
 
 ## 当前 API 清单
 
@@ -42,14 +42,14 @@ OpenAPI：
 | `POST /api/migu/album-details/crawl` | 补齐待处理专辑详情 | `albums`、`album_source_refs`、`migu_dalbum_details`，并解析响应里的 `songItems` |
 | `POST /api/migu/album-songs/crawl` | 单独补齐已同步详情专辑的歌曲 | `songs`、`song_source_refs`、`album_song_refs`、`song_artist_refs`、`song_source_audio_formats`、`song_resources` |
 | `GET /api/migu/overview` | 控制台总览 | 从 `singers`、`songs`、`albums`、来源表和同步状态聚合 |
-| `GET /api/migu/integrity` | 状态一致性检查 | 返回未完成歌手/专辑/资源任务计数和 stale running 计数 |
+| `GET /api/migu/integrity` | 状态一致性检查 | 歌手缺歌曲/缺专辑按真实关联表判断，并返回 stale running 计数 |
 | `GET /api/migu/schema/status` | Schema 检查 | 返回 MySQL schema 版本、缺失表和缺失关键列 |
 | `POST /api/migu/maintenance/recover-stale` | 回收 stale running | 把超时停留在 `1 同步中` 的元数据/批次标为失败 |
-| `GET /api/migu/singers` | 歌手列表 | 支持 `q`、`gender`、`country`、`songs_sync_status`、`albums_sync_status` |
-| `GET /api/migu/singers/{source_singer_id}` | 歌手详情 | 按 Migu 歌手 ID 查询 |
+| `GET /api/migu/singers` | 歌手列表 | 支持 `q`、`gender`、`country`、`songs_sync_status`、`albums_sync_status`、`min/max_songs_count`、`min/max_albums_count`；歌曲/专辑汇总按真实关联表派生 |
+| `GET /api/migu/singers/{source_singer_id}` | 歌手详情 | 按 Migu 歌手 ID 查询，并返回真实歌曲/专辑汇总 |
 | `GET /api/migu/singers/{source_singer_id}/songs` | 歌手歌曲 | 查询该歌手的歌曲来源 |
 | `GET /api/migu/singers/{source_singer_id}/albums` | 歌手专辑 | 查询该歌手的专辑来源 |
-| `GET /api/migu/albums` | 专辑列表 | 支持 `q`、`artist`、`kind`、`detail_sync_status`、`songs_sync_status` |
+| `GET /api/migu/albums` | 专辑列表 | 支持 `q`、`artist`、`kind`、`detail_sync_status`、`songs_sync_status`、`min/max_songs_count`；专辑歌曲数按 `album_song_refs` 实时统计 |
 | `GET /api/migu/albums/{source_album_id}` | 专辑详情 | 按 Migu 专辑 ID 查询 |
 | `GET /api/migu/albums/{source_album_id}/songs` | 专辑歌曲 | 查询该专辑的歌曲来源 |
 | `GET /api/migu/songs` | 歌曲列表 | 支持 `q`、`artist`、`album`、`resource_status`、`format` |
@@ -96,11 +96,13 @@ OpenAPI：
 
 ```text
 GET /api/migu/singers?q=周杰伦&country=华语&gender=1&page=1&page_size=20
+GET /api/migu/singers?min_songs_count=1&max_albums_count=20
 GET /api/migu/singers/112
 GET /api/migu/singers/112/songs?page=1&page_size=50
-GET /api/migu/singers/112/albums?detail_sync_status=0,3,4
+GET /api/migu/singers/112/albums?detail_sync_status=0,3,4&min_album_songs_count=1
 
 GET /api/migu/albums?q=太阳之子&artist=周杰伦&kind=2
+GET /api/migu/albums?min_songs_count=1&max_songs_count=30
 GET /api/migu/albums/600927015009001083
 GET /api/migu/albums/600927015009001083/songs
 
@@ -121,7 +123,10 @@ GET /api/migu/schema/status
 - 多状态过滤使用逗号分隔，例如 `status=0,3,4`。
 - `1 同步中` 是临时运行态。服务启动会执行一次轻量 stale 恢复；前端也可以手动调用维护接口回收长时间卡住的 running 状态。
 - 歌手和专辑详情会返回 `*_last_batch_id`、`*_running_batch_id`；补池队列统一返回 `last_batch_id`、`running_batch_id`、`last_processed_at`，前端可以直接跳转最近批次排障。
-- 歌曲入库会同步维护 `song_artist_refs` 和 `album_song_refs`：多歌手查询通过 `song_artist_refs`，按歌手入口采集时会标记 `is_seed` 并尽量关联 `singer_source_refs.id`；`SongRecord.primary_artist_id/name` 也从该关系表派生，不再来自 `song_source_refs`；专辑歌曲查询会优先使用 `album_song_refs` 保存的 `source_album_id`、Disc、track 和平台顺序。
+- `GET /api/migu/singers` 和 `GET /api/migu/singers/{source_singer_id}` 的歌手汇总使用真实关联表：`songs_sync_count` 来自 `song_artist_refs` 中该歌手关联的去重歌曲数；`albums_sync_count` 来自 `album_source_refs.source_artist_id` 关联的专辑数。有真实内容且没有同步错误时，暴露给前端的 `songs_sync_status`/`albums_sync_status` 会按已完成 `2` 处理，不再停留在待处理 `0`；`1 同步中` 仍保持运行态。`songs_sync_status` 和 `albums_sync_status` 查询参数也按这个暴露口径过滤。
+- 前端展示可直接读取别名字段：歌手返回 `songs_count`/`albums_count`，专辑返回 `songs_count`/`album_songs_count`。这些字段不写入汇总表，均由查询时实时聚合得到；数量过滤同样使用实时事实计数。
+- 数量过滤参数：歌手列表和歌手补池支持 `min_songs_count`、`max_songs_count`、`min_albums_count`、`max_albums_count`；专辑列表、歌手专辑列表和专辑补池支持 `min_songs_count`、`max_songs_count`，也兼容 `min_album_songs_count`、`max_album_songs_count`。
+- 歌曲入库会同步维护 `song_artist_refs` 和 `album_song_refs`：`song_artist_refs` 只保存歌曲来源到歌手来源的关系，按歌手入口采集时会标记 `is_seed` 并关联 `singer_source_refs.id`，不再持久化 `source_artist_id/name` 这类歌手属性。`SongRecord.primary_artist_id/name` 从该关系表和歌手来源表派生，不再来自 `song_source_refs`；专辑歌曲查询会优先使用 `album_song_refs` 保存的 `source_album_id`、Disc、track 和平台顺序。
 - `songs` 当前作为歌曲标题池使用，`normalized_title` 是唯一键；不同平台来源或不同专辑里的同名歌曲通过 `song_source_refs.song_db_id` 引用同一标题记录，平台时长、拼音、资源入口和版权 ID 保留在来源表。
 - 歌曲资源任务会稳定生成 `cover`、`lyric`、`mrc`、`trc`；音频按 `audioFormats` 生成 `audio` 任务并保存 `resource_type`、`iformat`、`aformat`、`isize`、`asize`。如果平台未返回任何 `audioFormats`，会生成一个空 `format` 的 `audio` 待处理任务，方便前端识别“缺少音质参数”。
 
@@ -222,10 +227,10 @@ GET /api/migu/schema/status
 ```json
 {
   "source": "migu",
-  "schema_version": 2026052107,
-  "latest_applied_version": 2026052107,
-  "latest_available_version": 2026052107,
-  "schema_name": "song artist singer ref and song source cleanup",
+  "schema_version": 2026052109,
+  "latest_applied_version": 2026052109,
+  "latest_available_version": 2026052109,
+  "schema_name": "song artist refs relationship only",
   "ok": true,
   "pending_migrations": [],
   "checksum_mismatches": [],
@@ -258,12 +263,16 @@ GET /api/migu/schema/status
 
 ```text
 GET /api/migu/backfill/singer-songs/queue?status=0,3,4&q=周杰伦
-GET /api/migu/backfill/singer-albums/queue?country=华语&gender=1
+GET /api/migu/backfill/singer-albums/queue?country=华语&gender=1&min_albums_count=0
 GET /api/migu/backfill/album-details/queue?artist=周杰伦&kind=2
-GET /api/migu/backfill/album-songs/queue?status=3
+GET /api/migu/backfill/album-songs/queue?status=3&min_album_songs_count=1
 ```
 
 队列响应统一使用同一视图模型，不再需要根据 singer/album 字段推断：
+
+歌手补池队列和歌手列表使用同一套真实汇总口径：`singer-songs` 的 `sync_count` 来自 `song_artist_refs`，`singer-albums` 的 `sync_count` 来自 `album_source_refs.source_artist_id`。默认 `status=0,3,4` 只返回真正仍缺内容或失败/部分完成的目标；如果歌手已经有真实歌曲或专辑且没有同步错误，会按 `2 已完成` 暴露，不应继续出现在“歌手缺歌曲/缺专辑”队列里。
+
+补池队列的数量过滤同内容列表一致：歌手队列支持 `min_songs_count`、`max_songs_count`、`min_albums_count`、`max_albums_count`；专辑队列支持 `min_songs_count`、`max_songs_count`，也兼容 `min_album_songs_count`、`max_album_songs_count`。
 
 ```json
 {
@@ -396,6 +405,8 @@ retry/reset 都会返回汇总和明细。显式 ID 场景下，`items` 会包�
   "generated_at": 1779200000
 }
 ```
+
+其中 `singers_without_songs` 统计没有任何 `song_artist_refs` 真实歌曲关联的歌手来源，`singers_without_albums` 统计没有任何 `album_source_refs.source_artist_id` 真实专辑关联的歌手来源。这两个字段不再只看 `songs_sync_status` 或 `albums_sync_status`，所以已有真实歌曲/专辑的歌手不会被误计入缺失项。
 
 ## Stale Running 恢复
 
@@ -660,9 +671,11 @@ preview 不写库、不写审计事件。`retry` 默认可操作 `3 failed`，`r
 ```json
 {
   "tab": "huayu-nan",
-  "limit": 100
+  "limit": 0
 }
 ```
+
+`limit=0` 表示该分类解析到的歌手全部入库；正数按传入数量截断，不再限制为 `1..500`。
 
 支持 tab：
 
@@ -679,7 +692,7 @@ rihan-nan, rihan-nv, rihan-group
 ```json
 {
   "singer_ids": [112, 266],
-  "limit": 50,
+  "limit": 0,
   "start_index": 0,
   "end_index": 2
 }
@@ -690,9 +703,11 @@ rihan-nan, rihan-nv, rihan-group
 ```json
 {
   "singer_id": 112,
-  "limit": 50
+  "limit": 0
 }
 ```
+
+`limit=0` 表示获取该歌手全部歌曲；正数表示每个歌手最多获取数量，范围 `1..500`。
 
 ### 从库批量获取歌手歌曲
 
@@ -721,11 +736,11 @@ rihan-nan, rihan-nv, rihan-group
 ```json
 {
   "singer_ids": [112, 266],
-  "limit": 50
+  "limit": 0
 }
 ```
 
-该接口只获取歌手专辑列表，并把待补齐详情状态写入 `album_source_refs`。详情和专辑歌曲由下面两个补齐接口触发。
+`limit=0` 表示获取该歌手全部专辑；正数表示每个歌手最多获取数量，范围 `1..500`。该接口只获取歌手专辑列表，并把待补齐详情状态写入 `album_source_refs`。详情和专辑歌曲由下面两个补齐接口触发。
 
 ### 从库批量获取歌手专辑
 
@@ -813,6 +828,9 @@ rihan-nan, rihan-nv, rihan-group
   "song_sources": 50000,
   "albums": 3000,
   "album_sources": 3000,
+  "singer_song_relations": 80000,
+  "singer_album_relations": 3200,
+  "album_song_relations": 42000,
   "singer_song_sync": {"0": 100, "2": 900, "3": 20},
   "singer_album_sync": {"0": 120, "2": 880},
   "album_detail_sync": {"0": 300, "1": 5, "2": 2500, "3": 195},
@@ -822,6 +840,8 @@ rihan-nan, rihan-nv, rihan-group
 ```
 
 同步状态含义：`0` 未同步，`1` 同步中，`2` 已完成，`3` 失败，`4` 部分完成。资源状态含义：`0` 待获取，`1` 获取中，`2` 已完成，`3` 失败，`4` 跳过。
+
+`singer_song_relations`、`singer_album_relations`、`album_song_relations` 是实时关系行数，分别来自 `song_artist_refs`、`album_source_refs.source_artist_id` 和 `album_song_refs`，用于总览判断“已有多少事实关联”，不作为写入时强维护的汇总字段。
 
 ## 批次列表
 
