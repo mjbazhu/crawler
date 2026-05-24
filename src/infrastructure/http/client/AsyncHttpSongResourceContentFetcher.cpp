@@ -23,6 +23,13 @@ namespace {
 
 namespace asio = boost::asio;
 
+// application bool 回调的异步结果，供 Asio 侧 timer 唤醒后读取。
+struct ApplicationBoolCallbackState {
+    std::mutex mutex;          // 保护 application 回调结果
+    std::optional<bool> value; // 回调返回值
+    std::exception_ptr error;  // 回调异常
+};
+
 // 持有响应头副本直到 application 回调完成，避免 const 引用跨协程悬空。
 application::async::Task<bool> invokeResponseCallback(
     std::function<application::async::Task<bool>(const application::model::SongResourceContentStreamInfo &info)> callback,
@@ -41,30 +48,28 @@ application::async::Task<bool> invokeChunkCallback(
     co_return co_await callback(std::span<const char>(chunk->data(), chunk->size()));
 }
 
+// 执行 application Task<bool>；使用普通协程函数避免捕获型 coroutine lambda 的闭包悬垂。
+application::async::Task<void> runApplicationBoolTask(application::async::Task<bool> task, std::shared_ptr<ApplicationBoolCallbackState> state)
+{
+    try {
+        const bool accepted = co_await task;
+        std::lock_guard<std::mutex> lock(state->mutex);
+        state->value.emplace(accepted);
+    } catch (...) {
+        std::lock_guard<std::mutex> lock(state->mutex);
+        state->error = std::current_exception();
+    }
+}
+
 // 将 application Task<bool> 桥接为 Boost.Asio awaitable，避免 HTTP I/O 协程阻塞等待下游 sink。
 boost::asio::awaitable<bool> awaitApplicationBool(application::async::Task<bool> task, std::chrono::milliseconds timeout)
 {
     auto executor = co_await asio::this_coro::executor;
     auto timer = std::make_shared<asio::steady_timer>(executor);
-    struct CallbackState {
-        std::mutex mutex;             // 保护 application 回调结果
-        std::optional<bool> value;    // 回调返回值
-        std::exception_ptr error;     // 回调异常
-    };
-    auto state = std::make_shared<CallbackState>();
+    auto state = std::make_shared<ApplicationBoolCallbackState>();
     timer->expires_after(timeout.count() > 0 ? timeout : std::chrono::milliseconds(30000));
 
-    auto wrapper = [task = std::move(task), state]() mutable -> application::async::Task<void> {
-        try {
-            const bool accepted = co_await task;
-            std::lock_guard<std::mutex> lock(state->mutex);
-            state->value.emplace(accepted);
-        } catch (...) {
-            std::lock_guard<std::mutex> lock(state->mutex);
-            state->error = std::current_exception();
-        }
-    };
-    wrapper().startDetached([executor, timer, state](std::exception_ptr error) mutable {
+    runApplicationBoolTask(std::move(task), state).startDetached([executor, timer, state](std::exception_ptr error) mutable {
         if (error) {
             std::lock_guard<std::mutex> lock(state->mutex);
             state->error = error;

@@ -35,9 +35,39 @@ struct AsyncRunForTestStorage {
 // runForTest void 返回值暂存，避免实例化 std::optional<void>。
 template <>
 struct AsyncRunForTestStorage<void> {
-    void set() {}
-    void take() {}
+    void set()
+    {}
+    void take()
+    {}
 };
+
+// runForTest 使用普通协程函数承接状态，避免捕获型 coroutine lambda 的闭包生命周期问题。
+template <typename T>
+application::async::Task<void> runForTestWrapper(
+    application::async::Task<T> task,
+    std::mutex *mutex,
+    std::condition_variable *cv,
+    bool *done,
+    AsyncRunForTestStorage<T> *storage,
+    std::exception_ptr *error
+)
+{
+    try {
+        if constexpr (std::is_void_v<T>) {
+            co_await task;
+            storage->set();
+        } else {
+            storage->set(co_await task);
+        }
+    } catch (...) {
+        *error = std::current_exception();
+    }
+    {
+        std::lock_guard<std::mutex> lock(*mutex);
+        *done = true;
+    }
+    cv->notify_one();
+}
 
 } // namespace detail
 
@@ -92,25 +122,7 @@ public:
         bool done = false;
         detail::AsyncRunForTestStorage<T> storage;
         std::exception_ptr error;
-        auto wrapper = [task = std::move(task), &mutex, &cv, &done, &storage, &error]() mutable -> application::async::Task<void> {
-            try {
-                if constexpr (std::is_void_v<T>) {
-                    co_await task;
-                    storage.set();
-                } else {
-                    storage.set(co_await task);
-                }
-            } catch (...) {
-                error = std::current_exception();
-            }
-            {
-                std::lock_guard<std::mutex> lock(mutex);
-                done = true;
-            }
-            cv.notify_one();
-        };
-
-        if (!spawn(wrapper())) {
+        if (!spawn(detail::runForTestWrapper<T>(std::move(task), &mutex, &cv, &done, &storage, &error))) {
             throw std::runtime_error("async runtime spawn failed");
         }
 
