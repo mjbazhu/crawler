@@ -2,6 +2,7 @@
 
 #include "crawler/application/model/AlbumSourceMetadata.h"
 #include "crawler/application/model/SingerSourceMetadata.h"
+#include "crawler/application/model/SingerSourceProfile.h"
 #include "crawler/application/model/SongSourceMetadata.h"
 #include "crawler/domain/music/model/Singer.h"
 
@@ -34,6 +35,9 @@ int albumKindFromTypes(std::string_view source_res_type, std::string_view source
 
 // 从图片数组中选择最适合持久化的图片地址。
 std::string selectImageUrl(const nlohmann::json *items);
+
+// 将 Migu 返回的资源路径补齐为可直接请求的 URL。
+std::string normalizeMiguResourceUrl(std::string resource_url);
 
 // 判断列表项是否包含有效歌曲信息。
 bool hasValidSongItem(const nlohmann::json &item);
@@ -71,6 +75,9 @@ void collectSingerSources(
     std::uint32_t &next_index_order,
     std::vector<application::model::SingerSourceMetadata> &singers
 );
+
+// 从 Migu 歌手主要信息响应中解析平台声明总数。
+application::model::SingerSourceProfile parseSingerSourceProfileRaw(const std::vector<char> &raw_data);
 
 // 从 Migu 歌手专辑列表卡片提取专辑来源的初始参数。
 std::optional<application::model::AlbumSourceMetadata> parseAlbumSourceFromListItem(const nlohmann::json &item);

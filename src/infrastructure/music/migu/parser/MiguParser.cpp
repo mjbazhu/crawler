@@ -3,6 +3,7 @@
 #include "crawler/infrastructure/music/migu/parser/MiguAlbumSourceParser.h"
 #include "crawler/infrastructure/music/migu/parser/MiguPageInspector.h"
 #include "crawler/infrastructure/music/migu/parser/MiguParseResultParser.h"
+#include "crawler/infrastructure/music/migu/parser/MiguSingerProfileParser.h"
 #include "crawler/infrastructure/music/migu/parser/MiguSingerSourceParser.h"
 #include "crawler/infrastructure/music/migu/parser/MiguSongSourceParser.h"
 
@@ -14,6 +15,7 @@ MiguParser::MiguParser() : parse_result_parser_(std::make_unique<MiguParseResult
                            song_source_parser_(std::make_unique<MiguSongSourceParser>()),
                            singer_source_parser_(std::make_unique<MiguSingerSourceParser>()),
                            album_source_parser_(std::make_unique<MiguAlbumSourceParser>()),
+                           singer_profile_parser_(std::make_unique<MiguSingerProfileParser>()),
                            page_inspector_(std::make_unique<MiguPageInspector>())
 {}
 
@@ -37,6 +39,11 @@ std::vector<application::model::SingerSourceMetadata> MiguParser::parseSingerSou
 std::vector<application::model::AlbumSourceMetadata> MiguParser::parseAlbumSources(const std::vector<char> &raw_data) const
 {
     return album_source_parser_ ? album_source_parser_->parseAlbumSources(raw_data) : std::vector<application::model::AlbumSourceMetadata> {};
+}
+
+application::model::SingerSourceProfile MiguParser::parseSingerSourceProfile(const std::vector<char> &raw_data) const
+{
+    return singer_profile_parser_ ? singer_profile_parser_->parseSingerSourceProfile(raw_data) : application::model::SingerSourceProfile {};
 }
 
 application::ports::MetadataParser::SingerSongPageInfo MiguParser::inspectSingerSongPage(const std::vector<char> &raw_data) const

@@ -1,4 +1,5 @@
 #include "MiguParserSupportInternal.h"
+#include "MiguSongFieldParsing.h"
 
 #include "crawler/infrastructure/json/JsonUtils.h"
 #include "crawler/infrastructure/music/migu/parser/MiguParserSupport.h"
@@ -14,8 +15,6 @@ using json::JsonUtils;
 
 namespace {
 
-constexpr std::string_view kMiguResourcePrefix = "https://d.musicapp.migu.cn";
-
 // 从平台 Disc 文本中提取第一个正整数，提取不到时返回 0。
 std::uint32_t parseDiscNo(const std::string &disc_name)
 {
@@ -30,24 +29,6 @@ std::uint32_t parseDiscNo(const std::string &disc_name)
         }
     }
     return found ? value : 0;
-}
-
-// 将 Migu 图片相对路径补齐为可直接请求的资源地址。
-std::string normalizeMiguResourceUrl(std::string resource_url)
-{
-    if (resource_url.empty() || resource_url.starts_with("http://") || resource_url.starts_with("https://")) {
-        return resource_url;
-    }
-    if (resource_url.starts_with("//")) {
-        return "https:" + resource_url;
-    }
-    if (resource_url.starts_with('/')) {
-        return std::string(kMiguResourcePrefix) + resource_url;
-    }
-    if (resource_url.starts_with("data/oss/")) {
-        return std::string(kMiguResourcePrefix) + "/" + resource_url;
-    }
-    return resource_url;
 }
 
 } // namespace
@@ -78,20 +59,21 @@ std::optional<application::model::SongSourceMetadata> parseSongSourceFromSongObj
         return std::nullopt;
     }
     metadata.normalized_title = metadata.title;
-    metadata.source_duration_seconds = static_cast<std::uint32_t>(JsonUtils::getInt(song_item, "duration"));
+    metadata.source_duration_seconds = parseSongDuration(song_item);
 
-    metadata.source_title_pinyin = JsonUtils::getString(song_item, "songPinyin");
+    metadata.source_title_pinyin = firstNonEmpty({JsonUtils::getString(song_item, "songPinyin"), JsonUtils::getString(song_item, "songNamePinyin")});
     metadata.source_album_id = firstNonEmpty({
         album_context ? JsonUtils::getString(*album_context, "contentId") : std::string {},
         album_context ? JsonUtils::getString(*album_context, "albumId") : std::string {},
         JsonUtils::getString(song_item, "albumId"),
     });
+    metadata.source_album_material_id = JsonUtils::getString(song_item, "albumId");
     metadata.source_album_name = firstNonEmpty({
         JsonUtils::getString(song_item, "album"),
         album_context ? JsonUtils::getString(*album_context, "title") : std::string {},
         wrapper ? JsonUtils::getString(*wrapper, "txt3") : std::string {},
     });
-    metadata.source_album_pinyin = JsonUtils::getString(song_item, "albumPinyin");
+    metadata.source_album_pinyin = firstNonEmpty({JsonUtils::getString(song_item, "albumPinyin"), JsonUtils::getString(song_item, "albumNamePinyin")});
     metadata.cover_url = normalizeMiguResourceUrl(
         firstNonEmpty({
             JsonUtils::getString(song_item, "img3"),
@@ -108,31 +90,20 @@ std::optional<application::model::SongSourceMetadata> parseSongSourceFromSongObj
     metadata.mrc_url = JsonUtils::getString(song_item, "mrcUrl");
     metadata.trc_url = JsonUtils::getString(song_item, "trcUrl");
     metadata.copyright_id = JsonUtils::getString(song_item, "copyrightId");
-    metadata.album_song_order = song_order;
-    metadata.album_track_no = song_order;
+    metadata.album_song_order = album_context ? song_order : 0;
+    metadata.album_track_no = static_cast<std::uint32_t>(JsonUtils::getInt(song_item, "trackNumber"));
+    if (metadata.album_track_no == 0 && album_context) metadata.album_track_no = song_order;
+    metadata.album_disc_name = JsonUtils::getString(song_item, "disc");
+    metadata.album_disc_no = parseDiscNo(metadata.album_disc_name);
     if (const auto *ext = JsonUtils::getObject(song_item, "ext")) {
-        metadata.album_disc_name = JsonUtils::getString(*ext, "disc");
+        if (metadata.album_disc_name.empty()) metadata.album_disc_name = JsonUtils::getString(*ext, "disc");
         metadata.album_disc_no = parseDiscNo(metadata.album_disc_name);
     }
 
-    if (const auto *singers = JsonUtils::getArray(song_item, "singerList")) {
-        metadata.artist_refs.reserve(singers->size());
-        std::uint32_t artist_order = 1;
-        for (const auto &singer : *singers) {
-            application::model::SongSourceArtistRef artist_ref;
-            artist_ref.source_artist_id = JsonUtils::getString(singer, "id");
-            artist_ref.source_artist_name = JsonUtils::getString(singer, "name");
-            artist_ref.artist_order = artist_order;
-            artist_ref.is_primary = artist_order == 1;
-            if (!artist_ref.source_artist_id.empty() || !artist_ref.source_artist_name.empty()) {
-                metadata.artist_refs.push_back(std::move(artist_ref));
-            }
-            ++artist_order;
-        }
-        if (!metadata.artist_refs.empty()) {
-            metadata.source_primary_artist_id = metadata.artist_refs.front().source_artist_id;
-            metadata.source_primary_artist_name = metadata.artist_refs.front().source_artist_name;
-        }
+    metadata.artist_refs = parseSourceArtists(song_item);
+    if (!metadata.artist_refs.empty()) {
+        metadata.source_primary_artist_id = metadata.artist_refs.front().source_artist_id;
+        metadata.source_primary_artist_name = metadata.artist_refs.front().source_artist_name;
     }
     if (metadata.source_primary_artist_id.empty()) {
         metadata.source_primary_artist_id = firstNonEmpty({
@@ -156,21 +127,7 @@ std::optional<application::model::SongSourceMetadata> parseSongSourceFromSongObj
         metadata.artist_refs.push_back(std::move(artist_ref));
     }
 
-    if (const auto *formats = JsonUtils::getArray(song_item, "audioFormats")) {
-        metadata.audio_formats.reserve(formats->size());
-        for (const auto &format : *formats) {
-            application::model::SongSourceAudioFormat audio_format;
-            audio_format.format_type = JsonUtils::getString(format, "formatType");
-            if (!audio_format.format_type.empty()) {
-                audio_format.resource_type = JsonUtils::getString(format, "resourceType");
-                audio_format.iformat = JsonUtils::getString(format, "iformat");
-                audio_format.aformat = JsonUtils::getString(format, "aformat");
-                audio_format.isize = static_cast<std::uint64_t>(JsonUtils::getInt(format, "isize"));
-                audio_format.asize = static_cast<std::uint64_t>(JsonUtils::getInt(format, "asize"));
-                metadata.audio_formats.push_back(std::move(audio_format));
-            }
-        }
-    }
+    metadata.audio_formats = parseSourceAudioFormats(song_item);
 
     return metadata;
 }

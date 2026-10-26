@@ -1,4 +1,7 @@
 #include "crawler/infrastructure/app/ServerApplication.h"
+
+#include "crawler/infrastructure/storage/filesystem/MetadataCoverStore.h"
+#include "crawler/infrastructure/music/migu/provider/MiguRequestFactory.h"
 #include "crawler/api/controllers/CrawlerController.h"
 #include "crawler/api/routing/CrawlerRoutes.h"
 #include "crawler/application/ports/parsing/MetadataParser.h"
@@ -24,10 +27,12 @@
 #include "crawler/infrastructure/observability/logging/ConsoleDiagnosticsSink.h"
 #include "crawler/infrastructure/observability/logging/Logger.h"
 #include "crawler/infrastructure/storage/filesystem/FileStorage.h"
+#include "crawler/infrastructure/storage/rclone/RcloneRemoteCopier.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
+#include <cctype>
 #include <exception>
 #include <memory>
 #include <sstream>
@@ -53,6 +58,20 @@ bool isUrl(std::string_view value)
     return value.rfind("http://", 0) == 0 || value.rfind("https://", 0) == 0;
 }
 
+// 转为小写 ASCII，便于解析后端开关。
+std::string lowerAscii(std::string value)
+{
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return value;
+}
+
+bool isRcloneBackend(std::string backend)
+{
+    return lowerAscii(std::move(backend)) == "rclone";
+}
+
 } // namespace
 
 class ServerApplication::Impl {
@@ -73,7 +92,11 @@ public:
     std::shared_ptr<music::persistence::mysql::MySqlConnectionPool> mysql_pool_;
     std::shared_ptr<http::client::HttpClient> http_client_;
     std::shared_ptr<http::client::AsioHttpClient> asio_http_client_;
+    std::shared_ptr<http::client::AsioHttpClient> rclone_http_client_;
     std::shared_ptr<storage::filesystem::FileStorage> file_storage_;
+    std::shared_ptr<application::ports::SongResourceCloudUploader> song_resource_cloud_uploader_;
+    std::shared_ptr<application::ports::SongResourceBatchCloudUploader> song_resource_batch_cloud_uploader_;
+    std::shared_ptr<application::ports::AsyncSongResourceRemoteCopier> async_song_resource_remote_copier_;
     std::shared_ptr<application::ports::MetadataParser> parser_;
     std::shared_ptr<application::ports::SongResourceParser> song_resource_parser_;
     std::shared_ptr<application::ports::IMusicProvider> music_provider_;
@@ -155,6 +178,28 @@ bool ServerApplication::initialize()
         auto blocking_storage_executor = impl_->persistence_worker_pool_ ? std::static_pointer_cast<application::ports::TaskExecutor>(impl_->persistence_worker_pool_) : std::static_pointer_cast<application::ports::TaskExecutor>(impl_->resource_worker_pool_);
         impl_->async_execution_context_ = std::make_shared<execution::asio::AsioExecutionContext>(static_cast<std::size_t>((std::max)(1, impl_->config_.outbound_http_io_threads)));
         impl_->async_runtime_ = std::make_shared<execution::asio::AsioAsyncRuntime>(impl_->async_execution_context_->executor(), blocking_storage_executor);
+        if (isRcloneBackend(impl_->config_.resource_storage_backend)) {
+            if (impl_->config_.rclone.rc_url.empty() || impl_->config_.rclone.target_fs.empty()) {
+                logApp(logging::LogLevel::L_ERROR, "Rclone resource storage requires CRAWLER_RCLONE_RC_URL and CRAWLER_RCLONE_TARGET_FS.");
+                return false;
+            }
+            impl_->config_.rclone.enabled = true;
+            auto rclone_http_options = makeHttpClientOptions(impl_->config_);
+            rclone_http_options.request_timeout = std::chrono::milliseconds((std::max)(1000, impl_->config_.rclone.api_timeout_ms));
+            rclone_http_options.max_response_bytes = (std::max<std::size_t>)(1024, impl_->config_.rclone.api_max_response_bytes);
+            impl_->rclone_http_client_ = std::make_shared<http::client::AsioHttpClient>(std::move(rclone_http_options));
+            impl_->async_song_resource_remote_copier_ = std::make_shared<storage::rclone::RcloneRemoteCopier>(
+                impl_->rclone_http_client_,
+                impl_->async_runtime_,
+                impl_->config_.rclone
+            );
+            logApp(logging::LogLevel::L_INFO, "Rclone resource storage enabled.");
+        }
+        if (impl_->config_.resource_cloud_upload_enabled) {
+            impl_->config_.resource_cloud_upload_enabled = false;
+            impl_->config_.baidupcs.enabled = false;
+            logApp(logging::LogLevel::L_WARN, "Resource cloud upload is disabled in ingestion; resources will be downloaded locally and written back for later reconciliation.");
+        }
 
         impl_->diagnostics_ = std::make_shared<observability::logging::ConsoleDiagnosticsSink>();
 
@@ -175,9 +220,16 @@ bool ServerApplication::initialize()
         crawler_dependencies.parsers.song_source_parser = impl_->parser_;
         crawler_dependencies.parsers.singer_source_parser = impl_->parser_;
         crawler_dependencies.parsers.album_source_parser = impl_->parser_;
+        crawler_dependencies.parsers.singer_profile_parser = impl_->parser_;
         crawler_dependencies.parsers.page_inspector = impl_->parser_;
         crawler_dependencies.parsers.song_resource_parser = impl_->song_resource_parser_;
 
+        crawler_dependencies.persistence.metadata_batch_writer = persistence_components->metadata_batch_writer;
+        if (persistence_components->metadata_batch_writer) {
+            crawler_dependencies.persistence.metadata_cover_store = std::make_shared<storage::filesystem::MetadataCoverStore>(
+                impl_->http_client_, impl_->file_storage_, music::migu::provider::MiguRequestFactory::defaultHeaders()
+            );
+        }
         crawler_dependencies.persistence.file_store = impl_->file_storage_;
         crawler_dependencies.persistence.song_repository = impl_->song_repository_;
         crawler_dependencies.persistence.album_repository = impl_->album_repository_;
@@ -191,6 +243,9 @@ bool ServerApplication::initialize()
         crawler_dependencies.persistence.catalog_query_repository = impl_->catalog_query_repository_;
         crawler_dependencies.persistence.song_resource_queue = impl_->song_resource_queue_;
         crawler_dependencies.persistence.song_resource_blob_store = impl_->file_storage_;
+        crawler_dependencies.persistence.song_resource_cloud_uploader = impl_->song_resource_cloud_uploader_;
+        crawler_dependencies.persistence.song_resource_batch_cloud_uploader = impl_->song_resource_batch_cloud_uploader_;
+        crawler_dependencies.persistence.async_song_resource_remote_copier = impl_->async_song_resource_remote_copier_;
 
         crawler_dependencies.executors.parse_executor = impl_->parse_worker_pool_;
         crawler_dependencies.executors.batch_executor = impl_->batch_worker_pool_;

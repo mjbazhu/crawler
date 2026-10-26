@@ -99,9 +99,9 @@ bool isAudioResource(const std::string &resource_kind)
     return resource_kind == "audio";
 }
 
-bool isRelatedTextResource(const std::string &resource_kind)
+bool isRelatedResource(const std::string &resource_kind)
 {
-    return resource_kind == "lyric" || resource_kind == "mrc" || resource_kind == "trc";
+    return resource_kind == "cover" || resource_kind == "lyric" || resource_kind == "mrc" || resource_kind == "trc";
 }
 
 bool isKnownDigitalAlbum(const application::model::SongResourceQueueTarget &target)
@@ -111,7 +111,7 @@ bool isKnownDigitalAlbum(const application::model::SongResourceQueueTarget &targ
 
 bool isPermanentResourceSkip(const std::string &code)
 {
-    return code == "440000" || code == "440015" || code == "440016";
+    return code == "210001" || code == "440000" || code == "440015" || code == "440016";
 }
 
 std::string permanentResourceSkipCategory(const std::string &code)
@@ -173,8 +173,25 @@ application::model::SongResourceFetchRequest toFetchRequest(const application::m
     request.content_id = target.source_content_id;
     request.resource_type = target.audio_resource_type.empty() ? target.source_resource_type : target.audio_resource_type;
     request.copyright_id = target.copyright_id;
-    request.tone_flag = target.format_type;
+    request.tone_flag = target.resource_fetch_format_type.empty() ? target.format_type : target.resource_fetch_format_type;
     return request;
+}
+
+std::string relatedResourceUrl(const application::model::SongResourceFetchResult &fetch_result, const std::string &resource_kind)
+{
+    if (resource_kind == "cover") {
+        return fetch_result.cover_url;
+    }
+    if (resource_kind == "lyric") {
+        return fetch_result.lyric_url;
+    }
+    if (resource_kind == "mrc") {
+        return fetch_result.mrc_url;
+    }
+    if (resource_kind == "trc") {
+        return fetch_result.trc_url;
+    }
+    return {};
 }
 
 bool validAudioTarget(const application::model::SongResourceQueueTarget &target)
@@ -244,7 +261,10 @@ AsyncSongResourceDownloadWorkflow::AsyncSongResourceDownloadWorkflow(
     std::shared_ptr<application::ports::AsyncSongResourceBlobStore> blob_store,
     SongResourcePathPlanner path_planner,
     std::shared_ptr<application::ports::MiguPacmtokenRefresher> pacmtoken_refresher,
-    std::shared_ptr<application::ports::MiguPacmtokenStore> pacmtoken_store
+    std::shared_ptr<application::ports::MiguPacmtokenStore> pacmtoken_store,
+    std::shared_ptr<application::ports::AsyncSongResourceRemoteCopier> remote_copier,
+    std::shared_ptr<application::ports::AsyncSongResourceCloudUploader> cloud_uploader,
+    std::shared_ptr<application::ports::AsyncSongResourceBatchCloudUploader> batch_cloud_uploader
 ) : runtime_(std::move(runtime)),
     resource_queue_(std::move(resource_queue)),
     resource_provider_(std::move(resource_provider)),
@@ -253,7 +273,10 @@ AsyncSongResourceDownloadWorkflow::AsyncSongResourceDownloadWorkflow(
     blob_store_(std::move(blob_store)),
     path_planner_(std::move(path_planner)),
     pacmtoken_refresher_(std::move(pacmtoken_refresher)),
-    pacmtoken_store_(std::move(pacmtoken_store))
+    pacmtoken_store_(std::move(pacmtoken_store)),
+    remote_copier_(std::move(remote_copier)),
+    cloud_uploader_(std::move(cloud_uploader)),
+    batch_cloud_uploader_(std::move(batch_cloud_uploader))
 {}
 
 application::async::Task<application::model::SongResourceProcessResult> AsyncSongResourceDownloadWorkflow::processPending(application::model::SongResourceClaimQuery query, SongResourceProcessListener *listener)
@@ -261,7 +284,7 @@ application::async::Task<application::model::SongResourceProcessResult> AsyncSon
     auto state = std::make_shared<ProcessRunState>();
     state->result.batch_id = query.batch_id;
     state->options = query.options;
-    if (!runtime_ || !resource_queue_ || !content_fetcher_ || !blob_store_) {
+    if (!runtime_ || !resource_queue_ || ((!content_fetcher_ || !blob_store_) && !remote_copier_)) {
         co_return state->result;
     }
     if (query.source.empty()) {
@@ -335,6 +358,7 @@ application::async::Task<application::model::SongResourceProcessResult> AsyncSon
     }
 
     co_await wait_done;
+    co_await uploadBatchCloudObjects(state, query.batch_id, listener);
     application::model::SongResourceProcessResult result;
     {
         std::lock_guard<std::mutex> lock(state->result_mutex);
@@ -414,8 +438,8 @@ application::async::Task<application::model::SongResourceProcessItem> AsyncSongR
             if (isPermanentResourceSkip(code)) {
                 co_await notifyItemEvent(listener, makeStartedItem(target, false), "resourceUrlRejected", stagePayload(target, "resource_url_rejected", "\"attempt\":" + std::to_string(attempt) + ",\"result_code\":\"" + escapeJson(code) + "\""));
                 const std::string category = permanentResourceSkipCategory(code);
-                if (state && resource_queue_) {
-                    co_await processRelatedTextResources(target, fetch_result, batch_id, state, listener);
+                if (state && resource_queue_ && options.process_related_resources) {
+                    co_await processRelatedResources(target, fetch_result, batch_id, state, listener);
                 }
                 co_await notifyItemEvent(listener, makeStartedItem(target, false), "resourceAttemptFinished", stagePayload(target, "resource_attempt_finished", "\"attempt\":" + std::to_string(attempt) + ",\"result_code\":\"" + escapeJson(code) + "\",\"error_category\":\"" + escapeJson(category) + "\""));
                 co_return co_await skip(std::move(target), category, std::move(code), std::move(message), batch_id, listener);
@@ -443,8 +467,12 @@ application::async::Task<application::model::SongResourceProcessItem> AsyncSongR
         co_await notifyItemEvent(listener, makeStartedItem(target, false), "resourceUrlFetched", stagePayload(target, "resource_url_fetched", "\"attempt\":" + std::to_string(attempt) + ",\"audio_format_type\":\"" + escapeJson(fetch_result.audio_format_type) + "\"" + ",\"version\":\"" + escapeJson(fetch_result.version) + "\"" + ",\"has_lyric\":" + (fetch_result.lyric_url.empty() ? "false" : "true") + ",\"has_mrc\":" + (fetch_result.mrc_url.empty() ? "false" : "true") + ",\"has_trc\":" + (fetch_result.trc_url.empty() ? "false" : "true")));
 
         auto item = co_await downloadAndStoreAttempt(target, fetch_result.url, batch_id, options, attempt == max_attempts, listener);
-        if (item.ok && resource_queue_) {
-            co_await processRelatedTextResources(target, fetch_result, batch_id, state, listener);
+        if (item.ok && resource_queue_ && options.process_related_resources) {
+            co_await processRelatedResources(target, fetch_result, batch_id, state, listener);
+            co_await notifyItemEvent(listener, makeStartedItem(target, false), "resourceAttemptFinished", stagePayload(target, "resource_attempt_finished", "\"attempt\":" + std::to_string(attempt) + ",\"result_code\":\"ok\""));
+            co_return item;
+        }
+        if (item.ok) {
             co_await notifyItemEvent(listener, makeStartedItem(target, false), "resourceAttemptFinished", stagePayload(target, "resource_attempt_finished", "\"attempt\":" + std::to_string(attempt) + ",\"result_code\":\"ok\""));
             co_return item;
         }
@@ -467,28 +495,54 @@ application::async::Task<application::model::SongResourceProcessItem> AsyncSongR
 application::async::Task<application::model::SongResourceProcessItem> AsyncSongResourceDownloadWorkflow::processDirectResource(application::model::SongResourceQueueTarget target, const std::string &batch_id, const application::model::SongResourceProcessOptions &options, SongResourceProcessListener *listener)
 {
     if (target.remote_url.empty()) {
-        co_return co_await fail(std::move(target), "invalid_target", "missing_remote_url", "resource remote_url is empty", batch_id, listener);
+        if (!isRelatedResource(target.resource_kind) || !resource_provider_ || !resource_parser_ || !validAudioTarget(target)) {
+            co_return co_await fail(std::move(target), "invalid_target", "missing_remote_url", "resource remote_url is empty", batch_id, listener);
+        }
+        co_await notifyItemEvent(listener, makeStartedItem(target, true), "resourceUrlRequestStarted", stagePayload(target, "resource_url_request_started", "\"reason\":\"missing_remote_url\""));
+        auto response = co_await resource_provider_->fetchSongResource(toFetchRequest(target));
+        if (!response) {
+            co_await notifyItemEvent(listener, makeStartedItem(target, true), "resourceUrlRequestFailed", stagePayload(target, "resource_url_request_failed", "\"result_code\":\"resource_url_fetch_failed\""));
+            co_return co_await fail(std::move(target), "network", "resource_url_fetch_failed", "song resource url request failed", batch_id, listener);
+        }
+        auto fetch_result = resource_parser_->parseSongResource(response->body);
+        const std::string resolved_url = relatedResourceUrl(fetch_result, target.resource_kind);
+        if (resolved_url.empty()) {
+            std::string code = fetch_result.code.empty() ? "missing_related_resource_url" : fetch_result.code;
+            std::string message = fetch_result.message.empty() ? "song resource response did not include related resource url" : fetch_result.message;
+            if (code == "000000") {
+                code = "missing_related_resource_url";
+                message = "song resource response did not include related resource url";
+            }
+            co_await notifyItemEvent(listener, makeStartedItem(target, true), "resourceUrlParseFailed", stagePayload(target, "resource_url_parse_failed", "\"result_code\":\"" + escapeJson(code) + "\""));
+            if (isPermanentResourceSkip(code)) {
+                const std::string category = permanentResourceSkipCategory(code);
+                co_return co_await skip(std::move(target), category, std::move(code), std::move(message), batch_id, listener);
+            }
+            co_return co_await fail(std::move(target), "resource", std::move(code), std::move(message), batch_id, listener);
+        }
+        target.remote_url = resolved_url;
+        co_await notifyItemEvent(listener, makeStartedItem(target, true), "resourceUrlFetched", stagePayload(target, "resource_url_fetched", "\"reason\":\"missing_remote_url\",\"has_cover\":" + std::string(fetch_result.cover_url.empty() ? "false" : "true") + ",\"has_lyric\":" + (fetch_result.lyric_url.empty() ? "false" : "true") + ",\"has_mrc\":" + (fetch_result.mrc_url.empty() ? "false" : "true") + ",\"has_trc\":" + (fetch_result.trc_url.empty() ? "false" : "true")));
     }
     std::string remote_url = target.remote_url;
     const int max_attempts = (std::max)(1, options.resource_download_retries + 1);
     application::model::SongResourceProcessItem last_failure;
     for (int attempt = 1; attempt <= max_attempts; ++attempt) {
-        co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedTextResource(target.resource_kind)), "resourceAttemptStarted", stagePayload(target, "resource_attempt_started", "\"attempt\":" + std::to_string(attempt) + ",\"max_attempts\":" + std::to_string(max_attempts)));
+        co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), "resourceAttemptStarted", stagePayload(target, "resource_attempt_started", "\"attempt\":" + std::to_string(attempt) + ",\"max_attempts\":" + std::to_string(max_attempts)));
         auto item = co_await downloadAndStoreAttempt(target, remote_url, batch_id, options, attempt == max_attempts, listener);
         if (item.ok || item.skipped) {
-            co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedTextResource(target.resource_kind)), "resourceAttemptFinished", stagePayload(target, "resource_attempt_finished", "\"attempt\":" + std::to_string(attempt) + ",\"result_code\":\"" + escapeJson(item.result_code) + "\",\"error_category\":\"" + escapeJson(item.error_category) + "\""));
+            co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), "resourceAttemptFinished", stagePayload(target, "resource_attempt_finished", "\"attempt\":" + std::to_string(attempt) + ",\"result_code\":\"" + escapeJson(item.result_code) + "\",\"error_category\":\"" + escapeJson(item.error_category) + "\""));
             co_return item;
         }
         last_failure = item;
         if (attempt < max_attempts && retryableResourceFailure(item)) {
-            co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedTextResource(target.resource_kind)), "resourceRetryScheduled", stagePayload(target, "resource_retry_scheduled", "\"attempt\":" + std::to_string(attempt) + ",\"next_attempt\":" + std::to_string(attempt + 1) + ",\"max_attempts\":" + std::to_string(max_attempts) + ",\"failed_stage\":\"resource_content_download\",\"result_code\":\"" + escapeJson(item.result_code) + "\",\"error_category\":\"" + escapeJson(item.error_category) + "\""));
+            co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), "resourceRetryScheduled", stagePayload(target, "resource_retry_scheduled", "\"attempt\":" + std::to_string(attempt) + ",\"next_attempt\":" + std::to_string(attempt + 1) + ",\"max_attempts\":" + std::to_string(max_attempts) + ",\"failed_stage\":\"resource_content_download\",\"result_code\":\"" + escapeJson(item.result_code) + "\",\"error_category\":\"" + escapeJson(item.error_category) + "\""));
             continue;
         }
         if (attempt < max_attempts) {
-            co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedTextResource(target.resource_kind)), "resourceAttemptFinished", stagePayload(target, "resource_attempt_finished", "\"attempt\":" + std::to_string(attempt) + ",\"result_code\":\"" + escapeJson(item.result_code) + "\",\"error_category\":\"" + escapeJson(item.error_category) + "\""));
+            co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), "resourceAttemptFinished", stagePayload(target, "resource_attempt_finished", "\"attempt\":" + std::to_string(attempt) + ",\"result_code\":\"" + escapeJson(item.result_code) + "\",\"error_category\":\"" + escapeJson(item.error_category) + "\""));
             co_return co_await fail(std::move(target), item.error_category, item.result_code, item.message, batch_id, listener);
         }
-        co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedTextResource(target.resource_kind)), "resourceAttemptFinished", stagePayload(target, "resource_attempt_finished", "\"attempt\":" + std::to_string(attempt) + ",\"result_code\":\"" + escapeJson(item.result_code) + "\",\"error_category\":\"" + escapeJson(item.error_category) + "\""));
+        co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), "resourceAttemptFinished", stagePayload(target, "resource_attempt_finished", "\"attempt\":" + std::to_string(attempt) + ",\"result_code\":\"" + escapeJson(item.result_code) + "\",\"error_category\":\"" + escapeJson(item.error_category) + "\""));
         co_return item;
     }
     co_return co_await fail(std::move(target), last_failure.error_category.empty() ? "unknown" : last_failure.error_category, last_failure.result_code.empty() ? "failed" : last_failure.result_code, last_failure.message.empty() ? "resource processing failed" : last_failure.message, batch_id, listener);
@@ -496,6 +550,59 @@ application::async::Task<application::model::SongResourceProcessItem> AsyncSongR
 
 application::async::Task<application::model::SongResourceProcessItem> AsyncSongResourceDownloadWorkflow::downloadAndStoreAttempt(application::model::SongResourceQueueTarget target, std::string remote_url, const std::string &batch_id, const application::model::SongResourceProcessOptions &options, bool write_failure, SongResourceProcessListener *listener)
 {
+    if (remote_copier_) {
+        auto path = path_planner_.plan(toPathRequest(target, remote_url, ""));
+        if (!path.ok) {
+            const std::string message = path.error.empty() ? "resource remote path planning failed" : path.error;
+            co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), "resourcePathPlanFailed", stagePayload(target, "resource_path_plan_failed", "\"result_code\":\"path_plan_failed\",\"message\":\"" + escapeJson(message) + "\""));
+            co_return write_failure ? co_await fail(std::move(target), "persistence", "path_plan_failed", message, batch_id, listener) : makeItem(target, false, false, false, false, "persistence", "path_plan_failed", message);
+        }
+        co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), "resourcePathPlanned", stagePayload(target, "resource_path_planned", "\"local_path\":\"" + escapeJson(path.relative_path) + "\",\"extension\":\"" + escapeJson(path.extension) + "\""));
+
+        application::model::SongResourceRemoteCopyRequest copy_request;
+        copy_request.source_url = remote_url;
+        copy_request.relative_path_hint = path.relative_path;
+        copy_request.timeout_ms = options.resource_download_timeout_ms;
+        co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), "resourceRemoteCopyStarted", stagePayload(target, "resource_remote_copy_started", "\"local_path\":\"" + escapeJson(path.relative_path) + "\""));
+        auto copied = co_await remote_copier_->copyUrl(std::move(copy_request));
+        if (!copied.ok) {
+            const std::string category = copied.error_category.empty() ? "persistence" : copied.error_category;
+            const std::string code = copied.result_code.empty() ? "remote_copy_failed" : copied.result_code;
+            const std::string message = copied.message.empty() ? "resource remote copy failed" : trimMessage(copied.message);
+            co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), "resourceRemoteCopyFailed", stagePayload(target, "resource_remote_copy_failed", "\"result_code\":\"" + escapeJson(code) + "\",\"error_category\":\"" + escapeJson(category) + "\",\"message\":\"" + escapeJson(message) + "\""));
+            co_return write_failure ? co_await fail(std::move(target), category, code, message, batch_id, listener) : makeItem(target, false, false, false, false, category, code, message);
+        }
+        if (copied.local_path.empty() || copied.size_bytes == 0 || copied.checksum.empty()) {
+            co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), "resourceBlobValidationFailed", stagePayload(target, "resource_blob_validation_failed", "\"result_code\":\"persist_validation_failed\"" + std::string(",\"local_path\":\"") + escapeJson(copied.local_path) + "\"" + ",\"saved_size\":" + std::to_string(copied.size_bytes)));
+            co_return write_failure ? co_await fail(std::move(target), "persistence", "persist_validation_failed", "resource remote copy result did not include a complete object identity", batch_id, listener) : makeItem(target, false, false, false, false, "persistence", "persist_validation_failed", "resource remote copy result did not include a complete object identity");
+        }
+        co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), "resourceRemoteCopyCompleted", stagePayload(target, "resource_remote_copy_completed", "\"local_path\":\"" + escapeJson(copied.local_path) + "\"" + ",\"size_bytes\":" + std::to_string(copied.size_bytes) + ",\"checksum\":\"" + escapeJson(copied.checksum) + "\""));
+        co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), "resourceBlobSaved", stagePayload(target, "resource_blob_saved", "\"local_path\":\"" + escapeJson(copied.local_path) + "\"" + ",\"size_bytes\":" + std::to_string(copied.size_bytes) + ",\"checksum\":\"" + escapeJson(copied.checksum) + "\""));
+
+        const std::string saved_path = copied.local_path;
+        const std::uint64_t saved_size = copied.size_bytes;
+        std::string saved_checksum = copied.checksum;
+        application::model::SongResourceSuccessUpdate update;
+        update.resource_id = target.resource_id;
+        update.remote_url = std::move(remote_url);
+        update.local_path = saved_path;
+        update.size_bytes = saved_size;
+        update.checksum = saved_checksum;
+        update.result_code = "ok";
+        update.batch_id = batch_id;
+        if (!resource_queue_ || !(co_await resource_queue_->markSucceeded(std::move(update)))) {
+            co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), "resourceDbWritebackFailed", stagePayload(target, "resource_db_writeback_failed", "\"result_code\":\"writeback_failed\",\"local_path\":\"" + escapeJson(saved_path) + "\""));
+            co_return write_failure ? co_await fail(std::move(target), "persistence", "writeback_failed", "resource success writeback failed", batch_id, listener) : makeItem(target, false, false, false, false, "persistence", "writeback_failed", "resource success writeback failed");
+        }
+        co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), "resourceDbWritebackCompleted", stagePayload(target, "resource_db_writeback_completed", "\"local_path\":\"" + escapeJson(saved_path) + "\",\"size_bytes\":" + std::to_string(saved_size)));
+
+        auto item = makeItem(target, true, false, false, false, {}, "ok", {});
+        item.local_path = saved_path;
+        item.size_bytes = saved_size;
+        item.checksum = std::move(saved_checksum);
+        co_return item;
+    }
+
     if (!content_fetcher_ || !blob_store_) {
         co_return write_failure ? co_await fail(std::move(target), "invalid_target", "missing_dependency", "content fetcher or blob store is not configured", batch_id, listener) : makeItem(target, false, false, false, false, "invalid_target", "missing_dependency", "content fetcher or blob store is not configured");
     }
@@ -503,7 +610,7 @@ application::async::Task<application::model::SongResourceProcessItem> AsyncSongR
     application::model::SongResourceContentFetchRequest fetch_request;
     fetch_request.url = remote_url;
     fetch_request.timeout_ms = options.resource_download_timeout_ms;
-    co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedTextResource(target.resource_kind)), "resourceContentDownloadStarted", stagePayload(target, "resource_content_download_started"));
+    co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), "resourceContentDownloadStarted", stagePayload(target, "resource_content_download_started"));
 
     struct WriterState {
         std::unique_ptr<application::ports::AsyncBlobWriteSession> writer; // 异步写入会话
@@ -523,10 +630,10 @@ application::async::Task<application::model::SongResourceProcessItem> AsyncSongR
             writer_state->failure_category = "persistence";
             writer_state->failure_code = "path_plan_failed";
             writer_state->failure_message = writer_state->path.error.empty() ? "resource local path planning failed" : writer_state->path.error;
-            co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedTextResource(target.resource_kind)), "resourcePathPlanFailed", stagePayload(target, "resource_path_plan_failed", "\"result_code\":\"path_plan_failed\",\"message\":\"" + escapeJson(writer_state->failure_message) + "\""));
+            co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), "resourcePathPlanFailed", stagePayload(target, "resource_path_plan_failed", "\"result_code\":\"path_plan_failed\",\"message\":\"" + escapeJson(writer_state->failure_message) + "\""));
             co_return false;
         }
-        co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedTextResource(target.resource_kind)), "resourcePathPlanned", stagePayload(target, "resource_path_planned", "\"local_path\":\"" + escapeJson(writer_state->path.relative_path) + "\",\"extension\":\"" + escapeJson(writer_state->path.extension) + "\""));
+        co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), "resourcePathPlanned", stagePayload(target, "resource_path_planned", "\"local_path\":\"" + escapeJson(writer_state->path.relative_path) + "\",\"extension\":\"" + escapeJson(writer_state->path.extension) + "\""));
 
         application::model::SongResourceBlobStreamSaveRequest save_request;
         save_request.relative_path_hint = writer_state->path.relative_path;
@@ -536,10 +643,10 @@ application::async::Task<application::model::SongResourceProcessItem> AsyncSongR
             writer_state->failure_category = "persistence";
             writer_state->failure_code = "persist_failed";
             writer_state->failure_message = "resource blob stream open failed";
-            co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedTextResource(target.resource_kind)), "resourceBlobSaveFailed", stagePayload(target, "resource_blob_save_failed", "\"result_code\":\"persist_failed\",\"message\":\"" + escapeJson(writer_state->failure_message) + "\""));
+            co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), "resourceBlobSaveFailed", stagePayload(target, "resource_blob_save_failed", "\"result_code\":\"persist_failed\",\"message\":\"" + escapeJson(writer_state->failure_message) + "\""));
             co_return false;
         }
-        co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedTextResource(target.resource_kind)), "resourceBlobSaveStarted", stagePayload(target, "resource_blob_save_started", "\"local_path\":\"" + escapeJson(writer_state->path.relative_path) + "\""));
+        co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), "resourceBlobSaveStarted", stagePayload(target, "resource_blob_save_started", "\"local_path\":\"" + escapeJson(writer_state->path.relative_path) + "\""));
         co_return true;
     };
     callbacks.on_chunk = [writer_state](std::span<const char> chunk) mutable -> application::async::Task<bool> {
@@ -563,59 +670,184 @@ application::async::Task<application::model::SongResourceProcessItem> AsyncSongR
     if (!content.ok) {
         if (writer_state->writer) {
             co_await writer_state->writer->abort();
-            co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedTextResource(target.resource_kind)), "resourceBlobAbortCompleted", stagePayload(target, "resource_blob_abort_completed"));
+            co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), "resourceBlobAbortCompleted", stagePayload(target, "resource_blob_abort_completed"));
         }
         const std::string category = !writer_state->failure_category.empty() ? writer_state->failure_category : (content.error_category.empty() ? "network" : content.error_category);
         const std::string code = !writer_state->failure_code.empty() ? writer_state->failure_code : (content.result_code.empty() ? "download_failed" : content.result_code);
         const std::string message = !writer_state->failure_message.empty() ? writer_state->failure_message : (content.message.empty() ? "resource content download failed" : content.message);
-        co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedTextResource(target.resource_kind)), "resourceContentDownloadFailed", stagePayload(target, "resource_content_download_failed", "\"result_code\":\"" + escapeJson(code) + "\",\"error_category\":\"" + escapeJson(category) + "\""));
+        co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), "resourceContentDownloadFailed", stagePayload(target, "resource_content_download_failed", "\"result_code\":\"" + escapeJson(code) + "\",\"error_category\":\"" + escapeJson(category) + "\""));
         co_return write_failure ? co_await fail(std::move(target), category, code, message, batch_id, listener) : makeItem(target, false, false, false, false, category, code, message);
     }
-    co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedTextResource(target.resource_kind)), "resourceContentDownloaded", stagePayload(target, "resource_content_downloaded", "\"status_code\":" + std::to_string(content.status_code) + ",\"content_type\":\"" + escapeJson(content.content_type) + "\"" + ",\"body_size\":" + std::to_string(content.bytes_received)));
+    co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), "resourceContentDownloaded", stagePayload(target, "resource_content_downloaded", "\"status_code\":" + std::to_string(content.status_code) + ",\"content_type\":\"" + escapeJson(content.content_type) + "\"" + ",\"body_size\":" + std::to_string(content.bytes_received)));
 
     if (!writer_state->writer) {
         const std::string message = "resource blob stream was not opened";
-        co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedTextResource(target.resource_kind)), "resourceBlobSaveFailed", stagePayload(target, "resource_blob_save_failed", "\"result_code\":\"persist_failed\",\"message\":\"" + escapeJson(message) + "\""));
+        co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), "resourceBlobSaveFailed", stagePayload(target, "resource_blob_save_failed", "\"result_code\":\"persist_failed\",\"message\":\"" + escapeJson(message) + "\""));
         co_return write_failure ? co_await fail(std::move(target), "persistence", "persist_failed", message, batch_id, listener) : makeItem(target, false, false, false, false, "persistence", "persist_failed", message);
     }
 
-    co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedTextResource(target.resource_kind)), "resourceBlobCommitStarted", stagePayload(target, "resource_blob_commit_started", "\"local_path\":\"" + escapeJson(writer_state->path.relative_path) + "\""));
+    co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), "resourceBlobCommitStarted", stagePayload(target, "resource_blob_commit_started", "\"local_path\":\"" + escapeJson(writer_state->path.relative_path) + "\""));
     auto saved = co_await writer_state->writer->commit();
     if (!saved.ok) {
         const std::string message = saved.error.empty() ? "resource blob save failed" : saved.error;
-        co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedTextResource(target.resource_kind)), "resourceBlobSaveFailed", stagePayload(target, "resource_blob_save_failed", "\"result_code\":\"persist_failed\",\"message\":\"" + escapeJson(message) + "\""));
+        co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), "resourceBlobSaveFailed", stagePayload(target, "resource_blob_save_failed", "\"result_code\":\"persist_failed\",\"message\":\"" + escapeJson(message) + "\""));
         co_return write_failure ? co_await fail(std::move(target), "persistence", "persist_failed", message, batch_id, listener) : makeItem(target, false, false, false, false, "persistence", "persist_failed", message);
     }
     if (saved.local_path.empty() || saved.size_bytes == 0 || saved.size_bytes != content.bytes_received || saved.checksum.empty()) {
-        co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedTextResource(target.resource_kind)), "resourceBlobValidationFailed", stagePayload(target, "resource_blob_validation_failed", "\"result_code\":\"persist_validation_failed\"" + std::string(",\"local_path\":\"") + escapeJson(saved.local_path) + "\"" + ",\"downloaded_size\":" + std::to_string(content.bytes_received) + ",\"saved_size\":" + std::to_string(saved.size_bytes)));
+        co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), "resourceBlobValidationFailed", stagePayload(target, "resource_blob_validation_failed", "\"result_code\":\"persist_validation_failed\"" + std::string(",\"local_path\":\"") + escapeJson(saved.local_path) + "\"" + ",\"downloaded_size\":" + std::to_string(content.bytes_received) + ",\"saved_size\":" + std::to_string(saved.size_bytes)));
         co_return write_failure ? co_await fail(std::move(target), "persistence", "persist_validation_failed", "resource blob save result did not match downloaded content", batch_id, listener) : makeItem(target, false, false, false, false, "persistence", "persist_validation_failed", "resource blob save result did not match downloaded content");
     }
-    co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedTextResource(target.resource_kind)), "resourceBlobSaved", stagePayload(target, "resource_blob_saved", "\"local_path\":\"" + escapeJson(saved.local_path) + "\"" + ",\"size_bytes\":" + std::to_string(saved.size_bytes) + ",\"checksum\":\"" + escapeJson(saved.checksum) + "\""));
+    co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), "resourceBlobSaved", stagePayload(target, "resource_blob_saved", "\"local_path\":\"" + escapeJson(saved.local_path) + "\"" + ",\"size_bytes\":" + std::to_string(saved.size_bytes) + ",\"checksum\":\"" + escapeJson(saved.checksum) + "\""));
+
+    std::string cloud_backend;
+    std::string cloud_path;
+    if (cloud_uploader_ && !batch_cloud_uploader_) {
+        application::model::SongResourceCloudUploadRequest upload_request;
+        upload_request.local_path = saved.local_path;
+        upload_request.size_bytes = saved.size_bytes;
+        upload_request.checksum = saved.checksum;
+        upload_request.timeout_ms = options.resource_download_timeout_ms;
+        co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), "resourceCloudUploadStarted", stagePayload(target, "resource_cloud_upload_started", "\"local_path\":\"" + escapeJson(saved.local_path) + "\""));
+        auto uploaded = co_await cloud_uploader_->upload(std::move(upload_request));
+        if (!uploaded.ok) {
+            const std::string category = uploaded.error_category.empty() ? "persistence" : uploaded.error_category;
+            const std::string code = uploaded.result_code.empty() ? "cloud_upload_failed" : uploaded.result_code;
+            const std::string message = uploaded.message.empty() ? "resource cloud upload failed" : trimMessage(uploaded.message);
+            co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), "resourceCloudUploadFailed", stagePayload(target, "resource_cloud_upload_failed", "\"result_code\":\"" + escapeJson(code) + "\",\"error_category\":\"" + escapeJson(category) + "\",\"message\":\"" + escapeJson(message) + "\""));
+            co_return write_failure ? co_await fail(std::move(target), category, code, message, batch_id, listener) : makeItem(target, false, false, false, false, category, code, message);
+        }
+        if (uploaded.backend.empty() || uploaded.cloud_path.empty()) {
+            co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), "resourceCloudUploadValidationFailed", stagePayload(target, "resource_cloud_upload_validation_failed", "\"result_code\":\"cloud_upload_validation_failed\""));
+            co_return write_failure ? co_await fail(std::move(target), "persistence", "cloud_upload_validation_failed", "resource cloud upload result did not include backend and path", batch_id, listener) : makeItem(target, false, false, false, false, "persistence", "cloud_upload_validation_failed", "resource cloud upload result did not include backend and path");
+        }
+        cloud_backend = std::move(uploaded.backend);
+        cloud_path = std::move(uploaded.cloud_path);
+        co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), "resourceCloudUploadCompleted", stagePayload(target, "resource_cloud_upload_completed", "\"cloud_backend\":\"" + escapeJson(cloud_backend) + "\",\"cloud_path\":\"" + escapeJson(cloud_path) + "\""));
+    }
 
     application::model::SongResourceSuccessUpdate update;
     update.resource_id = target.resource_id;
     update.remote_url = std::move(remote_url);
     update.local_path = saved.local_path;
+    update.cloud_backend = cloud_backend;
+    update.cloud_path = cloud_path;
     update.size_bytes = saved.size_bytes;
     update.checksum = saved.checksum;
     update.result_code = "ok";
     update.batch_id = batch_id;
     if (!resource_queue_ || !(co_await resource_queue_->markSucceeded(std::move(update)))) {
-        co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedTextResource(target.resource_kind)), "resourceDbWritebackFailed", stagePayload(target, "resource_db_writeback_failed", "\"result_code\":\"writeback_failed\",\"local_path\":\"" + escapeJson(saved.local_path) + "\""));
+        co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), "resourceDbWritebackFailed", stagePayload(target, "resource_db_writeback_failed", "\"result_code\":\"writeback_failed\",\"local_path\":\"" + escapeJson(saved.local_path) + "\""));
         co_return write_failure ? co_await fail(std::move(target), "persistence", "writeback_failed", "resource success writeback failed", batch_id, listener) : makeItem(target, false, false, false, false, "persistence", "writeback_failed", "resource success writeback failed");
     }
-    co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedTextResource(target.resource_kind)), "resourceDbWritebackCompleted", stagePayload(target, "resource_db_writeback_completed", "\"local_path\":\"" + escapeJson(saved.local_path) + "\",\"size_bytes\":" + std::to_string(saved.size_bytes)));
+    co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), "resourceDbWritebackCompleted", stagePayload(target, "resource_db_writeback_completed", "\"local_path\":\"" + escapeJson(saved.local_path) + "\",\"size_bytes\":" + std::to_string(saved.size_bytes)));
 
     auto item = makeItem(target, true, false, false, false, {}, "ok", {});
     item.local_path = std::move(saved.local_path);
+    item.cloud_backend = std::move(cloud_backend);
+    item.cloud_path = std::move(cloud_path);
     item.size_bytes = saved.size_bytes;
     item.checksum = std::move(saved.checksum);
     co_return item;
 }
 
-application::async::Task<void> AsyncSongResourceDownloadWorkflow::processRelatedTextResources(const application::model::SongResourceQueueTarget &audio_target, const application::model::SongResourceFetchResult &fetch_result, const std::string &batch_id, std::shared_ptr<ProcessRunState> state, SongResourceProcessListener *listener)
+application::async::Task<void> AsyncSongResourceDownloadWorkflow::uploadBatchCloudObjects(std::shared_ptr<ProcessRunState> state, const std::string &batch_id, SongResourceProcessListener *listener)
 {
-    const std::array<std::pair<std::string, std::string>, 3> related {{
+    if (!state || !batch_cloud_uploader_ || !resource_queue_) {
+        co_return;
+    }
+
+    std::vector<application::model::SongResourceProcessItem> items;
+    {
+        std::lock_guard<std::mutex> lock(state->result_mutex);
+        for (const auto &item : state->result.items) {
+            if (item.ok && !item.local_path.empty() && item.cloud_path.empty()) {
+                items.push_back(item);
+            }
+        }
+    }
+    if (items.empty()) {
+        co_return;
+    }
+
+    application::model::SongResourceBatchCloudUploadRequest request;
+    request.batch_id = batch_id;
+    request.timeout_ms = state->options.resource_download_timeout_ms;
+    request.objects.reserve(items.size());
+    for (const auto &item : items) {
+        application::model::SongResourceBatchCloudUploadObject object;
+        object.resource_id = item.resource_id;
+        object.local_path = item.local_path;
+        object.size_bytes = item.size_bytes;
+        object.checksum = item.checksum;
+        request.objects.push_back(std::move(object));
+    }
+
+    co_await notifyBatchEvent(listener, "resourceBatchCloudUploadStarted", "{\"stage\":\"resource_batch_cloud_upload_started\",\"object_count\":" + std::to_string(request.objects.size()) + "}");
+    auto uploaded = co_await batch_cloud_uploader_->uploadBatch(std::move(request));
+    if (!uploaded.ok) {
+        const std::string category = uploaded.error_category.empty() ? "persistence" : uploaded.error_category;
+        const std::string code = uploaded.result_code.empty() ? "cloud_upload_failed" : uploaded.result_code;
+        const std::string message = uploaded.message.empty() ? "resource batch cloud upload failed" : trimMessage(uploaded.message);
+        co_await notifyBatchEvent(listener, "resourceBatchCloudUploadFailed", "{\"stage\":\"resource_batch_cloud_upload_failed\",\"result_code\":\"" + escapeJson(code) + "\",\"error_category\":\"" + escapeJson(category) + "\",\"message\":\"" + escapeJson(message) + "\"}");
+        for (const auto &item : items) {
+            application::model::SongResourceFailureUpdate update;
+            update.resource_id = item.resource_id;
+            update.error_category = category;
+            update.result_code = code;
+            update.message = message;
+            update.batch_id = batch_id;
+            (void)co_await resource_queue_->markFailed(std::move(update));
+        }
+        {
+            std::lock_guard<std::mutex> lock(state->result_mutex);
+            for (auto &item : state->result.items) {
+                if (item.ok && !item.local_path.empty() && item.cloud_path.empty()) {
+                    item.ok = false;
+                    item.error_category = category;
+                    item.result_code = code;
+                    item.message = message;
+                }
+            }
+        }
+        co_return;
+    }
+
+    int writeback_count = 0;
+    for (const auto &uploaded_object : uploaded.objects) {
+        auto it = std::find_if(items.begin(), items.end(), [&uploaded_object](const application::model::SongResourceProcessItem &item) {
+            return item.resource_id == uploaded_object.resource_id && item.local_path == uploaded_object.local_path;
+        });
+        if (it == items.end()) {
+            continue;
+        }
+        application::model::SongResourceSuccessUpdate update;
+        update.resource_id = it->resource_id;
+        update.local_path = it->local_path;
+        update.cloud_backend = uploaded.backend;
+        update.cloud_path = uploaded_object.cloud_path;
+        update.size_bytes = it->size_bytes;
+        update.checksum = it->checksum;
+        update.result_code = "ok";
+        update.batch_id = batch_id;
+        if (co_await resource_queue_->markSucceeded(std::move(update))) {
+            ++writeback_count;
+            std::lock_guard<std::mutex> lock(state->result_mutex);
+            for (auto &item : state->result.items) {
+                if (item.resource_id == uploaded_object.resource_id && item.local_path == uploaded_object.local_path) {
+                    item.cloud_backend = uploaded.backend;
+                    item.cloud_path = uploaded_object.cloud_path;
+                    break;
+                }
+            }
+        }
+    }
+    co_await notifyBatchEvent(listener, "resourceBatchCloudUploadCompleted", "{\"stage\":\"resource_batch_cloud_upload_completed\",\"object_count\":" + std::to_string(uploaded.objects.size()) + ",\"writeback_count\":" + std::to_string(writeback_count) + ",\"cloud_backend\":\"" + escapeJson(uploaded.backend) + "\"}");
+}
+
+application::async::Task<void> AsyncSongResourceDownloadWorkflow::processRelatedResources(const application::model::SongResourceQueueTarget &audio_target, const application::model::SongResourceFetchResult &fetch_result, const std::string &batch_id, std::shared_ptr<ProcessRunState> state, SongResourceProcessListener *listener)
+{
+    const std::array<std::pair<std::string, std::string>, 4> related {{
+        {"cover", fetch_result.cover_url},
         {"lyric", fetch_result.lyric_url},
         {"mrc", fetch_result.mrc_url},
         {"trc", fetch_result.trc_url},
@@ -748,7 +980,7 @@ application::async::Task<application::model::SongResourceProcessItem> AsyncSongR
     if (resource_queue_) {
         writeback_ok = co_await resource_queue_->markFailed(update);
     }
-    co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedTextResource(target.resource_kind)), writeback_ok ? "resourceFailureWritebackCompleted" : "resourceFailureWritebackFailed", stagePayload(target, writeback_ok ? "resource_failure_writeback_completed" : "resource_failure_writeback_failed", "\"result_code\":\"" + escapeJson(update.result_code) + "\",\"error_category\":\"" + escapeJson(update.error_category) + "\""));
+    co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), writeback_ok ? "resourceFailureWritebackCompleted" : "resourceFailureWritebackFailed", stagePayload(target, writeback_ok ? "resource_failure_writeback_completed" : "resource_failure_writeback_failed", "\"result_code\":\"" + escapeJson(update.result_code) + "\",\"error_category\":\"" + escapeJson(update.error_category) + "\""));
     co_return makeItem(target, false, false, false, false, update.error_category, update.result_code, update.message);
 }
 
@@ -767,7 +999,7 @@ application::async::Task<application::model::SongResourceProcessItem> AsyncSongR
     if (resource_queue_) {
         writeback_ok = co_await resource_queue_->markSkipped(update);
     }
-    co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedTextResource(target.resource_kind)), writeback_ok ? "resourceSkipWritebackCompleted" : "resourceSkipWritebackFailed", stagePayload(target, writeback_ok ? "resource_skip_writeback_completed" : "resource_skip_writeback_failed", "\"result_code\":\"" + escapeJson(update.result_code) + "\",\"error_category\":\"" + escapeJson(update.error_category) + "\""));
+    co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), writeback_ok ? "resourceSkipWritebackCompleted" : "resourceSkipWritebackFailed", stagePayload(target, writeback_ok ? "resource_skip_writeback_completed" : "resource_skip_writeback_failed", "\"result_code\":\"" + escapeJson(update.result_code) + "\",\"error_category\":\"" + escapeJson(update.error_category) + "\""));
     co_return makeItem(target, false, true, false, false, update.error_category, update.result_code, update.message);
 }
 

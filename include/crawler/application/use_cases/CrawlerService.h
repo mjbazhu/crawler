@@ -4,6 +4,7 @@
 #include "crawler/application/model/CrawlBatch.h"
 #include "crawler/application/model/MusicCatalog.h"
 #include "crawler/application/model/MusicOverview.h"
+#include "crawler/application/model/SingerCollectionResult.h"
 #include "crawler/application/model/SingerSourceSync.h"
 #include "crawler/application/model/SongResourceQueue.h"
 #include "crawler/application/ports/parsing/MetadataParser.h"
@@ -241,6 +242,9 @@ public:
     // 重置指定补池，返回更新数量。
     int resetMiguBackfill(std::string backfill_type, application::model::MiguBackfillTargetQuery query) const;
 
+    // 刷新库内歌手主要信息总数，并在成功后按真实关系数量校准歌曲/专辑同步状态。
+    application::model::MiguBackfillRetryResult refreshMiguSingerProfiles(application::model::MiguBackfillTargetQuery query, bool force, std::string request_params);
+
     // 恢复 Migu 元数据和批次中超时停留在 running 的记录。
     application::model::MiguStaleRecoveryResult recoverMiguStale(application::model::MiguStaleRecoveryRequest request) const;
 
@@ -253,6 +257,12 @@ public:
 private:
     // 按运行设置执行带重试的目标采集。
     bool searchAndSaveWithRetry(std::string keyword, int limit);
+
+    // 按库内声明总数执行歌手歌曲采集，并用真实关系数量校准结果。
+    application::model::SingerCollectionResult crawlSingerSongsWithStoredTotals(std::uint64_t singer_id, int limit);
+
+    // 按库内声明总数执行歌手专辑采集，并用真实关系数量校准结果。
+    application::model::SingerCollectionResult crawlSingerAlbumsWithStoredTotals(std::uint64_t singer_id, int limit);
 
     // 创建通用批次目标记录。
     std::vector<application::model::CrawlBatchItemRecord> makeTargetItems(const std::vector<std::string> &targets, std::string item_type) const;

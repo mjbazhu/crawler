@@ -20,7 +20,10 @@ void requirePath(const nlohmann::json &doc, const std::string &path)
 // 断言文档片段包含指定语义文本。
 void requireDumpContains(const nlohmann::json &value, const std::string &needle)
 {
-    assert(value.dump().find(needle) != std::string::npos);
+    if (value.dump().find(needle) == std::string::npos) {
+        std::cerr << "OpenAPI document is missing expected text: " << needle << std::endl;
+        assert(false);
+    }
 }
 
 } // namespace
@@ -47,6 +50,7 @@ int main()
     requirePath(doc, "/api/migu/dictionaries");
     requirePath(doc, "/api/migu/singer-songs/crawl-from-db/preview");
     requirePath(doc, "/api/migu/singer-albums/crawl-from-db/preview");
+    requirePath(doc, "/api/migu/singers/profile/refresh-from-db");
     requirePath(doc, "/api/migu/backfill/{type}/preview");
     requirePath(doc, "/api/migu/backfill/singer-songs/retry");
     requirePath(doc, "/api/migu/backfill/album-songs/reset");
@@ -85,6 +89,14 @@ int main()
     assert(schemas.contains("ResourceProcessResponse"));
     assert(schemas.contains("SingerFromDbPreviewItem"));
     assert(schemas.contains("SingerFromDbPreviewResponse"));
+    assert(schemas.contains("SingerProfileRefreshRequest"));
+    const auto &profile_refresh_properties = schemas["SingerProfileRefreshRequest"]["properties"];
+    assert(profile_refresh_properties.contains("source_ids"));
+    assert(profile_refresh_properties.contains("run_all"));
+    assert(profile_refresh_properties.contains("runAll"));
+    assert(profile_refresh_properties["max_targets"]["minimum"] == 0);
+    requireDumpContains(profile_refresh_properties["max_targets"], "0 means refresh all matching local singers");
+    requireDumpContains(profile_refresh_properties["run_all"], "every matching local singer");
     assert(schemas.contains("IntegritySummary"));
     assert(schemas.contains("BackfillActionItem"));
     assert(schemas.contains("BackfillQueueTarget"));
@@ -104,6 +116,11 @@ int main()
     assert(schemas.contains("BatchGovernanceResponse"));
     assert(schemas.contains("GovernanceEvent"));
     assert(schemas.contains("GovernanceEventPage"));
+    const auto &governance_event_properties = schemas["GovernanceEvent"]["properties"];
+    assert(governance_event_properties.contains("target_name"));
+    assert(governance_event_properties.contains("target_summary"));
+    assert(governance_event_properties.contains("target_source_id"));
+    assert(governance_event_properties.contains("target_owner_name"));
     assert(schemas.contains("PacmtokenRefreshRequest"));
     assert(schemas.contains("PacmtokenRefreshResponse"));
     assert(schemas.contains("PacmtokenStateResponse"));
@@ -152,19 +169,24 @@ int main()
     assert(resource_properties.contains("last_batch_id"));
     assert(resource_properties.contains("running_batch_id"));
     assert(resource_properties.contains("last_processed_at"));
+    assert(resource_properties.contains("cloud_backend"));
+    assert(resource_properties.contains("cloud_path"));
+    assert(resource_properties.contains("cloud_uploaded_at"));
 
     const auto &resource_process_item_properties = schemas["ResourceProcessItem"]["properties"];
     assert(resource_process_item_properties.contains("error_category"));
     assert(resource_process_item_properties.contains("related"));
     assert(resource_process_item_properties.contains("synthetic"));
     assert(resource_process_item_properties.contains("source_content_id"));
+    assert(resource_process_item_properties.contains("cloud_backend"));
+    assert(resource_process_item_properties.contains("cloud_path"));
     assert(schemas["ResourceProcessItem"]["required"].dump().find("error_category") != std::string::npos);
     assert(schemas["ResourceProcessItem"]["required"].dump().find("related") != std::string::npos);
     assert(schemas["ResourceProcessItem"]["required"].dump().find("synthetic") != std::string::npos);
     assert(schemas["ResourceProcessRequest"]["properties"].contains("async"));
     assert(schemas["ResourceProcessRequest"]["properties"].contains("options"));
     requireDumpContains(schemas["ResourceProcessRequest"], "Omitted kind does not filter resource kinds");
-    requireDumpContains(schemas["ResourceProcessRequest"], "audio, cover, lyric, mrc and trc");
+    requireDumpContains(schemas["ResourceProcessRequest"], "audio, cover, lyric/lrc, mrc and trc");
     assert(schemas["ResourceProcessOptions"]["properties"].contains("resource_download_concurrency"));
     assert(schemas["ResourceProcessOptions"]["properties"].contains("pacmtoken_refresh_interval_seconds"));
     assert(schemas["ResourceProcessResponse"]["properties"].contains("synthetic_related_skipped_count"));
@@ -174,6 +196,9 @@ int main()
     assert(doc["paths"]["/api/migu/singer-songs/crawl-from-db/preview"]["post"]["responses"].contains("200"));
     assert(schemas["SingerFromDbPreviewItem"]["properties"].contains("singer_id"));
     assert(schemas["SingerFromDbPreviewItem"]["properties"].contains("source_name"));
+    assert(schemas["SingerFromDbPreviewItem"]["properties"].contains("source_total"));
+    assert(schemas["SingerFromDbPreviewItem"]["properties"].contains("remaining_count"));
+    assert(schemas["SingerFromDbPreviewItem"]["properties"].contains("completed"));
 
     const auto &settings_update = schemas["SettingsUpdate"]["properties"];
     assert(settings_update.contains("resource_download_concurrency"));
@@ -196,12 +221,26 @@ int main()
     const auto &singer_properties = schemas["SingerRecord"]["properties"];
     assert(singer_properties.contains("songs_count"));
     assert(singer_properties.contains("albums_count"));
+    assert(singer_properties.contains("source_song_total"));
+    assert(singer_properties.contains("source_album_total"));
+    assert(!singer_properties.contains("source_metric"));
+    assert(!singer_properties.contains("source_view_id"));
+    assert(!singer_properties.contains("source_res_type"));
+    assert(!singer_properties.contains("source_action"));
+    assert(!singer_properties.contains("source_track"));
+    assert(!singer_properties.contains("source_display_id"));
+    assert(singer_properties.contains("songs_remaining_count"));
+    assert(singer_properties.contains("songs_completed"));
+    requireDumpContains(singer_properties["source_song_total"], "Null means not refreshed yet");
+    requireDumpContains(singer_properties["source_album_total"], "Null means not refreshed yet");
     requireDumpContains(singer_properties["songs_sync_count"], "song_artist_refs");
     requireDumpContains(singer_properties["albums_sync_count"], "album_source_refs.source_artist_id");
     requireDumpContains(singer_properties["songs_sync_status"], "real song_artist_refs");
     requireDumpContains(singer_properties["songs_sync_status"], "completed (2)");
+    requireDumpContains(singer_properties["songs_sync_status"], "full completion cannot be confirmed");
     requireDumpContains(singer_properties["albums_sync_status"], "album_source_refs.source_artist_id");
     requireDumpContains(singer_properties["albums_sync_status"], "completed (2)");
+    requireDumpContains(singer_properties["albums_sync_status"], "full completion cannot be confirmed");
 
     const auto &album_properties = schemas["AlbumRecord"]["properties"];
     assert(album_properties.contains("songs_count"));
@@ -270,6 +309,8 @@ int main()
     requireDumpContains(doc["paths"]["/api/migu/backfill/singer-songs/queue"]["get"], "not returned by the default missing-song queue");
     requireDumpContains(doc["paths"]["/api/migu/backfill/singer-albums/queue"]["get"], "real album_source_refs.source_artist_id summary");
     requireDumpContains(doc["paths"]["/api/migu/backfill/singer-albums/queue"]["get"], "not returned by the default missing-album queue");
+    requireDumpContains(doc["paths"]["/api/migu/singers/profile/refresh-from-db"]["post"], "only default flow that requests singer/info");
+    requireDumpContains(doc["paths"]["/api/migu/singers/profile/refresh-from-db"]["post"], "max_targets=0");
 
     const auto &error_properties = schemas["ErrorResponse"]["properties"];
     assert(error_properties.contains("error_code"));

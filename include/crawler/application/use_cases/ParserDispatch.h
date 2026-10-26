@@ -8,6 +8,7 @@
 #include "crawler/application/ports/parsing/AlbumSourceParser.h"
 #include "crawler/application/ports/parsing/PageInspector.h"
 #include "crawler/application/ports/parsing/ParseResultParser.h"
+#include "crawler/application/ports/parsing/SingerProfileParser.h"
 #include "crawler/application/ports/parsing/SingerSourceParser.h"
 #include "crawler/application/ports/parsing/SongSourceParser.h"
 #include "crawler/application/use_cases/TaskRunner.h"
@@ -28,6 +29,7 @@ public:
         std::shared_ptr<application::ports::SongSourceParser> song_source_parser,
         std::shared_ptr<application::ports::SingerSourceParser> singer_source_parser,
         std::shared_ptr<application::ports::AlbumSourceParser> album_source_parser,
+        std::shared_ptr<application::ports::SingerProfileParser> singer_profile_parser,
         std::shared_ptr<application::ports::PageInspector> page_inspector,
         std::shared_ptr<application::ports::TaskExecutor> parse_executor,
         std::shared_ptr<application::ports::DiagnosticsSink> diagnostics
@@ -45,6 +47,9 @@ public:
     // 解析专辑来源。
     std::vector<application::model::AlbumSourceMetadata> parseAlbumSources(std::vector<char> body);
 
+    // 解析歌手来源概览。
+    application::model::SingerSourceProfile parseSingerSourceProfile(std::vector<char> body);
+
     // 检查歌手歌曲分页摘要。
     application::ports::SingerSongPageInfo inspectSingerSongPage(std::vector<char> body);
 
@@ -56,6 +61,7 @@ private:
     std::shared_ptr<application::ports::SongSourceParser> song_source_parser_;     // 歌曲来源解析 port
     std::shared_ptr<application::ports::SingerSourceParser> singer_source_parser_; // 歌手来源解析 port
     std::shared_ptr<application::ports::AlbumSourceParser> album_source_parser_;   // 专辑来源解析 port
+    std::shared_ptr<application::ports::SingerProfileParser> singer_profile_parser_; // 歌手概览解析 port
     std::shared_ptr<application::ports::PageInspector> page_inspector_;            // 分页摘要 port
     TaskRunner parse_runner_;                                                      // 解析执行器
 };

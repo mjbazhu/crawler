@@ -72,6 +72,11 @@ void CrawlerRoutes::registerRoutes(RouteSink &routes) const
         return withCors(controller->handlePreviewMiguSingerAlbumsCrawlFromDb(std::move(req)));
     });
 
+    routes.route("OPTIONS", "/api/migu/singers/profile/refresh-from-db", handleCorsOptions);
+    routes.route("POST", "/api/migu/singers/profile/refresh-from-db", [controller = controller_](api::http::HttpRequest req) {
+        return withCors(controller->handleRefreshMiguSingerProfiles(std::move(req)));
+    });
+
     routes.route("OPTIONS", "/api/migu/album-details/crawl", handleCorsOptions);
     routes.route("POST", "/api/migu/album-details/crawl", [controller = controller_](api::http::HttpRequest req) {
         return withCors(controller->handleStartMiguAlbumDetailsBackfill(std::move(req)));

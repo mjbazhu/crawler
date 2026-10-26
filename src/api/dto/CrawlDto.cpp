@@ -393,7 +393,7 @@ std::optional<MiguSingerFromDbCrawlRequestDto> MiguSingerFromDbCrawlRequestDto::
         MiguSingerFromDbCrawlRequestDto dto;
         dto.query.source = "migu";
         dto.query.limit = 20;
-        dto.limit_per_singer = kDefaultLimit;
+        dto.limit_per_singer = 0;
         dto.query.sync_statuses = {0, 3, 4};
 
         if (req.body.empty()) {
@@ -405,7 +405,7 @@ std::optional<MiguSingerFromDbCrawlRequestDto> MiguSingerFromDbCrawlRequestDto::
             dto.query.source = *source;
         }
         dto.query.limit = static_cast<std::size_t>(parseIntField(body, {"max_targets", "maxTargets", "target_limit", "targetLimit"}, 20));
-        dto.limit_per_singer = parseIntField(body, {"limit_per_singer", "limitPerSinger", "per_singer_limit", "perSingerLimit"}, kDefaultLimit);
+        dto.limit_per_singer = parseIntField(body, {"limit_per_singer", "limitPerSinger", "per_singer_limit", "perSingerLimit"}, 0);
         dto.query.include_stale_running = parseBoolField(body, {"include_stale_running", "includeStaleRunning"}, false);
         dto.query.stale_after_seconds = parseIntField(body, {"stale_after_seconds", "staleAfterSeconds"}, 3600);
 
@@ -440,8 +440,8 @@ std::optional<std::string> MiguSingerFromDbCrawlRequestDto::validate() const
     if (query.limit == 0 || query.limit > kMaxTargets) {
         return "max_targets must be between 1 and 1000";
     }
-    if (limit_per_singer <= 0 || limit_per_singer > kMaxLimit) {
-        return "limit_per_singer must be between 1 and 500";
+    if (limit_per_singer < 0 || limit_per_singer > kMaxLimit) {
+        return "limit_per_singer must be between 0 and 500";
     }
     if (query.country.size() > 128) {
         return "country is too long";

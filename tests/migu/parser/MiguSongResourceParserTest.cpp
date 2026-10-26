@@ -33,6 +33,8 @@ void testParseSuccess()
             "version": "4ba63effd7089dea33d95d1b174617e8",
             "url": "https://freetyst.nf.migu.cn/public/product9th/product43/product/24bit/2021/04/10/60054701947/60054701947.flac",
             "audioFormatType": "ZQ24",
+            "coverUrl": "/data/oss/resource/00/1y/hd/low-cover.webp",
+            "img3": "/data/oss/resource/00/1y/hd/cover.webp",
             "lrcUrl": "https://d.musicapp.migu.cn/data/oss/resource/00/1y/hd/y5",
             "mrcUrl": "https://d.musicapp.migu.cn/data/oss/resource/00/1y/hd/y6",
             "trcUrl": "https://d.musicapp.migu.cn/data/oss/resource/00/1y/hd/y7"
@@ -47,9 +49,34 @@ void testParseSuccess()
     require(result.url.find("60054701947.flac") != std::string::npos, "resource url");
     require(result.version == "4ba63effd7089dea33d95d1b174617e8", "resource version");
     require(result.audio_format_type == "ZQ24", "resource audio format type");
+    require(result.cover_url == "https://d.musicapp.migu.cn/data/oss/resource/00/1y/hd/cover.webp", "resource cover url should be normalized");
     require(result.lyric_url == "https://d.musicapp.migu.cn/data/oss/resource/00/1y/hd/y5", "resource lrc url");
     require(result.mrc_url == "https://d.musicapp.migu.cn/data/oss/resource/00/1y/hd/y6", "resource mrc url");
     require(result.trc_url == "https://d.musicapp.migu.cn/data/oss/resource/00/1y/hd/y7", "resource trc url");
+}
+
+void testParseNestedSongCoverPriority()
+{
+    const std::string raw = R"({
+        "code": "000000",
+        "info": "操作成功",
+        "data": {
+            "version": "v1",
+            "url": "https://example.test/audio.flac",
+            "audioFormatType": "PQ",
+            "img2": "/data/oss/resource/top-middle.webp",
+            "song": {
+                "img1": "/data/oss/resource/song-low.webp",
+                "img2": "/data/oss/resource/song-middle.webp",
+                "img3": "/data/oss/resource/song-high.webp"
+            }
+        }
+    })";
+
+    migu_parser::MiguSongResourceParser parser;
+    const auto result = parser.parseSongResource(toBytes(raw));
+    require(result.ok, "nested song cover response should be ok");
+    require(result.cover_url == "https://d.musicapp.migu.cn/data/oss/resource/song-high.webp", "nested song img3 should win over any img2");
 }
 
 void testParseNonSuccessCode()
@@ -161,6 +188,7 @@ int main()
 {
     try {
         testParseSuccess();
+        testParseNestedSongCoverPriority();
         testParseNonSuccessCode();
         testParseMissingUrl();
         testParseCannotCode();

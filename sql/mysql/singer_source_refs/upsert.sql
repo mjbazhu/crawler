@@ -1,0 +1,25 @@
+INSERT INTO singer_source_refs (
+    singer_db_id,
+    source,
+    source_singer_id,
+    source_name_pinyin,
+    source_country,
+    metadata_status,
+    created_at,
+    updated_at
+) VALUES (
+    ?,
+    ?,
+    ?,
+    NULLIF(?, ''),
+    NULLIF(?, ''),
+    1,
+    UNIX_TIMESTAMP(),
+    UNIX_TIMESTAMP()
+) ON DUPLICATE KEY UPDATE
+    id = LAST_INSERT_ID(id),
+    singer_db_id = VALUES(singer_db_id),
+    source_name_pinyin = COALESCE(VALUES(source_name_pinyin), source_name_pinyin),
+    source_country = COALESCE(VALUES(source_country), source_country),
+    metadata_status = 1,
+    updated_at = VALUES(updated_at);

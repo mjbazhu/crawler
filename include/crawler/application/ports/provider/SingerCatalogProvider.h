@@ -18,6 +18,9 @@ public:
     // 获取歌手歌曲单页原始响应，调用方负责解析分页结束条件。
     virtual std::optional<Response> fetchSingerSongsPage(std::uint64_t singer_id, int page) = 0;
 
+    // 获取歌手主要信息原始响应，调用方负责解析平台声明总数。
+    virtual std::optional<Response> fetchSingerInfo(std::uint64_t singer_id) = 0;
+
     // 获取歌手专辑单页原始响应，调用方负责解析分页结束条件。
     virtual std::optional<Response> fetchSingerAlbumsPage(std::uint64_t singer_id, int page) = 0;
 

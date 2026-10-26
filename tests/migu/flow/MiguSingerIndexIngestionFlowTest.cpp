@@ -31,13 +31,11 @@ void test_singer_index_ingestion_flow()
     metadata.name = "周杰伦";
     metadata.normalized_name = "周杰伦";
     metadata.gender = crawler::domain::Gender::Male;
-    metadata.source_item_key = "singer:112";
     metadata.source_singer_id = "112";
     metadata.source_country = "华语";
     auto second_metadata = metadata;
     second_metadata.name = "林俊杰";
     second_metadata.normalized_name = "林俊杰";
-    second_metadata.source_item_key = "singer:113";
     second_metadata.source_singer_id = "113";
     parser->mock_singer_sources_by_body["singers"] = {metadata, second_metadata};
 

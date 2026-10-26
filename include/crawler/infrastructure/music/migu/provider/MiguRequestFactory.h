@@ -34,6 +34,9 @@ public:
     // 构造歌手专辑分页 URL。
     static std::string singerAlbumsUrl(std::uint64_t singer_id, int page);
 
+    // 构造歌手主要信息 URL。
+    static std::string singerInfoUrl(std::uint64_t singer_id);
+
     // 构造专辑详情 URL。
     static std::string albumDetailUrl(std::uint64_t album_id, std::string_view source_res_type);
 
@@ -54,6 +57,7 @@ private:
     static constexpr const char *URL_LISTEN_RESOURCE = "http://app.c.nf.migu.cn/MIGUM3.0/strategy/pc/listen/v1.0?";
     static constexpr const char *URL_RESOURCE_INFO = "https://app.c.nf.migu.cn/v1.0/content/resourceinfo.do?";
     static constexpr const char *URL_SEARCH_ALBUM = "https://app.u.nf.migu.cn/pc/bmw/album/search/v1.0?";
+    static constexpr const char *URL_SINGER_INFO = "https://app.c.nf.migu.cn/pc/bmw/singer/info/v1.1?";
     static constexpr const char *URL_SINGER_SONGS = "https://app.c.nf.migu.cn/pc/bmw/singer/song/v1.0?";
     static constexpr const char *URL_SINGER_ALBUMS = "https://app.c.nf.migu.cn/pc/bmw/singer/album/v1.0?";
     static constexpr const char *URL_SINGER_INDEX = "https://app.c.nf.migu.cn/pc/bmw/singer-index/list/v1.0?";

@@ -1,6 +1,8 @@
 #pragma once
 
 #include "crawler/infrastructure/music/persistence/mysql/MySqlConfig.h"
+#include "crawler/infrastructure/storage/baidupcs/BaiduPcsGoConfig.h"
+#include "crawler/infrastructure/storage/rclone/RcloneConfig.h"
 
 #include <cstddef>
 #include <memory>
@@ -50,6 +52,11 @@ public:
         music::persistence::mysql::MySqlConfig mysql; // MySQL 异步持久化配置
 
         std::string storage_path = "./data";
+        std::string resource_storage_backend = "filesystem";    // 资源二进制存储后端：filesystem；rclone 为旧远端 copyurl 模式
+        bool resource_cloud_upload_enabled = false;             // 本地保存后是否上传到网盘
+        std::string resource_cloud_upload_backend = "baidupcs"; // 云端上传后端；当前支持 baidupcs
+        storage::baidupcs::BaiduPcsGoConfig baidupcs;           // BaiduPCS-Go 本地文件上传配置
+        storage::rclone::RcloneConfig rclone;                   // rclone 远端 copyurl 配置，保留旧方案
 
         int outbound_http_io_threads = 4;                                // Asio 出站 I/O 线程数
         int outbound_http_timeout_ms = 30000;                            // 出站请求超时时间

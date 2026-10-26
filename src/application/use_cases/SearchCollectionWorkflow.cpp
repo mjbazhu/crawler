@@ -58,6 +58,7 @@ bool SearchCollectionWorkflow::searchAndSave(std::string keyword, int limit, int
     auto songs = collectSongs(keyword, normalized_limit, max_page_concurrency);
     auto albums = collectAlbums(std::move(keyword), normalized_limit, max_page_concurrency);
 
+    if (persistence_->hasAtomicWriter()) return !songs.songs.empty() || !albums.albums.empty();
     bool saved = false;
     saved = persistence_->saveSongs(songs.songs, normalized_limit) || saved;
     saved = persistence_->saveAlbums(albums.albums, normalized_limit) || saved;
@@ -73,7 +74,7 @@ std::vector<domain::Song> SearchCollectionWorkflow::collectSongPage(std::string 
 
     std::vector<char> body = std::move(response->body);
     auto song_sources = parser_->parseSongSources(body);
-    persistence_->saveSongSources(song_sources, kWorkflowSearchRows);
+    if (!song_sources.empty() && !persistence_->saveSongSources(song_sources, kWorkflowSearchRows)) return {};
 
     auto results = parser_->parse(body);
     std::vector<domain::Song> songs;
@@ -92,6 +93,10 @@ std::vector<domain::Album> SearchCollectionWorkflow::collectAlbumPage(std::strin
         return {};
     }
 
+    if (persistence_->hasAtomicWriter()) {
+        auto sources = parser_->parseAlbumSources(response->body);
+        if (sources.empty() || !persistence_->saveAlbumSources(sources, kWorkflowSearchRows)) return {};
+    }
     auto results = parser_->parse(std::move(response->body));
     std::vector<domain::Album> albums;
     for (const auto &result : results) {
@@ -143,7 +148,11 @@ std::vector<domain::Song> SearchCollectionWorkflow::collectAlbumSongs(const doma
 
     std::vector<char> body = std::move(response->body);
     auto song_sources = parser_->parseSongSources(body);
-    persistence_->saveSongSources(song_sources, kWorkflowSearchRows);
+    if (persistence_->hasAtomicWriter()) {
+        auto sources = parser_->parseAlbumSources(body);
+        if (!persistence_->saveAlbumDetails(sources, song_sources)) return {};
+    } else if (!song_sources.empty() && !persistence_->saveSongSources(song_sources, kWorkflowSearchRows))
+        return {};
 
     auto results = parser_->parse(body);
     std::vector<domain::Song> songs;

@@ -179,10 +179,26 @@ void buildSchemas(json &schemas)
              {"filter", ref("#/components/schemas/SingerFromDbFilter")},
              {"max_targets", {{"type", "integer"}, {"minimum", 1}, {"maximum", 1000}, {"default", 20}, {"description", "Maximum singers to claim from singer_source_refs."}}},
              {"maxTargets", {{"type", "integer"}, {"minimum", 1}, {"maximum", 1000}}},
-             {"limit_per_singer", {{"type", "integer"}, {"minimum", 1}, {"maximum", 500}, {"default", 20}, {"description", "Maximum songs or albums fetched for each singer."}}},
-             {"limitPerSinger", {{"type", "integer"}, {"minimum", 1}, {"maximum", 500}}},
+             {"limit_per_singer", {{"type", "integer"}, {"minimum", 0}, {"maximum", 500}, {"default", 0}, {"description", "Maximum songs or albums fetched for each singer. 0 means fetch all pages within workflow protection."}}},
+             {"limitPerSinger", {{"type", "integer"}, {"minimum", 0}, {"maximum", 500}}},
              {"include_stale_running", {{"type", "boolean"}, {"default", false}, {"description", "Whether to reclaim targets stuck in status 1 longer than stale_after_seconds."}}},
              {"stale_after_seconds", {{"type", "integer"}, {"minimum", 60}, {"maximum", 86400}, {"default", 3600}}},
+         }},
+    };
+    schemas["SingerProfileRefreshRequest"] = {
+        {"type", "object"},
+        {"description", "Refresh Migu singer/info declared song and album totals for singers in local singer_source_refs. This is the only default flow that requests singer/info for declared totals."},
+        {"properties",
+         {
+             {"source", {{"type", "string"}, {"enum", json::array({"migu"})}, {"default", "migu"}}},
+             {"source_ids", {{"type", "array"}, {"items", {{"type", "string"}}}, {"description", "Optional explicit Migu source_singer_id list. Omit it to refresh singers selected from local singer_source_refs."}}},
+             {"sourceIds", {{"type", "array"}, {"items", {{"type", "string"}}}}},
+             {"force", {{"type", "boolean"}, {"default", false}, {"description", "When false, only singers missing source_song_total or source_album_total are refreshed."}}},
+             {"run_all", {{"type", "boolean"}, {"default", false}, {"description", "When source_ids is omitted, true refreshes every matching local singer instead of applying max_targets."}}},
+             {"runAll", {{"type", "boolean"}, {"default", false}, {"description", "Alias of run_all."}}},
+             {"filter", ref("#/components/schemas/SingerFromDbFilter")},
+             {"max_targets", {{"type", "integer"}, {"minimum", 0}, {"maximum", 1000}, {"default", 50}, {"description", "Maximum local singers to refresh when source_ids is omitted. 0 means refresh all matching local singers."}}},
+             {"maxTargets", {{"type", "integer"}, {"minimum", 0}, {"maximum", 1000}, {"description", "Alias of max_targets."}}},
          }},
     };
     schemas["SingerFromDbPreviewItem"] = {
@@ -195,6 +211,12 @@ void buildSchemas(json &schemas)
              {"country", {{"type", "string"}, {"description", "Optional source_country filter value."}}},
              {"gender", {{"type", "integer"}, {"minimum", 0}, {"maximum", 3}}},
              {"sync_status", {{"type", "integer"}, {"minimum", 0}, {"maximum", 4}}},
+             {"sync_count", {{"type", "integer"}, {"minimum", 0}, {"description", "Effective synced item count for this preview type."}}},
+             {"source_song_total", {{"nullable", true}, {"type", "integer"}, {"minimum", 0}, {"description", "Migu-declared singer song total when known."}}},
+             {"source_album_total", {{"nullable", true}, {"type", "integer"}, {"minimum", 0}, {"description", "Migu-declared singer album total when known."}}},
+             {"source_total", {{"nullable", true}, {"type", "integer"}, {"minimum", 0}, {"description", "Migu-declared total for this preview type when known."}}},
+             {"remaining_count", {{"nullable", true}, {"type", "integer"}, {"minimum", 0}, {"description", "Remaining item count when source_total is known."}}},
+             {"completed", {{"type", "boolean"}, {"description", "True when sync_status is completed (2)."}}},
          }},
     };
     schemas["SingerFromDbPreviewResponse"] = {
@@ -480,18 +502,24 @@ void buildSchemas(json &schemas)
              {"source_name_pinyin", {{"type", "string"}}},
              {"country", {{"type", "string"}}},
              {"source_tag", {{"type", "string"}}},
-             {"source_metric", {{"type", "string"}}},
-             {"avatar_url", {{"type", "string"}}},
-             {"songs_sync_status", describedRef("#/components/schemas/SyncStatus", "Exposed singer-song sync status. It is derived from real song_artist_refs: when the singer has related songs and no sync error, pending or partial stored state is exposed as completed (2); running (1) remains running.")},
+             {"source_song_total", {{"nullable", true}, {"type", "integer"}, {"minimum", 0}, {"description", "Migu-declared singer song total from singer/info. Null means not refreshed yet and full completion cannot be confirmed."}}},
+             {"source_album_total", {{"nullable", true}, {"type", "integer"}, {"minimum", 0}, {"description", "Migu-declared singer album total from singer/info. Null means not refreshed yet and full completion cannot be confirmed."}}},
+             {"songs_sync_status", describedRef("#/components/schemas/SyncStatus", "Exposed singer-song sync status. It is derived from real song_artist_refs and Migu declared totals: when totals are known, count below source_song_total is partial (4), and count reaching source_song_total is completed (2). When source_song_total is null, full completion cannot be confirmed from relationship existence alone. Running (1) remains running.")},
              {"songs_synced_at", {{"nullable", true}, {"type", "integer"}, {"minimum", 0}, {"description", "Unix timestamp of the last singer-song sync or summary repair."}}},
              {"songs_count", {{"type", "integer"}, {"minimum", 0}, {"description", "Alias of songs_sync_count for frontend count displays."}}},
+             {"songs_total", {{"nullable", true}, {"type", "integer"}, {"minimum", 0}, {"description", "Alias of source_song_total for progress displays."}}},
+             {"songs_remaining_count", {{"nullable", true}, {"type", "integer"}, {"minimum", 0}, {"description", "Remaining song count when source_song_total is known."}}},
+             {"songs_completed", {{"type", "boolean"}, {"description", "True when the exposed singer-song sync status is completed."}}},
              {"songs_sync_count", {{"type", "integer"}, {"minimum", 0}, {"description", "Distinct related song count derived from song_artist_refs for this Migu source_singer_id."}}},
              {"songs_sync_error", {{"type", "string"}, {"description", "Last singer-song sync error. A non-empty error prevents real-content summary repair from exposing the status as completed."}}},
              {"songs_last_batch_id", {{"nullable", true}, {"type", "string"}}},
              {"songs_running_batch_id", {{"nullable", true}, {"type", "string"}}},
-             {"albums_sync_status", describedRef("#/components/schemas/SyncStatus", "Exposed singer-album sync status. It is derived from album_source_refs.source_artist_id: when the singer has related albums and no sync error, pending or partial stored state is exposed as completed (2); running (1) remains running.")},
+             {"albums_sync_status", describedRef("#/components/schemas/SyncStatus", "Exposed singer-album sync status. It is derived from album_source_refs.source_artist_id and Migu declared totals: when totals are known, count below source_album_total is partial (4), and count reaching source_album_total is completed (2). When source_album_total is null, full completion cannot be confirmed from relationship existence alone. Running (1) remains running.")},
              {"albums_synced_at", {{"nullable", true}, {"type", "integer"}, {"minimum", 0}, {"description", "Unix timestamp of the last singer-album sync or summary repair."}}},
              {"albums_count", {{"type", "integer"}, {"minimum", 0}, {"description", "Alias of albums_sync_count for frontend count displays."}}},
+             {"albums_total", {{"nullable", true}, {"type", "integer"}, {"minimum", 0}, {"description", "Alias of source_album_total for progress displays."}}},
+             {"albums_remaining_count", {{"nullable", true}, {"type", "integer"}, {"minimum", 0}, {"description", "Remaining album count when source_album_total is known."}}},
+             {"albums_completed", {{"type", "boolean"}, {"description", "True when the exposed singer-album sync status is completed."}}},
              {"albums_sync_count", {{"type", "integer"}, {"minimum", 0}, {"description", "Related album count derived from album_source_refs.source_artist_id for this Migu source_singer_id."}}},
              {"albums_sync_error", {{"type", "string"}, {"description", "Last singer-album sync error. A non-empty error prevents real-content summary repair from exposing the status as completed."}}},
              {"albums_last_batch_id", {{"nullable", true}, {"type", "string"}}},
@@ -520,7 +548,6 @@ void buildSchemas(json &schemas)
              {"source_title", {{"type", "string"}}},
              {"source_artist_id", {{"type", "string"}}},
              {"source_artist_name", {{"type", "string"}}},
-             {"cover_url", {{"type", "string"}}},
              {"total_count", {{"type", "string"}}},
              {"publish_date", {{"type", "string"}}},
              {"play_num", {{"type", "integer"}, {"minimum", 0}}},
@@ -534,7 +561,7 @@ void buildSchemas(json &schemas)
              {"songs_synced_at", {{"nullable", true}, {"type", "integer"}, {"minimum", 0}}},
              {"songs_count", {{"type", "integer"}, {"minimum", 0}, {"description", "Alias of album_songs_count for frontend count displays."}}},
              {"album_songs_count", {{"type", "integer"}, {"minimum", 0}, {"description", "Distinct related song count derived from album_song_refs for this source_album_id."}}},
-             {"songs_sync_count", {{"type", "integer"}, {"minimum", 0}}},
+             {"songs_sync_count", {{"type", "integer"}, {"minimum", 0}, {"description", "Successfully processed song entries in the most recent album-song collection attempt; independent of album_songs_count."}}},
              {"songs_sync_error", {{"type", "string"}}},
              {"songs_last_batch_id", {{"nullable", true}, {"type", "string"}}},
              {"songs_running_batch_id", {{"nullable", true}, {"type", "string"}}},
@@ -562,7 +589,6 @@ void buildSchemas(json &schemas)
              {"source_album_name", {{"type", "string"}}},
              {"primary_artist_id", {{"type", "string"}, {"description", "Primary display artist ID derived from song_artist_refs."}}},
              {"primary_artist_name", {{"type", "string"}, {"description", "Primary display artist name derived from song_artist_refs."}}},
-             {"cover_url", {{"type", "string"}}},
              {"lyric_url", {{"type", "string"}}},
              {"mrc_url", {{"type", "string"}}},
              {"trc_url", {{"type", "string"}}},
@@ -590,8 +616,9 @@ void buildSchemas(json &schemas)
              {"album", {{"type", "string"}}},
              {"resource_kind", {{"type", "string"}}},
              {"format_type", {{"type", "string"}}},
-             {"remote_url", {{"type", "string"}}},
              {"local_path", {{"type", "string"}}},
+             {"cloud_backend", {{"type", "string"}, {"description", "Cloud upload backend, for example baidupcs. Empty when cloud upload is disabled."}}},
+             {"cloud_path", {{"type", "string"}, {"description", "Stable cloud path after upload, for example /Media/migu/... Empty when cloud upload is disabled."}}},
              {"size_bytes", {{"type", "integer"}, {"minimum", 0}}},
              {"checksum", {{"type", "string"}}},
              {"status", {{"type", "integer"}, {"minimum", 0}, {"maximum", 4}}},
@@ -603,6 +630,7 @@ void buildSchemas(json &schemas)
              {"running_batch_id", {{"nullable", true}, {"type", "string"}}},
              {"last_processed_at", {{"nullable", true}, {"type", "integer"}, {"minimum", 0}}},
              {"fetched_at", {{"nullable", true}, {"type", "integer"}, {"minimum", 0}}},
+             {"cloud_uploaded_at", {{"nullable", true}, {"type", "integer"}, {"minimum", 0}}},
              {"created_at", {{"type", "integer"}, {"minimum", 0}}},
              {"updated_at", {{"type", "integer"}, {"minimum", 0}}},
          }},
@@ -629,28 +657,29 @@ void buildSchemas(json &schemas)
     };
     schemas["ResourceActionRequest"] = {
         {"type", "object"},
-        {"description", "Govern resource queue records only. It does not fetch, probe or download resource URLs."},
+        {"description", "Govern resource queue records or preview resource processing. action=process only previews downloadable resource records and does not fetch, probe or download resource URLs."},
         {"properties",
          {
              {"source", {{"type", "string"}, {"enum", json::array({"migu"})}, {"default", "migu"}}},
-             {"action", {{"type", "string"}, {"enum", json::array({"retry", "reset", "recover-stale"})}, {"description", "Required by /api/migu/resources/preview. Ignored by concrete retry/reset/recover endpoints."}}},
+             {"action", {{"type", "string"}, {"enum", json::array({"retry", "reset", "recover-stale", "process"})}, {"description", "Required by /api/migu/resources/preview. Ignored by concrete retry/reset/recover endpoints."}}},
              {"resource_ids", {{"type", "array"}, {"items", {{"type", "integer"}, {"minimum", 1}}}}},
              {"limit", {{"type", "integer"}, {"minimum", 1}, {"maximum", 1000}, {"default", 50}}},
              {"stale_after_seconds", {{"type", "integer"}, {"minimum", 1}, {"default", 3600}}},
-             {"filter", {{"type", "object"}, {"additionalProperties", true}, {"description", "Supports status/resource_status, q, kind and format."}}},
+             {"filter", {{"type", "object"}, {"additionalProperties", true}, {"description", "Supports resource_ids, status/resource_status, q, kind and format."}}},
          }},
     };
     schemas["ResourceProcessRequest"] = {
         {"type", "object"},
-        {"description", "Claims pending Migu resource records, fetches the resource URL when needed, downloads content, stores bytes and writes back status. By default it claims status 0/3 across all resource kinds; filter.kind/resource_kind can limit processing to audio, cover, lyric, mrc or trc. Use async=true for long-running batches. Audio resources use the runtime pacmtoken stored through POST /api/migu/pacmtoken/refresh and may auto-refresh it during processing; tokens are not written to batch tables or logs."},
+        {"description", "Claims pending Migu resource records, fetches the resource URL when needed, downloads content, optionally uploads the saved local file to cloud storage, and writes back status. By default it claims status 0/3 across all resource kinds; filter.kind/resource_kind can limit processing to audio, cover, lyric/lrc, mrc or trc. Use async=true for long-running batches. Audio resources use the runtime pacmtoken stored through POST /api/migu/pacmtoken/refresh and may auto-refresh it during processing; tokens are not written to batch tables or logs."},
         {"properties",
          {
              {"source", {{"type", "string"}, {"enum", json::array({"migu"})}, {"default", "migu"}}},
              {"limit", {{"type", "integer"}, {"minimum", 1}, {"maximum", 1000}, {"default", 20}}},
+             {"resource_ids", {{"type", "array"}, {"items", {{"type", "integer"}, {"minimum", 1}}}, {"description", "Explicit song_resources.id list. When present, it takes priority over filter and offset; only status 0 and 3 records are claimable."}}},
              {"offset", {{"type", "integer"}, {"minimum", 0}, {"default", 0}}},
              {"async", {{"type", "boolean"}, {"default", false}, {"description", "When true, returns 202 with batch_id and processes resources in the background."}}},
              {"batch_id", {{"type", "string"}, {"description", "Optional caller-provided batch id; generated when omitted."}}},
-             {"filter", {{"type", "object"}, {"additionalProperties", true}, {"description", "Supports status/resource_status/resourceStatus/statuses, kind/resource_kind/resourceKind, format/format_type/formatType and content_id/contentId/source_content_id/sourceContentId. Omitted status defaults to 0 and 3. Omitted kind does not filter resource kinds; valid kinds are audio, cover, lyric, mrc and trc."}}},
+             {"filter", {{"type", "object"}, {"additionalProperties", true}, {"description", "Supports resource_ids, status/resource_status/resourceStatus/statuses, kind/resource_kind/resourceKind, format/format_type/formatType and content_id/contentId/source_content_id/sourceContentId. Omitted status defaults to 0 and 3. Omitted kind does not filter resource kinds; valid kinds are audio, cover, lyric/lrc, mrc and trc. resource_ids takes priority over other filter fields."}}},
              {"options", ref("#/components/schemas/ResourceProcessOptions")},
          }},
     };
@@ -671,6 +700,8 @@ void buildSchemas(json &schemas)
              {"autoRefreshPacmtoken", {{"type", "boolean"}}},
              {"refresh_pacmtoken_on_440013", {{"type", "boolean"}, {"default", true}}},
              {"refreshPacmtokenOn440013", {{"type", "boolean"}}},
+             {"process_related_resources", {{"type", "boolean"}, {"default", true}, {"description", "When false, audio processing does not claim or store cover/lyric/mrc/trc URLs returned by the audio resource response."}}},
+             {"processRelatedResources", {{"type", "boolean"}}},
          }},
     };
     schemas["ResourceProcessAcceptedResponse"] = {
@@ -684,11 +715,12 @@ void buildSchemas(json &schemas)
              {"task_url", {{"type", "string"}}},
              {"items_url", {{"type", "string"}}},
              {"events_url", {{"type", "string"}}},
+             {"preview", ref("#/components/schemas/ResourcePreviewResponse")},
          }},
     };
     schemas["ResourceProcessItem"] = {
         {"type", "object"},
-        {"required", json::array({"resource_id", "resource_kind", "format_type", "ok", "skipped", "related", "synthetic", "local_path", "size_bytes", "checksum", "error_category", "result_code", "message"})},
+        {"required", json::array({"resource_id", "resource_kind", "format_type", "ok", "skipped", "related", "synthetic", "local_path", "cloud_backend", "cloud_path", "size_bytes", "checksum", "error_category", "result_code", "message"})},
         {"properties",
          {
              {"resource_id", {{"type", "integer"}, {"minimum", 0}}},
@@ -701,9 +733,11 @@ void buildSchemas(json &schemas)
              {"format_type", {{"type", "string"}}},
              {"ok", {{"type", "boolean"}}},
              {"skipped", {{"type", "boolean"}}},
-             {"related", {{"type", "boolean"}, {"description", "True when the item was discovered from an audio response lyric/mrc/trc URL."}}},
+             {"related", {{"type", "boolean"}, {"description", "True when the item was discovered from an audio response cover/lyric/mrc/trc URL."}}},
              {"synthetic", {{"type", "boolean"}, {"description", "True when no real resource row could be claimed, for example related_not_claimed."}}},
              {"local_path", {{"type", "string"}, {"description", "Storage path returned by the blob store after save. Empty when the item did not save content."}}},
+             {"cloud_backend", {{"type", "string"}, {"description", "Cloud upload backend, for example baidupcs. Empty when cloud upload is disabled."}}},
+             {"cloud_path", {{"type", "string"}, {"description", "Stable cloud path after upload, for example /Media/migu/... Empty when cloud upload is disabled."}}},
              {"size_bytes", {{"type", "integer"}, {"minimum", 0}}},
              {"checksum", {{"type", "string"}}},
              {"error_category", {{"type", "string"}, {"description", "Failure or skip category. Empty when ok is true."}}},
@@ -726,6 +760,7 @@ void buildSchemas(json &schemas)
              {"related_skipped_count", {{"type", "integer"}, {"minimum", 0}}},
              {"synthetic_related_skipped_count", {{"type", "integer"}, {"minimum", 0}}},
              {"items", {{"type", "array"}, {"items", ref("#/components/schemas/ResourceProcessItem")}}},
+             {"preview", ref("#/components/schemas/ResourcePreviewResponse")},
          }},
     };
     schemas["ResourceActionItem"] = {
@@ -774,10 +809,12 @@ void buildSchemas(json &schemas)
         {"properties",
          {
              {"source", {{"type", "string"}, {"enum", json::array({"migu"})}}},
-             {"action", {{"type", "string"}, {"enum", json::array({"retry", "reset", "recover-stale"})}}},
+             {"action", {{"type", "string"}, {"enum", json::array({"retry", "reset", "recover-stale", "process"})}}},
              {"matched_count", {{"type", "integer"}, {"minimum", 0}}},
              {"eligible_count", {{"type", "integer"}, {"minimum", 0}}},
              {"ineligible_count", {{"type", "integer"}, {"minimum", 0}}},
+             {"downloadable_count", {{"type", "integer"}, {"minimum", 0}, {"description", "Alias of eligible_count when action=process."}}},
+             {"skipped_count", {{"type", "integer"}, {"minimum", 0}, {"description", "Alias of ineligible_count when action=process."}}},
              {"missing_count", {{"type", "integer"}, {"minimum", 0}}},
              {"items", {{"type", "array"}, {"items", ref("#/components/schemas/ResourcePreviewItem")}}},
          }},
@@ -817,8 +854,11 @@ void buildSchemas(json &schemas)
              {"target_name", {{"type", "string"}}},
              {"owner_name", {{"type", "string"}}},
              {"source", {{"type", "string"}, {"enum", json::array({"migu"})}}},
-             {"sync_status", {{"nullable", true}, {"type", "integer"}, {"minimum", 0}, {"maximum", 4}, {"description", "Effective metadata sync status for this queue type. Singer-song and singer-album queues use the same real-relation derived status as SingerRecord, so real content with no sync error is completed (2) instead of pending (0)."}}},
+             {"sync_status", {{"nullable", true}, {"type", "integer"}, {"minimum", 0}, {"maximum", 4}, {"description", "Effective metadata sync status for this queue type. Singer-song and singer-album queues use the same real-relation derived status as SingerRecord; when Migu declared totals are known, incomplete real counts remain partial (4)."}}},
              {"sync_count", {{"type", "integer"}, {"minimum", 0}, {"description", "Effective synced item count for this queue type. Singer-song queues derive it from song_artist_refs; singer-album queues derive it from album_source_refs.source_artist_id."}}},
+             {"source_total", {{"nullable", true}, {"type", "integer"}, {"minimum", 0}, {"description", "Migu-declared total for this singer queue type when known."}}},
+             {"remaining_count", {{"nullable", true}, {"type", "integer"}, {"minimum", 0}, {"description", "Remaining item count when source_total is known."}}},
+             {"completed", {{"type", "boolean"}, {"description", "True when sync_status is completed (2)."}}},
              {"last_error", {{"type", "string"}}},
              {"last_batch_id", {{"nullable", true}, {"type", "string"}}},
              {"running_batch_id", {{"nullable", true}, {"type", "string"}}},
@@ -952,6 +992,10 @@ void buildSchemas(json &schemas)
              {"action", {{"type", "string"}}},
              {"target_type", {{"type", "string"}}},
              {"target_id", {{"type", "string"}}},
+             {"target_name", {{"nullable", true}, {"type", "string"}, {"description", "Display name of the governed target, such as song, singer, album or batch name."}}},
+             {"target_summary", {{"nullable", true}, {"type", "string"}, {"description", "Secondary display text, such as resource format, owner or batch state summary."}}},
+             {"target_source_id", {{"nullable", true}, {"type", "string"}, {"description", "Platform source id associated with the target when available."}}},
+             {"target_owner_name", {{"nullable", true}, {"type", "string"}, {"description", "Owner display name, such as primary singer or album artist."}}},
              {"batch_id", {{"nullable", true}, {"type", "string"}}},
              {"before_status", {{"nullable", true}, {"type", "string"}}},
              {"after_status", {{"nullable", true}, {"type", "string"}}},
@@ -1193,6 +1237,7 @@ std::string OpenApiDocumentFactory::miguDocumentJson()
     doc["paths"]["/api/migu/singer-albums/crawl"]["post"] = crawlPostPath("Crawl singer albums", "Crawl album list records for one or many Migu singer IDs.", "#/components/schemas/SingerIdsCrawlRequest");
     doc["paths"]["/api/migu/singer-albums/crawl-from-db"]["post"] = crawlPostPath("Crawl singer albums from database queue", "Claim singers from singer_source_refs by albums_sync_status and crawl albums. Optional country, gender and q filters are ignored when empty.", "#/components/schemas/SingerFromDbCrawlRequest");
     doc["paths"]["/api/migu/singer-albums/crawl-from-db/preview"]["post"] = singerFromDbPreviewPostPath("Preview singer albums crawl from database queue", "Returns matched count, eligible count and target samples before claiming singer_source_refs rows for album crawling.");
+    doc["paths"]["/api/migu/singers/profile/refresh-from-db"]["post"] = crawlPostPath("Refresh singer declared totals", "Fetch Migu singer/info for local singer_source_refs rows that miss source_song_total or source_album_total unless force is true, then recalibrate singer song and album sync status from real relationship counts. This is the only default flow that requests singer/info for declared totals. Omit source_ids to refresh from local singer_source_refs; max_targets=0 or run_all=true refreshes every matching local singer.", "#/components/schemas/SingerProfileRefreshRequest");
     doc["paths"]["/api/migu/album-details/crawl"]["post"] = crawlPostPath("Backfill album details", "Fetch pending album details from album_source_refs and save detail metadata. The same response also parses songItems when present.", "#/components/schemas/AlbumBackfillRequest");
     doc["paths"]["/api/migu/album-songs/crawl"]["post"] = crawlPostPath("Backfill album songs", "Fetch pending album songItems for album_source_refs rows whose details are already synced.", "#/components/schemas/AlbumBackfillRequest");
 
@@ -1313,17 +1358,18 @@ std::string OpenApiDocumentFactory::miguDocumentJson()
         {"requestBody", requestBody(ref("#/components/schemas/StaleRecoveryRequest"), false)},
         {"responses", {{"200", {{"description", "Recovery result"}, {"content", jsonContent(ref("#/components/schemas/StaleRecoveryResponse"))}}}, {"400", errorResponse("Invalid stale recovery request")}}},
     };
-    doc["paths"]["/api/migu/singers"]["get"] = catalogGetPath("List Migu singers", "Supports q, gender, country, songs_sync_status and albums_sync_status filters. Song and album summary counts are derived from real relationships: song_artist_refs for songs and album_source_refs.source_artist_id for albums. Status filters use the same exposed status, so singers with real content and no sync error are treated as completed (2) instead of pending (0), while running (1) remains running.", {}, "#/components/schemas/SingerRecordPage", json::array({
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          queryParameter("gender", {{"type", "integer"}, {"minimum", 0}, {"maximum", 3}}, "Optional singer gender filter."),
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          queryParameter("country", {{"type", "string"}, {"maxLength", 128}}, "Optional source country/region filter."),
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          queryParameter("songs_sync_status", statusFilterSchema("Comma-separated exposed singer-song sync statuses. Real song_artist_refs with no sync error are exposed as completed (2).")),
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          queryParameter("albums_sync_status", statusFilterSchema("Comma-separated exposed singer-album sync statuses. Real album_source_refs.source_artist_id relations with no sync error are exposed as completed (2).")),
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          queryParameter("min_songs_count", {{"type", "integer"}, {"minimum", 0}}, "Minimum related song count."),
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          queryParameter("max_songs_count", {{"type", "integer"}, {"minimum", 0}}, "Maximum related song count."),
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          queryParameter("min_albums_count", {{"type", "integer"}, {"minimum", 0}}, "Minimum related album count."),
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          queryParameter("max_albums_count", {{"type", "integer"}, {"minimum", 0}}, "Maximum related album count."),
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      }));
-    doc["paths"]["/api/migu/singers/{source_singer_id}"]["get"] = catalogDetailPath("Get Migu singer", "Returns one singer by Migu source_singer_id with real relationship summary counts from song_artist_refs and album_source_refs.source_artist_id. When real content exists and no sync error is stored, the exposed sync status is completed (2) instead of pending (0), except running (1) remains running.", "source_singer_id", "#/components/schemas/SingerRecord");
+    doc["paths"]["/api/migu/singers"]["get"] = catalogGetPath("List Migu singers", "Supports q, source_singer_id, gender, country, songs_sync_status and albums_sync_status filters. q keeps fuzzy singer name/source_singer_id matching, but exact source_singer_id matches are ranked first. source_singer_id applies an exact ID filter. Status filters use the same exposed status returned by SingerRecord. Song and album summary counts are derived from real relationships, while source_song_total/source_album_total come from the explicit singer profile refresh flow. When declared totals are known, incomplete real counts remain partial (4); when totals are null, full completion cannot be confirmed from relationship existence alone.", {}, "#/components/schemas/SingerRecordPage", json::array({
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              queryParameter("gender", {{"type", "integer"}, {"minimum", 0}, {"maximum", 3}}, "Optional singer gender filter."),
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              queryParameter("country", {{"type", "string"}, {"maxLength", 128}}, "Optional source country/region filter."),
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              queryParameter("source_singer_id", {{"type", "string"}, {"maxLength", 64}}, "Exact Migu source_singer_id filter."),
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              queryParameter("songs_sync_status", statusFilterSchema("Comma-separated exposed singer-song sync statuses. Known source_song_total keeps incomplete real song_artist_refs as partial (4).")),
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              queryParameter("albums_sync_status", statusFilterSchema("Comma-separated exposed singer-album sync statuses. Known source_album_total keeps incomplete album_source_refs.source_artist_id relations as partial (4).")),
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              queryParameter("min_songs_count", {{"type", "integer"}, {"minimum", 0}}, "Minimum related song count."),
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              queryParameter("max_songs_count", {{"type", "integer"}, {"minimum", 0}}, "Maximum related song count."),
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              queryParameter("min_albums_count", {{"type", "integer"}, {"minimum", 0}}, "Minimum related album count."),
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              queryParameter("max_albums_count", {{"type", "integer"}, {"minimum", 0}}, "Maximum related album count."),
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          }));
+    doc["paths"]["/api/migu/singers/{source_singer_id}"]["get"] = catalogDetailPath("Get Migu singer", "Returns one singer by Migu source_singer_id with real relationship summary counts, Migu declared totals, remaining counts and completion booleans.", "source_singer_id", "#/components/schemas/SingerRecord");
     doc["paths"]["/api/migu/singers/{source_singer_id}/songs"]["get"] = catalogGetPath("List Migu singer songs", "Returns songs associated with one Migu singer ID.", "source_singer_id", "#/components/schemas/SongRecordPage", json::array({
                                                                                                                                                                                                                                      queryParameter("artist", {{"type", "string"}, {"maxLength", 128}}, "Optional artist name or source singer ID filter."),
                                                                                                                                                                                                                                      queryParameter("album", {{"type", "string"}, {"maxLength", 128}}, "Optional album title or source album ID filter."),
@@ -1380,8 +1426,8 @@ std::string OpenApiDocumentFactory::miguDocumentJson()
     };
     doc["paths"]["/api/migu/resources/preview"]["post"] = {
         {"tags", json::array({"migu"})},
-        {"summary", "Preview Migu resource queue governance"},
-        {"description", "Returns matched, eligible, ineligible and missing resource counts before retry/reset/recover-stale. This endpoint does not write database rows."},
+        {"summary", "Preview Migu resource queue action"},
+        {"description", "Returns matched, eligible, ineligible and missing resource counts before retry/reset/recover-stale or process. action=process reports downloadable_count and skipped_count aliases for the selected download range. This endpoint does not write database rows or download resources."},
         {"requestBody", requestBody(ref("#/components/schemas/ResourceActionRequest"))},
         {"responses", {{"200", {{"description", "Resource governance preview"}, {"content", jsonContent(ref("#/components/schemas/ResourcePreviewResponse"))}}}, {"400", errorResponse("Invalid resource preview request")}}},
     };
@@ -1391,7 +1437,7 @@ std::string OpenApiDocumentFactory::miguDocumentJson()
     doc["paths"]["/api/migu/resources/process"]["post"] = {
         {"tags", json::array({"migu"})},
         {"summary", "Process Migu resource queue"},
-        {"description", "Claims pending resource records, obtains temporary Migu resource URLs, downloads content, saves bytes and writes results back to MySQL. Omitted kind processes all resource kinds; use filter.kind to select audio, cover, lyric, mrc or trc. Known digital albums are skipped without requesting resource URLs; when an audio response returns 440016, all audio formats for that song are marked skipped while cover/lyric/mrc/trc remain eligible. Set async=true for long-running background processing; item and event rows are written in real time."},
+        {"description", "Claims pending resource records, obtains temporary Migu resource URLs, downloads content, saves bytes, optionally uploads saved local files to cloud storage, and writes results back to MySQL. Omitted kind processes all resource kinds; use filter.kind to select audio, cover, lyric/lrc, mrc or trc. Known digital albums are skipped without requesting resource URLs; when an audio response returns 440016, all audio formats for that song are marked skipped while cover/lyric/mrc/trc remain eligible. Set async=true for long-running background processing; item and event rows are written in real time."},
         {"requestBody", requestBody(ref("#/components/schemas/ResourceProcessRequest"))},
         {"responses", {{"200", {{"description", "Resource processing result"}, {"content", jsonContent(ref("#/components/schemas/ResourceProcessResponse"))}}}, {"202", {{"description", "Resource processing accepted"}, {"content", jsonContent(ref("#/components/schemas/ResourceProcessAcceptedResponse"))}}}, {"400", errorResponse("Invalid resource process request")}, {"503", errorResponse("Resource workflow is not configured")}}},
     };
@@ -1402,7 +1448,7 @@ std::string OpenApiDocumentFactory::miguDocumentJson()
         {"responses", {{"200", {{"description", "Dictionary values"}, {"content", jsonContent(ref("#/components/schemas/DictionaryResponse"))}}}}},
     };
     const json backfill_singer_params = json::array({
-        queryParameter("status", statusFilterSchema("Comma-separated effective metadata sync statuses. Defaults to 0,3,4. Singer queues derive completed status from real song_artist_refs or album_source_refs.source_artist_id when content exists and no sync error is stored.")),
+        queryParameter("status", statusFilterSchema("Comma-separated effective metadata sync statuses. Defaults to 0,3,4. Singer queues use declared totals when known, so incomplete real counts remain partial (4).")),
         queryParameter("sync_status", statusFilterSchema("Alias of status with the same effective real-relation status semantics.")),
         queryParameter("country", {{"type", "string"}, {"maxLength", 128}}, "Optional source country/region filter."),
         queryParameter("gender", {{"type", "integer"}, {"minimum", 0}, {"maximum", 3}}, "Optional singer gender filter."),
@@ -1421,8 +1467,8 @@ std::string OpenApiDocumentFactory::miguDocumentJson()
         queryParameter("min_album_songs_count", {{"type", "integer"}, {"minimum", 0}}, "Alias of min_songs_count for album queues."),
         queryParameter("max_album_songs_count", {{"type", "integer"}, {"minimum", 0}}, "Alias of max_songs_count for album queues."),
     });
-    doc["paths"]["/api/migu/backfill/singer-songs/queue"]["get"] = catalogGetPath("List singer songs backfill queue", "Default status filter is 0,3,4, but singer-song targets use the same real song_artist_refs summary as /api/migu/singers. Singers that already have related songs and no sync error are exposed as completed (2), report a real sync_count, and are not returned by the default missing-song queue.", {}, "#/components/schemas/BackfillQueueTargetPage", backfill_singer_params);
-    doc["paths"]["/api/migu/backfill/singer-albums/queue"]["get"] = catalogGetPath("List singer albums backfill queue", "Default status filter is 0,3,4, but singer-album targets use the same real album_source_refs.source_artist_id summary as /api/migu/singers. Singers that already have related albums and no sync error are exposed as completed (2), report a real sync_count, and are not returned by the default missing-album queue.", {}, "#/components/schemas/BackfillQueueTargetPage", backfill_singer_params);
+    doc["paths"]["/api/migu/backfill/singer-songs/queue"]["get"] = catalogGetPath("List singer songs backfill queue", "Default status filter is 0,3,4, but singer-song targets use the same real song_artist_refs summary and Migu declared totals as /api/migu/singers. When source_song_total is known, incomplete real counts remain partial (4); completed targets are not returned by the default missing-song queue. When source_song_total is null, refresh singer profiles first to confirm completion.", {}, "#/components/schemas/BackfillQueueTargetPage", backfill_singer_params);
+    doc["paths"]["/api/migu/backfill/singer-albums/queue"]["get"] = catalogGetPath("List singer albums backfill queue", "Default status filter is 0,3,4, but singer-album targets use the same real album_source_refs.source_artist_id summary and Migu declared totals as /api/migu/singers. When source_album_total is known, incomplete real counts remain partial (4); completed targets are not returned by the default missing-album queue. When source_album_total is null, refresh singer profiles first to confirm completion.", {}, "#/components/schemas/BackfillQueueTargetPage", backfill_singer_params);
     doc["paths"]["/api/migu/backfill/album-details/queue"]["get"] = catalogGetPath("List album details backfill queue", "Default status filter is 0,3,4.", {}, "#/components/schemas/BackfillQueueTargetPage", backfill_album_params);
     doc["paths"]["/api/migu/backfill/album-songs/queue"]["get"] = catalogGetPath("List album songs backfill queue", "Default status filter is 0,3,4 and details must be completed.", {}, "#/components/schemas/BackfillQueueTargetPage", backfill_album_params);
     doc["paths"]["/api/migu/backfill/{type}/preview"]["post"] = {

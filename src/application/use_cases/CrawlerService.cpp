@@ -9,7 +9,9 @@
 #include <cstdint>
 #include <ctime>
 #include <exception>
+#include <limits>
 #include <mutex>
+#include <optional>
 #include <sstream>
 #include <set>
 #include <string_view>
@@ -66,7 +68,12 @@ int normalizeSingerIdsLimit(int limit)
 // 判断是否是手动歌手歌曲/专辑批次。
 bool isSingerIdsTaskType(std::string_view task_type)
 {
-    return task_type == "singerSongs" || task_type == "singerAlbums";
+    return task_type == "singerSongs"
+           || task_type == "singerAlbums"
+           || task_type == "singerSongsFromDb"
+           || task_type == "singerAlbumsFromDb"
+           || task_type == "singerSongsRetry"
+           || task_type == "singerAlbumsRetry";
 }
 
 // 按批次类型归一化每目标 limit，避免特殊入口被通用规则改成 20。
@@ -139,6 +146,9 @@ application::model::SongResourceProcessOptions effectiveResourceProcessOptions(c
     }
     if (overrides.refresh_pacmtoken_on_440013) {
         options.refresh_pacmtoken_on_440013 = *overrides.refresh_pacmtoken_on_440013;
+    }
+    if (overrides.process_related_resources) {
+        options.process_related_resources = *overrides.process_related_resources;
     }
     return normalizeResourceProcessOptions(options);
 }
@@ -318,6 +328,20 @@ std::string resourceProcessRequestJson(const application::model::SongResourceCla
     append_string("kind", query.resource_kind);
     append_string("format", query.format_type);
     append_string("content_id", query.source_content_id);
+    if (!query.resource_ids.empty()) {
+        if (!first) {
+            out << ',';
+        }
+        first = false;
+        out << "\"resource_ids\":[";
+        for (std::size_t index = 0; index < query.resource_ids.size(); ++index) {
+            if (index > 0) {
+                out << ',';
+            }
+            out << query.resource_ids[index];
+        }
+        out << ']';
+    }
     if (!query.statuses.empty()) {
         if (!first) {
             out << ',';
@@ -339,6 +363,7 @@ std::string resourceProcessRequestJson(const application::model::SongResourceCla
         << ",\"pacmtoken_refresh_interval_seconds\":" << query.options.pacmtoken_refresh_interval_seconds
         << ",\"auto_refresh_pacmtoken\":" << (query.options.auto_refresh_pacmtoken ? "true" : "false")
         << ",\"refresh_pacmtoken_on_440013\":" << (query.options.refresh_pacmtoken_on_440013 ? "true" : "false")
+        << ",\"process_related_resources\":" << (query.options.process_related_resources ? "true" : "false")
         << "}}";
     return out.str();
 }
@@ -357,6 +382,8 @@ std::string resourceProcessItemPayload(const application::model::SongResourcePro
         << ",\"synthetic\":" << (item.synthetic ? "true" : "false")
         << ",\"skipped\":" << (item.skipped ? "true" : "false")
         << ",\"local_path\":\"" << escapeJsonString(item.local_path) << '"'
+        << ",\"cloud_backend\":\"" << escapeJsonString(item.cloud_backend) << '"'
+        << ",\"cloud_path\":\"" << escapeJsonString(item.cloud_path) << '"'
         << ",\"size_bytes\":" << item.size_bytes
         << ",\"checksum\":\"" << escapeJsonString(item.checksum) << '"'
         << ",\"result_code\":\"" << escapeJsonString(item.result_code) << "\"}";
@@ -877,13 +904,66 @@ application::async::Task<void> runAsyncResourceProcessTask(
     });
 }
 
-// 根据采集结果计算同步状态。
-int syncStatusFromResult(const application::model::SingerCollectionResult &result)
+// 平台总数已知时，把受 limit 截断的成功结果暴露为部分完成。
+void applySingerDeclaredTotalCompletion(application::model::SingerCollectionResult &result, std::optional<int> declared_total, std::string_view item_name)
+{
+    if (!result.success || !declared_total || *declared_total <= result.written_count) {
+        return;
+    }
+
+    result.success = false;
+    result.partial = result.written_count > 0;
+    result.error = std::string(item_name) + " incomplete: fetched " + std::to_string(result.written_count) + " of " + std::to_string(*declared_total);
+}
+
+// 判断当前错误是否只是声明总数不足导致的可重算状态。
+bool isDeclaredTotalIncompleteError(const std::string &error)
+{
+    return error.find(" incomplete: fetched ") != std::string::npos;
+}
+
+// 用数据库真实关系数量重算歌手歌曲/专辑完成度，避免按本轮写入数量误判。
+void applyRealSingerCountCompletion(application::model::SingerCollectionResult &result, const application::model::MiguSingerCatalogRecord &singer, bool songs_type)
+{
+    const auto declared_total = songs_type ? singer.source_song_total : singer.source_album_total;
+    const int real_count = songs_type ? singer.songs_sync_count : singer.albums_sync_count;
+    const std::string_view item_name = songs_type ? "singer songs" : "singer albums";
+    result.source_song_total = singer.source_song_total;
+    result.source_album_total = singer.source_album_total;
+    result.written_count = real_count;
+
+    const bool can_recalculate = result.success || (result.partial && isDeclaredTotalIncompleteError(result.error));
+    if (!can_recalculate) {
+        return;
+    }
+    if (!declared_total) {
+        result.success = true;
+        result.partial = false;
+        result.error.clear();
+        return;
+    }
+    if (real_count >= *declared_total) {
+        result.success = true;
+        result.partial = false;
+        result.error.clear();
+        return;
+    }
+
+    result.success = false;
+    result.partial = real_count > 0;
+    result.error = std::string(item_name) + " incomplete: fetched " + std::to_string(real_count) + " of " + std::to_string(*declared_total);
+}
+
+// 根据采集结果和已知平台总数计算同步状态；总数未知时不把成功采集推断为全量完成。
+int syncStatusFromResult(const application::model::SingerCollectionResult &result, std::optional<int> declared_total)
 {
     if (result.partial) {
         return 4;
     }
-    return result.success ? 2 : 3;
+    if (!result.success) {
+        return 3;
+    }
+    return declared_total ? 2 : 4;
 }
 
 // 根据采集结果转换批次目标状态；部分完成作为失败 item 暴露给前端治理。
@@ -945,13 +1025,11 @@ application::model::AlbumSourceMetadata albumSourceFromRecord(const application:
 {
     application::model::AlbumSourceMetadata album;
     album.source = record.source;
-    album.source_item_key = record.source_item_key;
     album.source_album_id = record.source_album_id;
     album.source_resource_type = record.source_resource_type;
     album.source_res_type = record.source_res_type;
     album.source_album_kind = record.source_album_kind;
-    album.source_title = record.source_title;
-    album.title = record.source_title.empty() ? record.title : record.source_title;
+    album.title = record.title;
     album.normalized_title = record.normalized_title;
     album.source_artist_id = record.source_artist_id;
     album.source_artist_name = record.source_artist_name;
@@ -1049,6 +1127,131 @@ application::model::MiguGovernanceEventRecord governanceEvent(std::string action
     return event;
 }
 
+// 连接非空展示片段，保持前端次级说明紧凑可读。
+std::string joinDisplayParts(const std::vector<std::string> &parts, std::string_view separator = " · ")
+{
+    std::ostringstream out;
+    bool first = true;
+    for (const auto &part : parts) {
+        if (part.empty()) {
+            continue;
+        }
+        if (!first) {
+            out << separator;
+        }
+        first = false;
+        out << part;
+    }
+    return out.str();
+}
+
+// 将资源类型转换为控制台展示名。
+std::string resourceKindDisplayName(const std::string &kind)
+{
+    if (kind == "audio") {
+        return "音频";
+    }
+    if (kind == "cover") {
+        return "封面";
+    }
+    if (kind == "lyric" || kind == "lrc") {
+        return "歌词";
+    }
+    if (kind == "mrc") {
+        return "MRC";
+    }
+    if (kind == "trc") {
+        return "TRC";
+    }
+    return kind;
+}
+
+// 将批次类型转换为治理审计展示名。
+std::string batchTaskDisplayName(const std::string &task_type)
+{
+    if (task_type == "resourceProcess") {
+        return "资源下载批次";
+    }
+    if (task_type == "singerSongs" || task_type == "singerSongsFromDb" || task_type == "singerSongsRetry") {
+        return "歌手歌曲批次";
+    }
+    if (task_type == "singerAlbums" || task_type == "singerAlbumsFromDb" || task_type == "singerAlbumsRetry") {
+        return "歌手专辑批次";
+    }
+    if (task_type == "albumDetails" || task_type == "albumDetail") {
+        return "专辑详情批次";
+    }
+    if (task_type == "albumSongs") {
+        return "专辑歌曲批次";
+    }
+    if (task_type == "singerProfileRefresh") {
+        return "歌手资料批次";
+    }
+    return task_type.empty() ? "批次" : task_type;
+}
+
+// 将补池类型转换为治理审计展示摘要。
+std::string backfillTypeDisplayName(const std::string &backfill_type)
+{
+    if (backfill_type == "singer-songs") {
+        return "歌手歌曲补池";
+    }
+    if (backfill_type == "singer-albums") {
+        return "歌手专辑补池";
+    }
+    if (backfill_type == "album-details") {
+        return "专辑详情补池";
+    }
+    if (backfill_type == "album-songs") {
+        return "专辑歌曲补池";
+    }
+    return backfill_type;
+}
+
+// 为资源治理事件补充可展示目标快照。
+void applyResourceSnapshot(application::model::MiguGovernanceEventRecord &event, const application::model::MiguResourceQueueRecord &resource)
+{
+    event.target_name = resource.title;
+    event.target_summary = joinDisplayParts({resourceKindDisplayName(resource.resource_kind), resource.format_type, resource.artist});
+    event.target_source_id = resource.source_content_id.empty() ? resource.source_song_id : resource.source_content_id;
+    event.target_owner_name = resource.artist;
+}
+
+// 为批次治理事件补充可展示目标快照。
+void applyBatchSnapshot(application::model::MiguGovernanceEventRecord &event, const application::model::CrawlBatchRecord &batch)
+{
+    const auto display_name = batchTaskDisplayName(batch.task_type);
+    event.target_name = batch.display_name.empty() ? display_name : batch.display_name;
+    event.target_summary = batch.target_summary.empty() ? joinDisplayParts({display_name, batch.state, batch.target_count > 0 ? std::to_string(batch.target_count) + " 条" : std::string {}}) : batch.target_summary;
+}
+
+// 构造资源 retry/reset 审计事件，成功时去掉与 action 重复的 reason。
+application::model::MiguGovernanceEventRecord resourceGovernanceEvent(std::string action, const application::model::MiguResourceActionItem &item, const std::optional<application::model::MiguResourceQueueRecord> &resource, std::string success_reason)
+{
+    const bool success = item.reason == success_reason;
+    auto event = governanceEvent(std::move(action), "resource", std::to_string(item.resource_id), "", std::to_string(item.status), success ? "0" : std::to_string(item.status), success ? "ok" : "failed", success ? "" : "invalid_target", success ? "" : item.reason);
+    if (resource) {
+        applyResourceSnapshot(event, *resource);
+    } else {
+        event.target_name = item.name;
+        event.target_source_id = item.source_id;
+    }
+    return event;
+}
+
+// 构造补池目标治理事件。
+application::model::MiguGovernanceEventRecord backfillGovernanceEvent(const std::string &backfill_type, const application::model::MiguBackfillActionItem &item, const std::string &batch_id)
+{
+    const bool success = item.reason == "claimed" && !batch_id.empty();
+    const std::string reason = success ? "" : (item.reason == "claimed" ? "batch_not_started" : item.reason);
+    const std::string target_type = (backfill_type == "singer-songs" || backfill_type == "singer-albums") ? "singer" : "album";
+    auto event = governanceEvent("backfill." + backfill_type + ".retry", target_type, item.source_id, batch_id, std::to_string(item.status), success ? "1" : std::to_string(item.status), success ? "ok" : "failed", success ? "" : "invalid_target", reason);
+    event.target_name = item.name;
+    event.target_summary = backfillTypeDisplayName(backfill_type);
+    event.target_source_id = item.source_id;
+    return event;
+}
+
 } // namespace
 
 CrawlerService::CrawlerService(CrawlerServiceDependencies dependencies) : runtime_settings_(std::move(dependencies.options.runtime_settings)),
@@ -1088,10 +1291,15 @@ CrawlerService::CrawlerService(CrawlerServiceDependencies dependencies) : runtim
     auto song_resource_parser = dependencies.parsers.song_resource_parser;
     auto song_resource_content_fetcher = dependencies.providers.song_resource_content_fetcher;
     auto song_resource_blob_store = dependencies.persistence.song_resource_blob_store;
+    auto song_resource_cloud_uploader = dependencies.persistence.song_resource_cloud_uploader;
+    auto song_resource_batch_cloud_uploader = dependencies.persistence.song_resource_batch_cloud_uploader;
     auto async_song_resource_queue = dependencies.persistence.async_song_resource_queue;
     auto async_song_resource_provider = dependencies.providers.async_song_resource_provider;
     auto async_song_resource_content_fetcher = dependencies.providers.async_song_resource_content_fetcher;
     auto async_song_resource_blob_store = dependencies.persistence.async_song_resource_blob_store;
+    auto async_song_resource_cloud_uploader = dependencies.persistence.async_song_resource_cloud_uploader;
+    auto async_song_resource_batch_cloud_uploader = dependencies.persistence.async_song_resource_batch_cloud_uploader;
+    auto async_song_resource_remote_copier = dependencies.persistence.async_song_resource_remote_copier;
     auto migu_pacmtoken_refresher = dependencies.providers.migu_pacmtoken_refresher;
     auto migu_pacmtoken_store = dependencies.providers.migu_pacmtoken_store;
     async_runtime_ = dependencies.executors.async_runtime;
@@ -1104,7 +1312,8 @@ CrawlerService::CrawlerService(CrawlerServiceDependencies dependencies) : runtim
         std::move(dependencies.persistence.song_source_repository),
         std::move(dependencies.persistence.singer_source_repository),
         std::move(dependencies.persistence.album_source_writer),
-        std::move(dependencies.executors.persistence_executor)
+        std::move(dependencies.executors.persistence_executor),
+        MetadataIngestionDependencies {dependencies.persistence.metadata_batch_writer, dependencies.persistence.metadata_cover_store, dependencies.diagnostics}
     );
 
     workflow_ = std::make_shared<MusicCollectionWorkflow>(
@@ -1117,6 +1326,7 @@ CrawlerService::CrawlerService(CrawlerServiceDependencies dependencies) : runtim
         std::move(dependencies.parsers.song_source_parser),
         std::move(dependencies.parsers.singer_source_parser),
         std::move(dependencies.parsers.album_source_parser),
+        std::move(dependencies.parsers.singer_profile_parser),
         std::move(dependencies.parsers.page_inspector),
         std::move(dependencies.persistence.album_source_sync_queue),
         persistence_,
@@ -1135,7 +1345,8 @@ CrawlerService::CrawlerService(CrawlerServiceDependencies dependencies) : runtim
             SongResourcePathPlanner {},
             std::move(dependencies.executors.resource_executor),
             migu_pacmtoken_refresher,
-            migu_pacmtoken_store
+            migu_pacmtoken_store,
+            song_resource_cloud_uploader
         );
     }
 
@@ -1152,6 +1363,12 @@ CrawlerService::CrawlerService(CrawlerServiceDependencies dependencies) : runtim
         if (!async_song_resource_blob_store && song_resource_blob_store) {
             async_song_resource_blob_store = std::make_shared<BlockingAsyncSongResourceBlobStore>(song_resource_blob_store, async_runtime_);
         }
+        if (!async_song_resource_cloud_uploader && song_resource_cloud_uploader) {
+            async_song_resource_cloud_uploader = std::make_shared<BlockingAsyncSongResourceCloudUploader>(song_resource_cloud_uploader, async_runtime_);
+        }
+        if (!async_song_resource_batch_cloud_uploader && song_resource_batch_cloud_uploader) {
+            async_song_resource_batch_cloud_uploader = std::make_shared<BlockingAsyncSongResourceBatchCloudUploader>(song_resource_batch_cloud_uploader, async_runtime_);
+        }
         if (async_song_resource_queue && async_song_resource_provider && song_resource_parser && async_song_resource_content_fetcher && async_song_resource_blob_store) {
             async_song_resource_workflow_ = std::make_shared<AsyncSongResourceDownloadWorkflow>(
                 async_runtime_,
@@ -1162,7 +1379,10 @@ CrawlerService::CrawlerService(CrawlerServiceDependencies dependencies) : runtim
                 async_song_resource_blob_store,
                 SongResourcePathPlanner {},
                 migu_pacmtoken_refresher,
-                migu_pacmtoken_store
+                migu_pacmtoken_store,
+                async_song_resource_remote_copier,
+                async_song_resource_cloud_uploader,
+                async_song_resource_batch_cloud_uploader
             );
         }
     }
@@ -1202,11 +1422,11 @@ bool CrawlerService::searchAndSave(std::string keyword, int limit)
     case CrawlTargetKind::Url:
         return workflow_->processUrl(target.text, normalized_limit);
     case CrawlTargetKind::SingerSongs:
-        return workflow_->crawlSingerSongsAndSave(target.singer_id, normalized_limit, maxPageConcurrency());
+        return crawlSingerSongsAndSave(target.singer_id, normalized_limit);
     case CrawlTargetKind::SingerIndex:
         return workflow_->crawlSingerIndexAndSave(target.text, normalized_limit);
     case CrawlTargetKind::SingerAlbums:
-        return workflow_->crawlSingerAlbumsAndSave(target.singer_id, normalized_limit, maxPageConcurrency());
+        return crawlSingerAlbumsAndSave(target.singer_id, normalized_limit);
     case CrawlTargetKind::AlbumDetails:
         return workflow_->crawlPendingAlbumDetailsAndSave(target.text, normalized_limit, maxPageConcurrency());
     case CrawlTargetKind::AlbumSongs:
@@ -1219,7 +1439,8 @@ bool CrawlerService::searchAndSave(std::string keyword, int limit)
 
 bool CrawlerService::crawlSingerSongsAndSave(std::uint64_t singer_id, int limit)
 {
-    return workflow_ ? workflow_->crawlSingerSongsAndSave(singer_id, limit, maxPageConcurrency()) : false;
+    const auto result = crawlSingerSongsWithStoredTotals(singer_id, limit);
+    return result.written_count > 0 && (result.success || result.partial);
 }
 
 bool CrawlerService::crawlSingerIndexAndSave(std::string tab, int limit)
@@ -1229,7 +1450,8 @@ bool CrawlerService::crawlSingerIndexAndSave(std::string tab, int limit)
 
 bool CrawlerService::crawlSingerAlbumsAndSave(std::uint64_t singer_id, int limit)
 {
-    return workflow_ ? workflow_->crawlSingerAlbumsAndSave(singer_id, limit, maxPageConcurrency()) : false;
+    const auto result = crawlSingerAlbumsWithStoredTotals(singer_id, limit);
+    return result.written_count > 0 && (result.success || result.partial);
 }
 
 bool CrawlerService::crawlPendingAlbumDetailsAndSave(std::string source, int limit)
@@ -1264,6 +1486,56 @@ bool CrawlerService::searchAndSaveWithRetry(std::string keyword, int limit)
         }
     }
     return false;
+}
+
+application::model::SingerCollectionResult CrawlerService::crawlSingerSongsWithStoredTotals(std::uint64_t singer_id, int limit)
+{
+    if (!workflow_ || singer_id == 0) {
+        return {false, false, 0, "singer song workflow is not configured"};
+    }
+
+    std::optional<int> source_song_total;
+    std::optional<int> source_album_total;
+    const std::string source_singer_id = std::to_string(singer_id);
+    if (catalog_query_service_) {
+        if (auto singer = catalog_query_service_->findSinger(source_singer_id)) {
+            source_song_total = singer->source_song_total;
+            source_album_total = singer->source_album_total;
+        }
+    }
+
+    auto result = workflow_->crawlSingerSongsAndSaveResult(singer_id, limit, maxPageConcurrency(), source_song_total, source_album_total);
+    if (catalog_query_service_) {
+        if (auto singer = catalog_query_service_->findSinger(source_singer_id)) {
+            applyRealSingerCountCompletion(result, *singer, true);
+        }
+    }
+    return result;
+}
+
+application::model::SingerCollectionResult CrawlerService::crawlSingerAlbumsWithStoredTotals(std::uint64_t singer_id, int limit)
+{
+    if (!workflow_ || singer_id == 0) {
+        return {false, false, 0, "singer album workflow is not configured"};
+    }
+
+    std::optional<int> source_song_total;
+    std::optional<int> source_album_total;
+    const std::string source_singer_id = std::to_string(singer_id);
+    if (catalog_query_service_) {
+        if (auto singer = catalog_query_service_->findSinger(source_singer_id)) {
+            source_song_total = singer->source_song_total;
+            source_album_total = singer->source_album_total;
+        }
+    }
+
+    auto result = workflow_->crawlSingerAlbumsAndSaveResult(singer_id, limit, maxPageConcurrency(), source_song_total, source_album_total);
+    if (catalog_query_service_) {
+        if (auto singer = catalog_query_service_->findSinger(source_singer_id)) {
+            applyRealSingerCountCompletion(result, *singer, false);
+        }
+    }
+    return result;
 }
 
 bool CrawlerService::processUrlSync(std::string_view url, int limit)
@@ -1345,6 +1617,45 @@ std::string CrawlerService::startBatchAsync(const std::vector<std::string> &targ
                 }
                 return failureTargetResult("singer index crawl failed");
             }
+            const auto dispatched = target_dispatcher_.dispatch(target);
+            if (dispatched.kind == CrawlTargetKind::SingerSongs) {
+                for (int attempt = 0; attempt <= maxRetries(); ++attempt) {
+                    try {
+                        const auto result = crawlSingerSongsWithStoredTotals(dispatched.singer_id, item_limit);
+                        if (result.success || result.partial || attempt >= maxRetries()) {
+                            return batchResultFromSingerCollection(result, true);
+                        }
+                    } catch (const std::exception &e) {
+                        if (attempt >= maxRetries()) {
+                            return failureTargetResult(e.what());
+                        }
+                    } catch (...) {
+                        if (attempt >= maxRetries()) {
+                            return failureTargetResult("unknown singer songs crawl error");
+                        }
+                    }
+                }
+                return failureTargetResult("singer songs crawl failed");
+            }
+            if (dispatched.kind == CrawlTargetKind::SingerAlbums) {
+                for (int attempt = 0; attempt <= maxRetries(); ++attempt) {
+                    try {
+                        const auto result = crawlSingerAlbumsWithStoredTotals(dispatched.singer_id, item_limit);
+                        if (result.success || result.partial || attempt >= maxRetries()) {
+                            return batchResultFromSingerCollection(result, true);
+                        }
+                    } catch (const std::exception &e) {
+                        if (attempt >= maxRetries()) {
+                            return failureTargetResult(e.what());
+                        }
+                    } catch (...) {
+                        if (attempt >= maxRetries()) {
+                            return failureTargetResult("unknown singer albums crawl error");
+                        }
+                    }
+                }
+                return failureTargetResult("singer albums crawl failed");
+            }
             return boolTargetResult(searchAndSaveWithRetry(std::move(target), item_limit));
         }
     );
@@ -1379,7 +1690,7 @@ std::string CrawlerService::startAlbumDetailsBackfillItemsAsync(std::vector<appl
         item.item_index = static_cast<int>(index);
         item.item_key = key;
         item.item_type = "albumDetail";
-        item.item_label = album.source_title.empty() ? album.source_album_id : album.source_title;
+        item.item_label = album.title.empty() ? album.source_album_id : album.title;
         item.source = album.source;
         item.source_album_id = album.source_album_id;
         item.payload = "{\"source_res_type\":\"" + album.source_res_type + "\"}";
@@ -1436,7 +1747,7 @@ std::string CrawlerService::startAlbumSongsBackfillItemsAsync(std::vector<applic
         item.item_index = static_cast<int>(index);
         item.item_key = key;
         item.item_type = "albumSongs";
-        item.item_label = album.source_title.empty() ? album.source_album_id : album.source_title;
+        item.item_label = album.title.empty() ? album.source_album_id : album.title;
         item.source = album.source;
         item.source_album_id = album.source_album_id;
         item.payload = "{\"source_res_type\":\"" + album.source_res_type + "\"}";
@@ -1487,14 +1798,16 @@ std::string CrawlerService::startSingerSongsFromDbAsync(application::model::Sing
         item.item_label = target.name.empty() ? target.source_singer_id : target.name;
         item.source = target.source;
         item.source_singer_id = target.source_singer_id;
-        item.payload = "{\"source_country\":\"" + escapeJsonString(target.source_country) + "\",\"gender\":" + std::to_string(target.gender) + "}";
+        item.payload = "{\"source_country\":\"" + escapeJsonString(target.source_country) + "\",\"gender\":" + std::to_string(target.gender)
+                       + ",\"source_song_total\":" + (target.source_song_total ? std::to_string(*target.source_song_total) : "null")
+                       + ",\"source_album_total\":" + (target.source_album_total ? std::to_string(*target.source_album_total) : "null") + "}";
         items.push_back(std::move(item));
     }
 
     auto queue = singer_source_sync_queue_;
     return startBatchItemsAsync(
         std::move(items),
-        normalizeLimit(limit_per_singer),
+        normalizeSingerIdsLimit(limit_per_singer),
         "singerSongsFromDb",
         std::move(request_params),
         [this, queue, by_key = std::move(by_key)](std::string target, int item_limit) {
@@ -1512,14 +1825,23 @@ std::string CrawlerService::startSingerSongsFromDbAsync(application::model::Sing
 
             application::model::SingerCollectionResult result;
             try {
-                result = workflow_->crawlSingerSongsAndSaveResult(singer_id, item_limit, maxPageConcurrency());
+                result = workflow_->crawlSingerSongsAndSaveResult(singer_id, item_limit, maxPageConcurrency(), source.source_song_total, source.source_album_total);
             } catch (const std::exception &e) {
                 result = {false, false, 0, e.what()};
             } catch (...) {
                 result = {false, false, 0, "unknown singer songs crawl error"};
             }
 
-            const bool updated = queue->updateSongsSyncStatus(source.source, source.source_singer_id, syncStatusFromResult(result), result.written_count, result.error);
+            if (!result.source_song_total && source.source_song_total) {
+                result.source_song_total = source.source_song_total;
+            }
+            applySingerDeclaredTotalCompletion(result, result.source_song_total, "singer songs");
+            if (catalog_query_service_) {
+                if (auto singer = catalog_query_service_->findSinger(source.source_singer_id)) {
+                    applyRealSingerCountCompletion(result, *singer, true);
+                }
+            }
+            const bool updated = queue->updateSongsSyncStatus(source.source, source.source_singer_id, syncStatusFromResult(result, result.source_song_total), result.written_count, result.error);
             return batchResultFromSingerCollection(result, updated);
         }
     );
@@ -1548,14 +1870,16 @@ std::string CrawlerService::startSingerAlbumsFromDbAsync(application::model::Sin
         item.item_label = target.name.empty() ? target.source_singer_id : target.name;
         item.source = target.source;
         item.source_singer_id = target.source_singer_id;
-        item.payload = "{\"source_country\":\"" + escapeJsonString(target.source_country) + "\",\"gender\":" + std::to_string(target.gender) + "}";
+        item.payload = "{\"source_country\":\"" + escapeJsonString(target.source_country) + "\",\"gender\":" + std::to_string(target.gender)
+                       + ",\"source_song_total\":" + (target.source_song_total ? std::to_string(*target.source_song_total) : "null")
+                       + ",\"source_album_total\":" + (target.source_album_total ? std::to_string(*target.source_album_total) : "null") + "}";
         items.push_back(std::move(item));
     }
 
     auto queue = singer_source_sync_queue_;
     return startBatchItemsAsync(
         std::move(items),
-        normalizeLimit(limit_per_singer),
+        normalizeSingerIdsLimit(limit_per_singer),
         "singerAlbumsFromDb",
         std::move(request_params),
         [this, queue, by_key = std::move(by_key)](std::string target, int item_limit) {
@@ -1573,14 +1897,23 @@ std::string CrawlerService::startSingerAlbumsFromDbAsync(application::model::Sin
 
             application::model::SingerCollectionResult result;
             try {
-                result = workflow_->crawlSingerAlbumsAndSaveResult(singer_id, item_limit, maxPageConcurrency());
+                result = workflow_->crawlSingerAlbumsAndSaveResult(singer_id, item_limit, maxPageConcurrency(), source.source_song_total, source.source_album_total);
             } catch (const std::exception &e) {
                 result = {false, false, 0, e.what()};
             } catch (...) {
                 result = {false, false, 0, "unknown singer albums crawl error"};
             }
 
-            const bool updated = queue->updateAlbumsSyncStatus(source.source, source.source_singer_id, syncStatusFromResult(result), result.written_count, result.error);
+            if (!result.source_album_total && source.source_album_total) {
+                result.source_album_total = source.source_album_total;
+            }
+            applySingerDeclaredTotalCompletion(result, result.source_album_total, "singer albums");
+            if (catalog_query_service_) {
+                if (auto singer = catalog_query_service_->findSinger(source.source_singer_id)) {
+                    applyRealSingerCountCompletion(result, *singer, false);
+                }
+            }
+            const bool updated = queue->updateAlbumsSyncStatus(source.source, source.source_singer_id, syncStatusFromResult(result, result.source_album_total), result.written_count, result.error);
             return batchResultFromSingerCollection(result, updated);
         }
     );
@@ -1776,14 +2109,30 @@ application::model::CrawlBatchGovernanceResult CrawlerService::cloneBatch(std::s
             const auto parsed = target_dispatcher_.dispatch(target);
             if (parsed.kind == CrawlTargetKind::SingerSongs) {
                 try {
-                    return batchResultFromSingerCollection(workflow_->crawlSingerSongsAndSaveResult(parsed.singer_id, item_limit, maxPageConcurrency()), true);
+                    std::optional<int> source_song_total;
+                    std::optional<int> source_album_total;
+                    if (catalog_query_service_) {
+                        if (auto singer = catalog_query_service_->findSinger(std::to_string(parsed.singer_id))) {
+                            source_song_total = singer->source_song_total;
+                            source_album_total = singer->source_album_total;
+                        }
+                    }
+                    return batchResultFromSingerCollection(workflow_->crawlSingerSongsAndSaveResult(parsed.singer_id, item_limit, maxPageConcurrency(), source_song_total, source_album_total), true);
                 } catch (const std::exception &e) {
                     return failureTargetResult(e.what());
                 }
             }
             if (parsed.kind == CrawlTargetKind::SingerAlbums) {
                 try {
-                    return batchResultFromSingerCollection(workflow_->crawlSingerAlbumsAndSaveResult(parsed.singer_id, item_limit, maxPageConcurrency()), true);
+                    std::optional<int> source_song_total;
+                    std::optional<int> source_album_total;
+                    if (catalog_query_service_) {
+                        if (auto singer = catalog_query_service_->findSinger(std::to_string(parsed.singer_id))) {
+                            source_song_total = singer->source_song_total;
+                            source_album_total = singer->source_album_total;
+                        }
+                    }
+                    return batchResultFromSingerCollection(workflow_->crawlSingerAlbumsAndSaveResult(parsed.singer_id, item_limit, maxPageConcurrency(), source_song_total, source_album_total), true);
                 } catch (const std::exception &e) {
                     return failureTargetResult(e.what());
                 }
@@ -1809,7 +2158,9 @@ application::model::CrawlBatchGovernanceResult CrawlerService::cloneBatch(std::s
     );
     result.claimed_count = static_cast<int>(selected.size());
     if (catalog_query_service_) {
-        catalog_query_service_->appendGovernanceEvents({governanceEvent(request.mode == "all" ? "batch.clone" : "batch.rerun-failed", "batch", batch_id, result.batch_id, batch->state, "Running", result.batch_id.empty() ? "failed" : "ok", result.batch_id.empty() ? "unknown" : "", request.reason)});
+        auto event = governanceEvent(request.mode == "all" ? "batch.clone" : "batch.rerun-failed", "batch", batch_id, result.batch_id, batch->state, "Running", result.batch_id.empty() ? "failed" : "ok", result.batch_id.empty() ? "unknown" : "", request.reason);
+        applyBatchSnapshot(event, *batch);
+        catalog_query_service_->appendGovernanceEvents({std::move(event)});
     }
     return result;
 }
@@ -1882,7 +2233,9 @@ application::model::CrawlBatchGovernanceResult CrawlerService::backfillRetryFrom
     result.claimed_count = retry.claimed_count;
     result.skipped_count += retry.skipped_count;
     if (catalog_query_service_) {
-        catalog_query_service_->appendGovernanceEvents({governanceEvent("batch.backfill-retry", "batch", batch_id, result.batch_id, batch->state, "Running", result.batch_id.empty() ? "failed" : "ok", result.batch_id.empty() ? "unknown" : "", request.reason)});
+        auto event = governanceEvent("batch.backfill-retry", "batch", batch_id, result.batch_id, batch->state, "Running", result.batch_id.empty() ? "failed" : "ok", result.batch_id.empty() ? "unknown" : "", request.reason);
+        applyBatchSnapshot(event, *batch);
+        catalog_query_service_->appendGovernanceEvents({std::move(event)});
     }
     return result;
 }
@@ -1895,7 +2248,11 @@ bool CrawlerService::archiveBatch(std::string batch_id, std::string reason) cons
     const auto before = batch_query_service_->findBatch(batch_id);
     const bool archived = batch_query_service_->archiveBatch(batch_id, reason);
     if (archived && catalog_query_service_) {
-        catalog_query_service_->appendGovernanceEvents({governanceEvent("batch.archive", "batch", batch_id, batch_id, before ? before->state : "", "archived", "ok", "", reason)});
+        auto event = governanceEvent("batch.archive", "batch", batch_id, batch_id, before ? before->state : "", "archived", "ok", "", reason);
+        if (before) {
+            applyBatchSnapshot(event, *before);
+        }
+        catalog_query_service_->appendGovernanceEvents({std::move(event)});
     }
     return archived;
 }
@@ -2011,7 +2368,11 @@ application::model::MiguResourceActionResult CrawlerService::retryMiguResources(
     result.skipped_count = requested_count == 0 ? 0 : (std::max)(0, requested_count - result.updated_count);
     std::vector<application::model::MiguGovernanceEventRecord> events;
     for (const auto &item : result.items) {
-        events.push_back(governanceEvent("resource.retry", "resource", std::to_string(item.resource_id), "", std::to_string(item.status), item.reason == "retry" ? "0" : std::to_string(item.status), item.reason == "retry" ? "ok" : "failed", item.reason == "retry" ? "" : "invalid_target", item.reason));
+        std::optional<application::model::MiguResourceQueueRecord> resource;
+        if (item.resource_id != 0) {
+            resource = catalog_query_service_->findResource(item.resource_id);
+        }
+        events.push_back(resourceGovernanceEvent("resource.retry", item, resource, "retry"));
     }
     catalog_query_service_->appendGovernanceEvents(events);
     return result;
@@ -2056,7 +2417,11 @@ application::model::MiguResourceActionResult CrawlerService::resetMiguResources(
     result.skipped_count = requested_count == 0 ? 0 : (std::max)(0, requested_count - result.updated_count);
     std::vector<application::model::MiguGovernanceEventRecord> events;
     for (const auto &item : result.items) {
-        events.push_back(governanceEvent("resource.reset", "resource", std::to_string(item.resource_id), "", std::to_string(item.status), item.reason == "reset" ? "0" : std::to_string(item.status), item.reason == "reset" ? "ok" : "failed", item.reason == "reset" ? "" : "invalid_target", item.reason));
+        std::optional<application::model::MiguResourceQueueRecord> resource;
+        if (item.resource_id != 0) {
+            resource = catalog_query_service_->findResource(item.resource_id);
+        }
+        events.push_back(resourceGovernanceEvent("resource.reset", item, resource, "reset"));
     }
     catalog_query_service_->appendGovernanceEvents(events);
     return result;
@@ -2239,7 +2604,9 @@ application::model::MiguBackfillRetryResult CrawlerService::retryMiguBackfill(st
             item.item_label = singer.name.empty() ? singer.source_singer_id : singer.name;
             item.source = "migu";
             item.source_singer_id = singer.source_singer_id;
-            item.payload = "{\"source_country\":\"" + escapeJsonString(singer.source_country) + "\",\"gender\":" + std::to_string(singer.gender) + "}";
+            item.payload = "{\"source_country\":\"" + escapeJsonString(singer.source_country) + "\",\"gender\":" + std::to_string(singer.gender)
+                           + ",\"source_song_total\":" + (singer.source_song_total ? std::to_string(*singer.source_song_total) : "null")
+                           + ",\"source_album_total\":" + (singer.source_album_total ? std::to_string(*singer.source_album_total) : "null") + "}";
             items.push_back(std::move(item));
         }
 
@@ -2263,17 +2630,46 @@ application::model::MiguBackfillRetryResult CrawlerService::retryMiguBackfill(st
 
                 application::model::SingerCollectionResult result;
                 try {
-                    result = backfill_type == "singer-songs" ? workflow_->crawlSingerSongsAndSaveResult(singer_id, item_limit, maxPageConcurrency()) : workflow_->crawlSingerAlbumsAndSaveResult(singer_id, item_limit, maxPageConcurrency());
+                    result = backfill_type == "singer-songs" ? workflow_->crawlSingerSongsAndSaveResult(singer_id, item_limit, maxPageConcurrency(), source.source_song_total, source.source_album_total) : workflow_->crawlSingerAlbumsAndSaveResult(singer_id, item_limit, maxPageConcurrency(), source.source_song_total, source.source_album_total);
                 } catch (const std::exception &e) {
                     result = {false, false, 0, e.what()};
                 } catch (...) {
                     result = {false, false, 0, "unknown singer retry error"};
                 }
 
-                const bool updated = backfill_type == "singer-songs" ? queue->updateSongsSyncStatus("migu", source.source_singer_id, syncStatusFromResult(result), result.written_count, result.error) : queue->updateAlbumsSyncStatus("migu", source.source_singer_id, syncStatusFromResult(result), result.written_count, result.error);
+                if (backfill_type == "singer-songs") {
+                    if (!result.source_song_total && source.source_song_total) {
+                        result.source_song_total = source.source_song_total;
+                    }
+                    applySingerDeclaredTotalCompletion(result, result.source_song_total, "singer songs");
+                    if (catalog_query_service_) {
+                        if (auto singer = catalog_query_service_->findSinger(source.source_singer_id)) {
+                            applyRealSingerCountCompletion(result, *singer, true);
+                        }
+                    }
+                } else {
+                    if (!result.source_album_total && source.source_album_total) {
+                        result.source_album_total = source.source_album_total;
+                    }
+                    applySingerDeclaredTotalCompletion(result, result.source_album_total, "singer albums");
+                    if (catalog_query_service_) {
+                        if (auto singer = catalog_query_service_->findSinger(source.source_singer_id)) {
+                            applyRealSingerCountCompletion(result, *singer, false);
+                        }
+                    }
+                }
+                const bool updated = backfill_type == "singer-songs" ? queue->updateSongsSyncStatus("migu", source.source_singer_id, syncStatusFromResult(result, result.source_song_total), result.written_count, result.error) : queue->updateAlbumsSyncStatus("migu", source.source_singer_id, syncStatusFromResult(result, result.source_album_total), result.written_count, result.error);
                 return batchResultFromSingerCollection(result, updated);
             }
         );
+        if (catalog_query_service_) {
+            std::vector<application::model::MiguGovernanceEventRecord> events;
+            events.reserve(retry.items.size());
+            for (const auto &item : retry.items) {
+                events.push_back(backfillGovernanceEvent(backfill_type, item, retry.batch_id));
+            }
+            catalog_query_service_->appendGovernanceEvents(events);
+        }
         return retry;
     }
 
@@ -2311,10 +2707,152 @@ application::model::MiguBackfillRetryResult CrawlerService::retryMiguBackfill(st
             albums.push_back(albumSourceFromRecord(record));
         }
         retry.batch_id = backfill_type == "album-details" ? startAlbumDetailsBackfillItemsAsync(std::move(albums), limit_per_target, std::move(request_params)) : startAlbumSongsBackfillItemsAsync(std::move(albums), limit_per_target, std::move(request_params));
+        if (catalog_query_service_) {
+            std::vector<application::model::MiguGovernanceEventRecord> events;
+            events.reserve(retry.items.size());
+            for (const auto &item : retry.items) {
+                events.push_back(backfillGovernanceEvent(backfill_type, item, retry.batch_id));
+            }
+            catalog_query_service_->appendGovernanceEvents(events);
+        }
         return retry;
     }
 
     return retry;
+}
+
+application::model::MiguBackfillRetryResult CrawlerService::refreshMiguSingerProfiles(application::model::MiguBackfillTargetQuery query, bool force, std::string request_params)
+{
+    application::model::MiguBackfillRetryResult result;
+    if (!batch_task_manager_ || !workflow_ || !catalog_query_service_) {
+        return result;
+    }
+
+    query.source = query.source.empty() ? "migu" : std::move(query.source);
+    const bool explicit_source_ids = !query.source_ids.empty();
+    const bool run_all = !explicit_source_ids && query.limit == 0;
+    const std::size_t target_limit = run_all ? std::numeric_limits<std::size_t>::max() : normalizeTargetLimit(static_cast<std::size_t>(query.limit));
+
+    std::vector<application::model::MiguSingerCatalogRecord> targets;
+    if (!run_all) {
+        targets.reserve(target_limit);
+    }
+    const auto should_refresh = [force](const application::model::MiguSingerCatalogRecord &singer) {
+        return force || !singer.source_song_total || !singer.source_album_total;
+    };
+
+    if (explicit_source_ids) {
+        for (const auto &source_id : query.source_ids) {
+            auto singer = catalog_query_service_->findSinger(source_id);
+            if (!singer) {
+                result.items.push_back({source_id, {}, 0, "not_found"});
+                ++result.skipped_count;
+                continue;
+            }
+            if (!should_refresh(*singer)) {
+                result.items.push_back({source_id, singer->name, 2, "profile_totals_present"});
+                ++result.skipped_count;
+                continue;
+            }
+            targets.push_back(*singer);
+            result.items.push_back({source_id, singer->name, 1, "claimed"});
+        }
+    } else {
+        for (int page = 1; targets.size() < target_limit; ++page) {
+            application::model::MiguSingerCatalogQuery list_query;
+            list_query.source = query.source;
+            list_query.page = page;
+            list_query.page_size = 200;
+            list_query.keyword = query.keyword;
+            list_query.country = query.country;
+            list_query.gender = query.gender;
+            auto page_result = catalog_query_service_->listSingers(list_query);
+            if (page_result.items.empty()) {
+                break;
+            }
+            for (const auto &singer : page_result.items) {
+                if (!should_refresh(singer)) {
+                    continue;
+                }
+                targets.push_back(singer);
+                result.items.push_back({singer.source_singer_id, singer.name, 1, "claimed"});
+                if (targets.size() >= target_limit) {
+                    break;
+                }
+            }
+            if (page_result.items.size() < static_cast<std::size_t>(page_result.page_size)) {
+                break;
+            }
+        }
+    }
+
+    result.claimed_count = static_cast<int>(targets.size());
+    if (targets.empty()) {
+        return result;
+    }
+
+    std::unordered_map<std::string, application::model::MiguSingerCatalogRecord> by_key;
+    std::vector<application::model::CrawlBatchItemRecord> items;
+    items.reserve(targets.size());
+    for (std::size_t index = 0; index < targets.size(); ++index) {
+        const auto &singer = targets[index];
+        const std::string key = "singer-profile:" + singer.source_singer_id;
+        by_key[key] = singer;
+
+        application::model::CrawlBatchItemRecord item;
+        item.item_index = static_cast<int>(items.size());
+        item.item_key = key;
+        item.item_type = "singerProfile";
+        item.item_label = singer.name.empty() ? singer.source_singer_id : singer.name;
+        item.source = singer.source;
+        item.source_singer_id = singer.source_singer_id;
+        item.payload = "{\"force\":" + std::string(force ? "true" : "false")
+                       + ",\"source_song_total\":" + (singer.source_song_total ? std::to_string(*singer.source_song_total) : "null")
+                       + ",\"source_album_total\":" + (singer.source_album_total ? std::to_string(*singer.source_album_total) : "null") + "}";
+        items.push_back(std::move(item));
+    }
+
+    auto queue = singer_source_sync_queue_;
+    result.batch_id = startBatchItemsAsync(
+        std::move(items),
+        1,
+        "singerProfileRefresh",
+        std::move(request_params),
+        [this, queue, by_key = std::move(by_key)](std::string target, int) {
+            auto it = by_key.find(target);
+            if (it == by_key.end()) {
+                return BatchTaskManager::TargetResult {false, 0, "singer profile target not found", "invalid_target", "invalid_target"};
+            }
+
+            const auto &source = it->second;
+            const auto singer_id = parseSingerId(source.source_singer_id);
+            if (singer_id == 0) {
+                return BatchTaskManager::TargetResult {false, 0, "invalid singer id", "invalid_target", "invalid_target"};
+            }
+
+            application::model::SingerSourceProfile profile;
+            try {
+                profile = workflow_->fetchAndSaveSingerSourceProfile(singer_id);
+            } catch (const std::exception &e) {
+                return failureTargetResult(e.what());
+            } catch (...) {
+                return failureTargetResult("unknown singer profile refresh error");
+            }
+            const bool refreshed = profile.source_song_total || profile.source_album_total;
+            if (!refreshed) {
+                return BatchTaskManager::TargetResult {false, 0, "singer profile did not contain declared totals", "parse", "parse_failed"};
+            }
+
+            if (queue && catalog_query_service_) {
+                if (auto singer = catalog_query_service_->findSinger(source.source_singer_id)) {
+                    (void)queue->updateSongsSyncStatus(singer->source, singer->source_singer_id, singer->songs_sync_status, singer->songs_sync_count, singer->songs_sync_error);
+                    (void)queue->updateAlbumsSyncStatus(singer->source, singer->source_singer_id, singer->albums_sync_status, singer->albums_sync_count, singer->albums_sync_error);
+                }
+            }
+            return BatchTaskManager::TargetResult {true, 1, {}, {}, "ok"};
+        }
+    );
+    return result;
 }
 
 int CrawlerService::resetMiguBackfill(std::string backfill_type, application::model::MiguBackfillTargetQuery query) const

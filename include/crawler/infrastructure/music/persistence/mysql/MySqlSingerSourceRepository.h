@@ -1,7 +1,7 @@
 #pragma once
 
 #include "crawler/application/ports/persistence/SingerSourceRepository.h"
-#include "crawler/infrastructure/music/persistence/mysql/MySqlConnectionPool.h"
+#include "crawler/infrastructure/music/persistence/mysql/MySqlMetadataBatchWriter.h"
 
 #include <boost/asio/awaitable.hpp>
 
@@ -18,11 +18,11 @@ class MySqlSingerSourceRepository : public application::ports::SingerSourceRepos
 public:
     // 歌手来源仓储所需的外置 SQL 文件路径。
     struct SqlPaths {
-        std::string transaction_begin = "sql/mysql/common/transaction_begin.sql";            // 开启事务 SQL
-        std::string transaction_commit = "sql/mysql/common/transaction_commit.sql";          // 提交事务 SQL
-        std::string transaction_rollback = "sql/mysql/common/transaction_rollback.sql";      // 回滚事务 SQL
-        std::string set_singer_source_vars = "sql/mysql/14_set_migu_singer_source_vars.sql"; // 绑定歌手来源变量 SQL
-        std::string insert_singer_source = "sql/mysql/14_insert_migu_singer_source.sql";     // 插入歌手来源核心数据 SQL
+        std::string transaction_begin = "sql/mysql/transactions/transaction_begin.sql";                                         // 开启事务 SQL
+        std::string transaction_commit = "sql/mysql/transactions/transaction_commit.sql";                                       // 提交事务 SQL
+        std::string transaction_rollback = "sql/mysql/transactions/transaction_rollback.sql";                                   // 回滚事务 SQL
+        std::string update_singer_source_profile = "sql/mysql/singer_source_refs/update_migu_singer_source_profile_counts.sql"; // 更新歌手来源概览 SQL
+        std::string update_singer_name_pinyin = "sql/mysql/singer_source_refs/update_migu_singer_source_name_pinyin.sql";       // 回填歌手来源拼音 SQL
     };
 
     // 保存连接池和默认 SQL 模板。
@@ -34,26 +34,30 @@ public:
     // 同步 port 入口：内部桥接到 MySQL 协程写入并阻塞等待结果。
     bool saveBatch(const std::vector<application::model::SingerSourceMetadata> &singers) override;
 
-    // 协程式批量保存歌手来源，内部会分片事务写入以降低并发锁冲突。
+    // 同步 port 入口：更新平台声明的歌曲和专辑总数。
+    bool updateProfileCounts(const application::model::SingerSourceProfile &profile) override;
+
+    // 同步 port 入口：批量回填当前为空的歌手来源拼音。
+    bool updateNamePinyinBatch(const std::vector<application::model::SingerSourceNamePinyinPatch> &patches) override;
+
+    // 协程式批量保存歌手来源，统一事务先写实体再写关系。
     boost::asio::awaitable<bool> coSaveBatch(std::vector<application::model::SingerSourceMetadata> singers);
 
-private:
-    // 保存一个小分片，内部独立事务和短锁，避免大批量并发写入死锁。
-    boost::asio::awaitable<bool> coSaveChunk(
-        const std::vector<application::model::SingerSourceMetadata> &singers,
-        std::size_t first,
-        std::size_t last,
-        int max_attempts,
-        std::string_view context
-    );
+    // 协程式更新歌手来源概览总数。
+    boost::asio::awaitable<bool> coUpdateProfileCounts(application::model::SingerSourceProfile profile);
 
+    // 协程式批量回填歌手来源拼音。
+    boost::asio::awaitable<bool> coUpdateNamePinyinBatch(std::vector<application::model::SingerSourceNamePinyinPatch> patches);
+
+private:
     std::shared_ptr<MySqlConnectionPool> pool_; // 线程安全连接池
 
-    std::vector<std::string> begin_sql_;         // 开启事务语句
-    std::vector<std::string> commit_sql_;        // 提交事务语句
-    std::vector<std::string> rollback_sql_;      // 回滚事务语句
-    std::string set_singer_vars_sql_;            // 歌手来源变量绑定语句
-    std::vector<std::string> insert_singer_sql_; // 歌手来源核心入库语句
+    MySqlMetadataBatchWriter writer_;       // 统一事务写入器
+    std::vector<std::string> begin_sql_;    // 开启事务语句
+    std::vector<std::string> commit_sql_;   // 提交事务语句
+    std::vector<std::string> rollback_sql_; // 回滚事务语句
+    std::string update_singer_profile_sql_; // 歌手来源概览更新语句
+    std::string update_name_pinyin_sql_;    // 歌手来源拼音回填语句
 };
 
 } // namespace orchestrator::modules::crawler::infrastructure::music::persistence::mysql

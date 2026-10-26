@@ -3,6 +3,7 @@
 #include <string>
 #include <optional>
 #include <variant>
+#include <utility>
 
 namespace orchestrator::modules::crawler::application::result {
 
@@ -44,6 +45,12 @@ public:
     const std::string &message() const
     {
         return message_;
+    }
+
+    // 成功时读取结果，失败时为空，避免基础设施通过额外回调传递提交结果。
+    const T *data() const
+    {
+        return data_ ? &*data_ : nullptr;
     }
 
 private:

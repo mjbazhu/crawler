@@ -43,13 +43,25 @@ std::string bodyString(const http_client::HttpResponse &response)
     return std::string(response.body.begin(), response.body.end());
 }
 
+// 本地 smoke 失败时保留协议诊断，区分路由返回错误与客户端丢失响应体。
+std::string responseDescription(const http_client::HttpResponse &response)
+{
+    std::string text = "bytes=" + std::to_string(response.body.size());
+    for (const auto &header : response.headers) text += "; " + header.name + "=" + header.value;
+    return text + "; body=" + bodyString(response).substr(0, 200);
+}
+
 // 资源队列测试替身，返回一条无需访问外部平台的 lyric 资源。
 class SmokeSongResourceQueue : public ports::SongResourceQueue {
 public:
-    bool claimed = false; // 是否已被认领
+    bool claimed = false;                     // 是否已被认领
+    int claim_count = 0;                      // 认领调用次数
+    model::SongResourceClaimQuery last_query; // 最近一次认领查询
 
     std::vector<model::SongResourceQueueTarget> claimPending(model::SongResourceClaimQuery query) override
     {
+        ++claim_count;
+        last_query = query;
         if (claimed) {
             return {};
         }
@@ -242,11 +254,14 @@ private:
 };
 
 // 创建不连接外部系统的控制器，用于真实 HTTP 路由 smoke。
-std::shared_ptr<controllers::CrawlerController> makeController()
+std::shared_ptr<controllers::CrawlerController> makeController(std::shared_ptr<SmokeSongResourceQueue> resource_queue = {})
 {
+    if (!resource_queue) {
+        resource_queue = std::make_shared<SmokeSongResourceQueue>();
+    }
     use_cases::CrawlerServiceDependencies dependencies;
     dependencies.persistence.singer_source_sync_queue = std::make_shared<SmokeSingerSourceSyncQueue>();
-    dependencies.persistence.song_resource_queue = std::make_shared<SmokeSongResourceQueue>();
+    dependencies.persistence.song_resource_queue = std::move(resource_queue);
     dependencies.providers.song_resource_provider = std::make_shared<SmokeSongResourceProvider>();
     dependencies.parsers.song_resource_parser = std::make_shared<SmokeSongResourceParser>();
     dependencies.providers.song_resource_content_fetcher = std::make_shared<SmokeSongResourceContentFetcher>();
@@ -356,7 +371,8 @@ int main()
         assertCorsOptions();
 
         server.bind("127.0.0.1", kPort);
-        routing::CrawlerRoutes routes(makeController());
+        auto resource_queue = std::make_shared<SmokeSongResourceQueue>();
+        routing::CrawlerRoutes routes(makeController(resource_queue));
         routes.registerRoutes(server);
 
         std::promise<void> start_signal;
@@ -372,7 +388,7 @@ int main()
 
         auto singer_songs = client.get(base_url + "/api/migu/singers/112/songs?page=1&page_size=20");
         requireStatus(singer_songs, 200, "GET singer songs route");
-        require(bodyString(*singer_songs).find("\"items\"") != std::string::npos, "singer songs response should be a page");
+        require(bodyString(*singer_songs).find("\"items\"") != std::string::npos, "singer songs response should be a page: " + responseDescription(*singer_songs));
 
         auto album_songs = client.get(base_url + "/api/migu/albums/600927015009001083/songs");
         requireStatus(album_songs, 200, "GET album songs route");
@@ -444,6 +460,15 @@ int main()
         auto resource_process_async = client.post(base_url + "/api/migu/resources/process", R"({"source":"migu","limit":1,"async":true,"filter":{"kind":"lyric"}})", {"Content-Type: application/json"});
         requireStatus(resource_process_async, 202, "POST async resource process route");
         require(bodyString(*resource_process_async).find("\"accepted\":true") != std::string::npos, "async resource process response should be accepted");
+
+        resource_queue->claimed = false;
+        auto resource_process_selected = client.post(base_url + "/api/migu/resources/process", R"({"source":"migu","limit":1,"offset":99,"resource_ids":[9002,9003],"filter":{"status":[2],"kind":"cover"}})", {"Content-Type: application/json"});
+        requireStatus(resource_process_selected, 200, "POST selected resource process route");
+        require(resource_queue->last_query.resource_ids.size() == 2, "selected resource process should pass explicit ids");
+        require(resource_queue->last_query.resource_ids[0] == 9002 && resource_queue->last_query.resource_ids[1] == 9003, "selected resource ids should preserve request order");
+        require(resource_queue->last_query.offset == 0, "selected resource process should ignore offset");
+        require(resource_queue->last_query.resource_kind.empty(), "selected resource process should ignore kind filter");
+        require(resource_queue->last_query.statuses.size() == 2 && resource_queue->last_query.statuses[0] == 0 && resource_queue->last_query.statuses[1] == 3, "selected resource process should only claim pending and failed statuses");
 
         auto resource_process_bad = client.post(base_url + "/api/migu/resources/process", R"({"source":"migu","limit":1001})", {"Content-Type: application/json"});
         requireStatus(resource_process_bad, 400, "POST bad resource process route");

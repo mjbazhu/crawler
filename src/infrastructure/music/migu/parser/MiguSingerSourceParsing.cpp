@@ -39,13 +39,7 @@ std::optional<application::model::SingerSourceMetadata> parseSingerSourceFromIte
     metadata.name = singer_name;
     metadata.normalized_name = singer_name;
     metadata.gender = singer_class.gender;
-    metadata.source_item_key = "singer:" + source_singer_id;
     metadata.source_singer_id = source_singer_id;
-    metadata.source_view_id = source_view_id;
-    metadata.source_res_type = JsonUtils::getString(item, "resType");
-    metadata.source_action = source_action;
-    metadata.source_track = JsonUtils::getString(item, "track");
-    metadata.source_display_id = JsonUtils::getString(item, "txt2");
     metadata.source_tag = JsonUtils::getString(item, "txt3");
     metadata.source_metric = JsonUtils::getString(item, "txt4");
     metadata.source_country = singer_class.country;

@@ -18,13 +18,13 @@ class MySqlSongResourceQueue : public application::ports::SongResourceQueue {
 public:
     // SQL 文件路径集合。
     struct SqlPaths {
-        std::string claim_select = "sql/mysql/resource/song_resource_claim_select.sql";                 // 主资源认领候选查询
-        std::string claim_update = "sql/mysql/resource/song_resource_claim_update.sql";                 // 主资源认领状态更新
-        std::string related_claim_update = "sql/mysql/resource/song_resource_related_claim_update.sql"; // 关联资源认领更新
-        std::string related_find = "sql/mysql/resource/song_resource_related_find.sql";                 // 关联资源认领后查询
-        std::string mark_succeeded = "sql/mysql/resource/song_resource_mark_succeeded.sql";             // 成功回写
-        std::string mark_failed = "sql/mysql/resource/song_resource_mark_failed.sql";                   // 失败回写
-        std::string mark_skipped = "sql/mysql/resource/song_resource_mark_skipped.sql";                 // 跳过回写
+        std::string claim_select = "sql/mysql/song_resources/claim_select.sql";                 // 主资源认领候选查询
+        std::string claim_update = "sql/mysql/song_resources/claim_update.sql";                 // 主资源认领状态更新
+        std::string related_claim_update = "sql/mysql/song_resources/related_claim_update.sql"; // 关联资源认领更新
+        std::string related_find = "sql/mysql/song_resources/related_find.sql";                 // 关联资源认领后查询
+        std::string mark_succeeded = "sql/mysql/song_resources/mark_succeeded.sql";             // 成功回写
+        std::string mark_failed = "sql/mysql/song_resources/mark_failed.sql";                   // 失败回写
+        std::string mark_skipped = "sql/mysql/song_resources/mark_skipped.sql";                 // 跳过回写
     };
 
     // 保存连接池并加载默认 SQL。

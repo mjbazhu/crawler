@@ -11,6 +11,7 @@
 #include <map>
 #include <optional>
 #include <sstream>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -41,6 +42,18 @@ http::HttpResponse jsonError(int status, std::string message)
     body["error"] = std::move(message);
     body["details"] = nullptr;
     return http::HttpResponse {status, {{"Content-Type", "application/json"}}, body.dump()};
+}
+
+// 归一化 API 层资源类型别名，避免前端传 lrc 时查不到 lyric 队列。
+std::string normalizeResourceKind(std::string value)
+{
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    if (value == "lrc") {
+        return "lyric";
+    }
+    return value;
 }
 
 int pacmtokenErrorStatus(const application::model::MiguPacmtokenRefreshResult &result)
@@ -190,6 +203,17 @@ std::string stringQuery(const http::HttpRequest &req, const std::string &name)
 {
     auto it = req.query_params.find(name);
     return it == req.query_params.end() ? std::string {} : it->second;
+}
+
+std::string stringQuery(const http::HttpRequest &req, std::initializer_list<const char *> names)
+{
+    for (const char *name : names) {
+        auto it = req.query_params.find(name);
+        if (it != req.query_params.end()) {
+            return it->second;
+        }
+    }
+    return {};
 }
 
 bool boolQuery(const http::HttpRequest &req, const std::string &name, bool fallback = false)
@@ -383,6 +407,19 @@ json nullableString(const std::string &value)
     return value.empty() ? json(nullptr) : json(value);
 }
 
+json nullableInt(const std::optional<int> &value)
+{
+    return value ? json(*value) : json(nullptr);
+}
+
+json remainingCount(int current, const std::optional<int> &total)
+{
+    if (!total) {
+        return nullptr;
+    }
+    return (std::max)(0, *total - current);
+}
+
 json singerToJson(const application::model::MiguSingerCatalogRecord &singer)
 {
     return {
@@ -398,11 +435,14 @@ json singerToJson(const application::model::MiguSingerCatalogRecord &singer)
         {"source_name_pinyin", singer.source_name_pinyin},
         {"country", singer.source_country},
         {"source_tag", singer.source_tag},
-        {"source_metric", singer.source_metric},
-        {"avatar_url", singer.avatar_url},
+        {"source_song_total", nullableInt(singer.source_song_total)},
+        {"source_album_total", nullableInt(singer.source_album_total)},
         {"songs_sync_status", singer.songs_sync_status},
         {"songs_synced_at", singer.songs_synced_at == 0 ? json(nullptr) : json(singer.songs_synced_at)},
         {"songs_count", singer.songs_sync_count},
+        {"songs_total", nullableInt(singer.source_song_total)},
+        {"songs_remaining_count", remainingCount(singer.songs_sync_count, singer.source_song_total)},
+        {"songs_completed", singer.songs_sync_status == 2},
         {"songs_sync_count", singer.songs_sync_count},
         {"songs_sync_error", singer.songs_sync_error},
         {"songs_last_batch_id", nullableString(singer.songs_last_batch_id)},
@@ -410,6 +450,9 @@ json singerToJson(const application::model::MiguSingerCatalogRecord &singer)
         {"albums_sync_status", singer.albums_sync_status},
         {"albums_synced_at", singer.albums_synced_at == 0 ? json(nullptr) : json(singer.albums_synced_at)},
         {"albums_count", singer.albums_sync_count},
+        {"albums_total", nullableInt(singer.source_album_total)},
+        {"albums_remaining_count", remainingCount(singer.albums_sync_count, singer.source_album_total)},
+        {"albums_completed", singer.albums_sync_status == 2},
         {"albums_sync_count", singer.albums_sync_count},
         {"albums_sync_error", singer.albums_sync_error},
         {"albums_last_batch_id", nullableString(singer.albums_last_batch_id)},
@@ -437,7 +480,6 @@ json albumToJson(const application::model::MiguAlbumCatalogRecord &album)
         {"source_title", album.source_title},
         {"source_artist_id", album.source_artist_id},
         {"source_artist_name", album.source_artist_name},
-        {"cover_url", album.cover_url},
         {"total_count", album.total_count},
         {"publish_date", album.publish_date},
         {"play_num", album.play_num},
@@ -449,8 +491,8 @@ json albumToJson(const application::model::MiguAlbumCatalogRecord &album)
         {"detail_running_batch_id", nullableString(album.detail_running_batch_id)},
         {"songs_sync_status", album.songs_sync_status},
         {"songs_synced_at", album.songs_synced_at == 0 ? json(nullptr) : json(album.songs_synced_at)},
-        {"songs_count", album.songs_sync_count},
-        {"album_songs_count", album.songs_sync_count},
+        {"songs_count", album.album_songs_count},
+        {"album_songs_count", album.album_songs_count},
         {"songs_sync_count", album.songs_sync_count},
         {"songs_sync_error", album.songs_sync_error},
         {"songs_last_batch_id", nullableString(album.songs_last_batch_id)},
@@ -478,7 +520,6 @@ json songToJson(const application::model::MiguSongCatalogRecord &song)
         {"source_album_name", song.source_album_name},
         {"primary_artist_id", song.primary_artist_id},
         {"primary_artist_name", song.primary_artist_name},
-        {"cover_url", song.cover_url},
         {"lyric_url", song.lyric_url},
         {"mrc_url", song.mrc_url},
         {"trc_url", song.trc_url},
@@ -505,8 +546,9 @@ json resourceToJson(const application::model::MiguResourceQueueRecord &resource)
         {"album", resource.album},
         {"resource_kind", resource.resource_kind},
         {"format_type", resource.format_type},
-        {"remote_url", resource.remote_url},
         {"local_path", resource.local_path},
+        {"cloud_backend", resource.cloud_backend},
+        {"cloud_path", resource.cloud_path},
         {"size_bytes", resource.size_bytes},
         {"checksum", resource.checksum},
         {"status", resource.status},
@@ -518,6 +560,7 @@ json resourceToJson(const application::model::MiguResourceQueueRecord &resource)
         {"running_batch_id", nullableString(resource.running_batch_id)},
         {"last_processed_at", resource.last_processed_at == 0 ? json(nullptr) : json(resource.last_processed_at)},
         {"fetched_at", resource.fetched_at == 0 ? json(nullptr) : json(resource.fetched_at)},
+        {"cloud_uploaded_at", resource.cloud_uploaded_at == 0 ? json(nullptr) : json(resource.cloud_uploaded_at)},
         {"created_at", resource.created_at},
         {"updated_at", resource.updated_at},
     };
@@ -602,6 +645,7 @@ json singerQueueTargetToJson(const application::model::MiguSingerCatalogRecord &
     const bool songs_type = type == "singer-songs";
     const int status = songs_type ? singer.songs_sync_status : singer.albums_sync_status;
     const int count = songs_type ? singer.songs_sync_count : singer.albums_sync_count;
+    const auto total = songs_type ? singer.source_song_total : singer.source_album_total;
     const std::uint64_t synced_at = songs_type ? singer.songs_synced_at : singer.albums_synced_at;
     const std::string error = songs_type ? singer.songs_sync_error : singer.albums_sync_error;
     const std::string last_batch_id = songs_type ? singer.songs_last_batch_id : singer.albums_last_batch_id;
@@ -616,6 +660,9 @@ json singerQueueTargetToJson(const application::model::MiguSingerCatalogRecord &
         {"source", singer.source},
         {"sync_status", status},
         {"sync_count", count},
+        {"source_total", nullableInt(total)},
+        {"remaining_count", remainingCount(count, total)},
+        {"completed", status == 2},
         {"last_error", error},
         {"last_batch_id", nullableString(last_batch_id)},
         {"running_batch_id", nullableString(running_batch_id)},
@@ -657,21 +704,28 @@ json albumQueueTargetToJson(const application::model::MiguAlbumCatalogRecord &al
 }
 
 // 转换从库歌手同步预览响应，只暴露前端启动前确认所需字段。
-json singerFromDbPreviewToJson(const application::model::SingerSourceSyncPreviewResult &preview)
+json singerFromDbPreviewToJson(const application::model::SingerSourceSyncPreviewResult &preview, bool songs_type)
 {
     json body;
     body["matched_count"] = preview.matched_count;
     body["eligible_count"] = preview.eligible_count;
     body["items"] = json::array();
     for (const auto &target : preview.items) {
+        const auto total = songs_type ? target.source_song_total : target.source_album_total;
         json item;
         item["singer_id"] = target.source_singer_id;
         item["source_name"] = target.name;
+        item["source_song_total"] = nullableInt(target.source_song_total);
+        item["source_album_total"] = nullableInt(target.source_album_total);
         if (!target.source_country.empty()) {
             item["country"] = target.source_country;
         }
         item["gender"] = target.gender;
         item["sync_status"] = target.sync_status;
+        item["sync_count"] = target.sync_count;
+        item["source_total"] = nullableInt(total);
+        item["remaining_count"] = remainingCount(target.sync_count, total);
+        item["completed"] = target.sync_status == 2;
         body["items"].push_back(std::move(item));
     }
     return body;
@@ -709,6 +763,7 @@ application::model::MiguSingerCatalogQuery singerCatalogQueryFromRequest(const h
     query.page = intQuery(req, "page", 1);
     query.page_size = intQuery(req, "page_size", 20);
     query.keyword = stringQuery(req, "q");
+    query.source_singer_id = stringQuery(req, "source_singer_id");
     query.country = stringQuery(req, "country");
     query.gender = optionalIntQuery(req, "gender");
     query.songs_sync_statuses = statusQuery(req, {"songs_sync_status", "songs_status"});
@@ -755,8 +810,8 @@ application::model::MiguResourceQueueQuery resourceQueueQueryFromRequest(const h
     query.page_size = intQuery(req, "page_size", 20);
     query.keyword = stringQuery(req, "q");
     query.statuses = statusQuery(req, {"status", "resource_status"});
-    query.resource_kind = stringQuery(req, "kind");
-    query.format_type = stringQuery(req, "format");
+    query.resource_kind = normalizeResourceKind(stringQuery(req, {"kind", "resource_kind", "resourceKind"}));
+    query.format_type = stringQuery(req, {"format", "format_type", "formatType"});
     return query;
 }
 
@@ -892,6 +947,9 @@ void parseResourceProcessOptions(const json &body, application::model::SongResou
     if (auto refresh_on_440013 = jsonBoolField(body, {"refresh_pacmtoken_on_440013", "refreshPacmtokenOn440013"})) {
         options.refresh_pacmtoken_on_440013 = *refresh_on_440013;
     }
+    if (auto process_related = jsonBoolField(body, {"process_related_resources", "processRelatedResources"})) {
+        options.process_related_resources = *process_related;
+    }
 }
 
 std::optional<std::string> validateResourceProcessOptions(const application::model::SongResourceProcessOptionOverrides &options)
@@ -970,12 +1028,19 @@ std::optional<application::model::MiguResourceActionQuery> resourceActionQueryFr
         if (body.contains("filter") && body["filter"].is_object()) {
             filter = &body["filter"];
         }
+        if (query.resource_ids.empty()) {
+            query.resource_ids = uint64ArrayField(*filter, {"resource_ids", "resourceIds", "ids"});
+        }
+        if (query.action == "process" && !query.resource_ids.empty()) {
+            query.statuses = {0, 3};
+            return query;
+        }
         query.statuses = intArrayField(*filter, {"status", "resource_status", "resourceStatus", "statuses"});
         if (auto keyword = jsonStringField(*filter, {"q", "keyword"})) {
             query.keyword = *keyword;
         }
         if (auto kind = jsonStringField(*filter, {"kind", "resource_kind", "resourceKind"})) {
-            query.resource_kind = *kind;
+            query.resource_kind = normalizeResourceKind(*kind);
         }
         if (auto format = jsonStringField(*filter, {"format", "format_type", "formatType"})) {
             query.format_type = *format;
@@ -1004,22 +1069,38 @@ std::optional<application::model::SongResourceClaimQuery> resourceProcessQueryFr
         if (auto batch_id = jsonStringField(body, {"batch_id", "batchId"})) {
             query.batch_id = *batch_id;
         }
-        query.limit = static_cast<std::size_t>((std::max)(1, jsonIntField(body, {"limit", "max_targets", "maxTargets"}).value_or(20)));
-        query.offset = static_cast<std::size_t>((std::max)(0, jsonIntField(body, {"offset"}).value_or(0)));
-
         const json *filter = &body;
         if (body.contains("filter") && body["filter"].is_object()) {
             filter = &body["filter"];
         }
-        query.statuses = intArrayField(*filter, {"status", "resource_status", "resourceStatus", "statuses"});
-        if (auto kind = jsonStringField(*filter, {"kind", "resource_kind", "resourceKind"})) {
-            query.resource_kind = *kind;
+        query.resource_ids = uint64ArrayField(body, {"resource_ids", "resourceIds", "ids"});
+        if (query.resource_ids.empty()) {
+            query.resource_ids = uint64ArrayField(*filter, {"resource_ids", "resourceIds", "ids"});
         }
-        if (auto content_id = jsonStringField(*filter, {"content_id", "contentId", "source_content_id", "sourceContentId"})) {
-            query.source_content_id = *content_id;
+        const auto requested_limit = jsonIntField(body, {"limit", "max_targets", "maxTargets"});
+        if (requested_limit) {
+            query.limit = static_cast<std::size_t>((std::max)(1, *requested_limit));
+        } else if (!query.resource_ids.empty()) {
+            query.limit = query.resource_ids.size();
+        } else {
+            query.limit = 20;
         }
-        if (auto format = jsonStringField(*filter, {"format", "format_type", "formatType"})) {
-            query.format_type = *format;
+        query.offset = static_cast<std::size_t>((std::max)(0, jsonIntField(body, {"offset"}).value_or(0)));
+
+        if (!query.resource_ids.empty()) {
+            query.offset = 0;
+            query.statuses = {0, 3};
+        } else {
+            query.statuses = intArrayField(*filter, {"status", "resource_status", "resourceStatus", "statuses"});
+            if (auto kind = jsonStringField(*filter, {"kind", "resource_kind", "resourceKind"})) {
+                query.resource_kind = normalizeResourceKind(*kind);
+            }
+            if (auto content_id = jsonStringField(*filter, {"content_id", "contentId", "source_content_id", "sourceContentId"})) {
+                query.source_content_id = *content_id;
+            }
+            if (auto format = jsonStringField(*filter, {"format", "format_type", "formatType"})) {
+                query.format_type = *format;
+            }
         }
         if (body.contains("options")) {
             if (!body["options"].is_object()) {
@@ -1057,6 +1138,28 @@ bool hasResetSelector(const application::model::MiguBackfillTargetQuery &query)
 bool hasResourceSelector(const application::model::MiguResourceActionQuery &query)
 {
     return !query.resource_ids.empty() || !query.statuses.empty() || !query.keyword.empty() || !query.resource_kind.empty() || !query.format_type.empty();
+}
+
+application::model::MiguResourceActionQuery processPreviewQueryFromClaim(const application::model::SongResourceClaimQuery &query)
+{
+    application::model::MiguResourceActionQuery preview;
+    preview.source = query.source.empty() ? "migu" : query.source;
+    preview.action = "process";
+    preview.resource_ids = query.resource_ids;
+    preview.statuses = {0, 3};
+    preview.resource_kind = query.resource_kind;
+    preview.format_type = query.format_type;
+    preview.limit = static_cast<int>((std::min<std::size_t>)(query.limit == 0 ? query.resource_ids.size() : query.limit, 200));
+    if (preview.limit <= 0) {
+        preview.limit = 50;
+    }
+    return preview;
+}
+
+void addProcessPreviewAliases(json &body, const application::model::MiguResourcePreviewResult &preview)
+{
+    body["downloadable_count"] = preview.eligible_count;
+    body["skipped_count"] = preview.ineligible_count;
 }
 
 // 判断维护恢复类型是否在当前支持范围内。
@@ -1212,6 +1315,8 @@ json resourceProcessResultToJson(const application::model::SongResourceProcessRe
             {"related", item.related},
             {"synthetic", item.synthetic},
             {"local_path", item.local_path},
+            {"cloud_backend", item.cloud_backend},
+            {"cloud_path", item.cloud_path},
             {"size_bytes", item.size_bytes},
             {"checksum", item.checksum},
             {"error_category", item.error_category},
@@ -1279,6 +1384,10 @@ json governanceEventToJson(const application::model::MiguGovernanceEventRecord &
         {"action", event.action},
         {"target_type", event.target_type},
         {"target_id", event.target_id},
+        {"target_name", nullableString(event.target_name)},
+        {"target_summary", nullableString(event.target_summary)},
+        {"target_source_id", nullableString(event.target_source_id)},
+        {"target_owner_name", nullableString(event.target_owner_name)},
         {"batch_id", nullableString(event.batch_id)},
         {"before_status", nullableString(event.before_status)},
         {"after_status", nullableString(event.after_status)},
@@ -1332,6 +1441,32 @@ application::model::MiguGovernanceEventQuery governanceEventQueryFromRequest(con
     query.action = stringQuery(req, "action");
     query.batch_id = stringQuery(req, "batch_id");
     return query;
+}
+
+bool profileRefreshForceFromBody(const http::HttpRequest &req)
+{
+    try {
+        if (req.body.empty()) {
+            return false;
+        }
+        auto body = json::parse(req.body);
+        return jsonBoolField(body, {"force"}).value_or(false);
+    } catch (...) {
+        return false;
+    }
+}
+
+bool profileRefreshRunAllFromBody(const http::HttpRequest &req)
+{
+    try {
+        if (req.body.empty()) {
+            return false;
+        }
+        auto body = json::parse(req.body);
+        return jsonBoolField(body, {"run_all", "runAll"}).value_or(false);
+    } catch (...) {
+        return false;
+    }
 }
 
 http::HttpResponse taskAcceptedResponse(
@@ -1458,7 +1593,7 @@ http::HttpResponse CrawlerController::handlePreviewMiguSingerSongsCrawlFromDb(ht
     if (!preview) {
         return jsonError(503, "migu singer source sync queue is not configured");
     }
-    return http::HttpResponse {200, {{"Content-Type", "application/json"}}, singerFromDbPreviewToJson(*preview).dump()};
+    return http::HttpResponse {200, {{"Content-Type", "application/json"}}, singerFromDbPreviewToJson(*preview, true).dump()};
 }
 
 http::HttpResponse CrawlerController::handleStartMiguSingerAlbumsCrawl(http::HttpRequest req)
@@ -1509,7 +1644,33 @@ http::HttpResponse CrawlerController::handlePreviewMiguSingerAlbumsCrawlFromDb(h
     if (!preview) {
         return jsonError(503, "migu singer source sync queue is not configured");
     }
-    return http::HttpResponse {200, {{"Content-Type", "application/json"}}, singerFromDbPreviewToJson(*preview).dump()};
+    return http::HttpResponse {200, {{"Content-Type", "application/json"}}, singerFromDbPreviewToJson(*preview, false).dump()};
+}
+
+http::HttpResponse CrawlerController::handleRefreshMiguSingerProfiles(http::HttpRequest req)
+{
+    auto query = backfillQueryFromBody(req);
+    const bool run_all = profileRefreshRunAllFromBody(req);
+    if (query && run_all && query->source_ids.empty()) {
+        query->limit = 0;
+    }
+    if (!query || query->source != "migu" || query->limit < 0 || query->limit > 1000) {
+        return jsonError(400, "invalid migu singer profile refresh request");
+    }
+
+    const bool force = profileRefreshForceFromBody(req);
+    auto result = service_->refreshMiguSingerProfiles(std::move(*query), force, req.body.empty() ? R"({"source":"migu"})" : req.body);
+    if (result.batch_id.empty() && result.claimed_count == 0) {
+        json body;
+        body["batch_id"] = nullptr;
+        body["message"] = "no migu singer profiles need refresh";
+        body["target_count"] = 0;
+        body["claimed_count"] = 0;
+        body["skipped_count"] = result.skipped_count;
+        body["items"] = actionItemsToJson(result.items);
+        return http::HttpResponse {200, {{"Content-Type", "application/json"}}, body.dump()};
+    }
+    return taskAcceptedResponse(result.batch_id, "migu singer profile refresh started", static_cast<std::size_t>(result.claimed_count), 1, 0, result.claimed_count, result.claimed_count, result.skipped_count, actionItemsToJson(result.items));
 }
 
 http::HttpResponse CrawlerController::handleStartMiguAlbumDetailsBackfill(http::HttpRequest req)
@@ -1908,8 +2069,8 @@ http::HttpResponse CrawlerController::handlePreviewMiguResources(http::HttpReque
     if (query->source != "migu") {
         return jsonError(400, "source must be migu");
     }
-    if (query->action != "retry" && query->action != "reset" && query->action != "recover-stale") {
-        return jsonError(400, "action must be retry, reset or recover-stale");
+    if (query->action != "retry" && query->action != "reset" && query->action != "recover-stale" && query->action != "process") {
+        return jsonError(400, "action must be retry, reset, recover-stale or process");
     }
     if (query->action == "recover-stale" && query->stale_after_seconds <= 0) {
         return jsonError(400, "stale_after_seconds must be positive");
@@ -1919,6 +2080,9 @@ http::HttpResponse CrawlerController::handlePreviewMiguResources(http::HttpReque
     auto body = resourcePreviewToJson(preview);
     body["action"] = action;
     body["source"] = "migu";
+    if (action == "process") {
+        addProcessPreviewAliases(body, preview);
+    }
     return http::HttpResponse {200, {{"Content-Type", "application/json"}}, body.dump()};
 }
 
@@ -1986,19 +2150,40 @@ http::HttpResponse CrawlerController::handleProcessMiguResources(http::HttpReque
         return jsonError(400, *error);
     }
 
+    std::optional<application::model::MiguResourcePreviewResult> selected_preview;
+    if (!query->resource_ids.empty()) {
+        selected_preview = service_->previewMiguResources(processPreviewQueryFromClaim(*query));
+    }
+
     if (resourceProcessAsyncRequested(req)) {
         const std::string batch_id = service_->startMiguResourcesProcessAsync(std::move(*query));
         if (batch_id.empty()) {
             return jsonError(503, "migu async resource workflow is not configured");
         }
-        return http::HttpResponse {202, {{"Content-Type", "application/json"}}, resourceProcessAcceptedToJson(batch_id).dump()};
+        auto body = resourceProcessAcceptedToJson(batch_id);
+        if (selected_preview) {
+            auto preview_body = resourcePreviewToJson(*selected_preview);
+            preview_body["action"] = "process";
+            preview_body["source"] = "migu";
+            addProcessPreviewAliases(preview_body, *selected_preview);
+            body["preview"] = std::move(preview_body);
+        }
+        return http::HttpResponse {202, {{"Content-Type", "application/json"}}, body.dump()};
     }
 
     const auto result = service_->processMiguResources(std::move(*query));
     if (result.batch_id.empty()) {
         return jsonError(503, "migu resource workflow is not configured");
     }
-    return http::HttpResponse {200, {{"Content-Type", "application/json"}}, resourceProcessResultToJson(result).dump()};
+    auto body = resourceProcessResultToJson(result);
+    if (selected_preview) {
+        auto preview_body = resourcePreviewToJson(*selected_preview);
+        preview_body["action"] = "process";
+        preview_body["source"] = "migu";
+        addProcessPreviewAliases(preview_body, *selected_preview);
+        body["preview"] = std::move(preview_body);
+    }
+    return http::HttpResponse {200, {{"Content-Type", "application/json"}}, body.dump()};
 }
 
 http::HttpResponse CrawlerController::handleListMiguBackfillQueue(http::HttpRequest req)

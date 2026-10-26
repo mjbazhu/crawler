@@ -9,6 +9,7 @@ namespace orchestrator::modules::crawler::infrastructure::music::migu::parser {
 class MiguAlbumSourceParser;
 class MiguPageInspector;
 class MiguParseResultParser;
+class MiguSingerProfileParser;
 class MiguSingerSourceParser;
 class MiguSongSourceParser;
 
@@ -31,6 +32,9 @@ public:
     // 解析可直接入库的专辑平台来源元数据。
     std::vector<application::model::AlbumSourceMetadata> parseAlbumSources(const std::vector<char> &raw_data) const override;
 
+    // 解析歌手主要信息中的平台声明总数。
+    application::model::SingerSourceProfile parseSingerSourceProfile(const std::vector<char> &raw_data) const override;
+
     // 检查歌手歌曲分页是否结束。
     SingerSongPageInfo inspectSingerSongPage(const std::vector<char> &raw_data) const override;
 
@@ -42,6 +46,7 @@ private:
     std::unique_ptr<MiguSongSourceParser> song_source_parser_;     // 歌曲来源 parser
     std::unique_ptr<MiguSingerSourceParser> singer_source_parser_; // 歌手来源 parser
     std::unique_ptr<MiguAlbumSourceParser> album_source_parser_;   // 专辑来源 parser
+    std::unique_ptr<MiguSingerProfileParser> singer_profile_parser_; // 歌手概览 parser
     std::unique_ptr<MiguPageInspector> page_inspector_;            // 分页检查 parser
 };
 

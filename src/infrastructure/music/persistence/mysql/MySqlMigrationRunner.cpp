@@ -31,11 +31,11 @@ namespace sql_loader = infrastructure::music::persistence::sql;
 
 // 单个 migration 文件描述。
 struct MigrationFile {
-    std::uint64_t version = 0;    // 版本号，例如 2026052101
-    std::string name;             // 文件名中的说明部分
-    std::string path;             // 可加载路径
-    std::string checksum;         // 文件内容 checksum
-    std::string script;           // SQL 脚本
+    std::uint64_t version = 0; // 版本号，例如 2026052101
+    std::string name;          // 文件名中的说明部分
+    std::string path;          // 可加载路径
+    std::string checksum;      // 文件内容 checksum
+    std::string script;        // SQL 脚本
 };
 
 // 计算稳定 32 字符 checksum，用于发现已执行 migration 被修改。
@@ -101,16 +101,7 @@ boost::asio::awaitable<void> ensureMigrationTable(boost::mysql::pooled_connectio
 {
     boost::mysql::results result;
     co_await connection->async_execute(
-        R"SQL(
-CREATE TABLE IF NOT EXISTS schema_migrations (
-    version BIGINT UNSIGNED NOT NULL COMMENT 'migration 版本号',
-    name VARCHAR(255) NOT NULL COMMENT 'migration 名称',
-    checksum VARCHAR(32) NOT NULL COMMENT 'migration 文件 checksum',
-    applied_at BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '执行时间，Unix 秒时间戳',
-    execution_ms BIGINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '执行耗时，毫秒',
-    PRIMARY KEY (version)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Crawler MySQL 版本化 migration 记录'
-)SQL",
+        sql_loader::SqlFileLoader::loadOrThrow("sql/mysql/schema_migrations/create.sql"),
         result,
         boost::asio::use_awaitable
     );
@@ -139,7 +130,7 @@ boost::asio::awaitable<void> releaseMigrationLock(boost::mysql::pooled_connectio
 boost::asio::awaitable<std::map<std::uint64_t, std::string>> loadAppliedMigrations(boost::mysql::pooled_connection &connection)
 {
     boost::mysql::results result;
-    co_await connection->async_execute("SELECT version, checksum FROM schema_migrations", result, boost::asio::use_awaitable);
+    co_await connection->async_execute(sql_loader::SqlFileLoader::loadOrThrow("sql/mysql/schema_migrations/list_applied.sql"), result, boost::asio::use_awaitable);
     std::map<std::uint64_t, std::string> applied;
     for (boost::mysql::row_view row : result.rows()) {
         applied[MySqlValueReader::uint64At(row, 0)] = MySqlValueReader::stringAt(row, 1);
@@ -152,7 +143,7 @@ boost::asio::awaitable<void> recordMigration(boost::mysql::pooled_connection &co
 {
     boost::mysql::results result;
     auto statement = co_await connection->async_prepare_statement(
-        "INSERT INTO schema_migrations (version, name, checksum, applied_at, execution_ms) VALUES (?, ?, ?, UNIX_TIMESTAMP(), ?)",
+        sql_loader::SqlFileLoader::loadOrThrow("sql/mysql/schema_migrations/insert_applied.sql"),
         boost::asio::use_awaitable
     );
     co_await connection->async_execute(statement.bind(migration.version, migration.name, migration.checksum, execution_ms), result, boost::asio::use_awaitable);

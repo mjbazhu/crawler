@@ -1,0 +1,37 @@
+INSERT INTO album_source_refs (
+    album_db_id,
+    source,
+    source_album_id,
+    source_resource_type,
+    source_album_kind,
+    source_title_pinyin,
+    summary,
+    source_song_total,
+    detail_sync_status,
+    detail_synced_at,
+    created_at,
+    updated_at
+) VALUES (
+    ?,
+    ?,
+    ?,
+    NULLIF(?, ''),
+    ?,
+    NULLIF(?, ''),
+    NULLIF(?, ''),
+    NULLIF(?, -1),
+    ?,
+    IF(? = 2, UNIX_TIMESTAMP(), 0),
+    UNIX_TIMESTAMP(),
+    UNIX_TIMESTAMP()
+) ON DUPLICATE KEY UPDATE
+    id = LAST_INSERT_ID(id),
+    album_db_id = VALUES(album_db_id),
+    source_resource_type = COALESCE(VALUES(source_resource_type), source_resource_type),
+    source_album_kind = IF(VALUES(source_album_kind) = 0, source_album_kind, VALUES(source_album_kind)),
+    source_title_pinyin = COALESCE(VALUES(source_title_pinyin), source_title_pinyin),
+    summary = COALESCE(VALUES(summary), summary),
+    source_song_total = COALESCE(VALUES(source_song_total), source_song_total),
+    detail_sync_status = IF(VALUES(detail_sync_status) = 0, detail_sync_status, VALUES(detail_sync_status)),
+    detail_synced_at = IF(VALUES(detail_synced_at) = 0, detail_synced_at, VALUES(detail_synced_at)),
+    updated_at = VALUES(updated_at);

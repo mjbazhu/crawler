@@ -9,6 +9,7 @@ ParserDispatch::ParserDispatch(
     std::shared_ptr<application::ports::SongSourceParser> song_source_parser,
     std::shared_ptr<application::ports::SingerSourceParser> singer_source_parser,
     std::shared_ptr<application::ports::AlbumSourceParser> album_source_parser,
+    std::shared_ptr<application::ports::SingerProfileParser> singer_profile_parser,
     std::shared_ptr<application::ports::PageInspector> page_inspector,
     std::shared_ptr<application::ports::TaskExecutor> parse_executor,
     std::shared_ptr<application::ports::DiagnosticsSink> diagnostics
@@ -16,6 +17,7 @@ ParserDispatch::ParserDispatch(
     song_source_parser_(std::move(song_source_parser)),
     singer_source_parser_(std::move(singer_source_parser)),
     album_source_parser_(std::move(album_source_parser)),
+    singer_profile_parser_(std::move(singer_profile_parser)),
     page_inspector_(std::move(page_inspector)),
     parse_runner_(std::move(parse_executor), std::move(diagnostics))
 {}
@@ -81,6 +83,22 @@ std::vector<application::model::AlbumSourceMetadata> ParserDispatch::parseAlbumS
         },
         {},
         "parse album sources"
+    );
+}
+
+application::model::SingerSourceProfile ParserDispatch::parseSingerSourceProfile(std::vector<char> body)
+{
+    if (!singer_profile_parser_) {
+        return {};
+    }
+
+    auto parser = singer_profile_parser_;
+    return parse_runner_.run<application::model::SingerSourceProfile>(
+        [parser, body = std::move(body)]() {
+            return parser ? parser->parseSingerSourceProfile(body) : application::model::SingerSourceProfile {};
+        },
+        {},
+        "parse singer source profile"
     );
 }
 

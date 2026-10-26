@@ -70,4 +70,17 @@ int MySqlValueReader::intAt(boost::mysql::row_view row, std::size_t index)
     return static_cast<int>(value);
 }
 
+std::optional<int> MySqlValueReader::optionalIntAt(boost::mysql::row_view row, std::size_t index)
+{
+    if (index >= row.size() || row[index].is_null()) {
+        return std::nullopt;
+    }
+
+    const auto value = int64At(row, index);
+    if (value > (std::numeric_limits<int>::max)() || value < (std::numeric_limits<int>::min)()) {
+        return std::nullopt;
+    }
+    return static_cast<int>(value);
+}
+
 } // namespace orchestrator::modules::crawler::infrastructure::music::persistence::mysql

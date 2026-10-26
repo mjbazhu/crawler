@@ -124,11 +124,13 @@ application::model::SingerSourceSyncTarget mapSingerTargetRow(boost::mysql::row_
     target.source_country = MySqlValueReader::stringAt(row, 6);
     target.gender = MySqlValueReader::intAt(row, 7);
     target.avatar_url = MySqlValueReader::stringAt(row, 8);
-    target.sync_status = MySqlValueReader::intAt(row, 9);
-    target.synced_at = MySqlValueReader::uint64At(row, 10);
-    target.sync_count = MySqlValueReader::intAt(row, 11);
-    target.sync_error = MySqlValueReader::stringAt(row, 12);
-    target.updated_at = MySqlValueReader::uint64At(row, 13);
+    target.source_song_total = MySqlValueReader::optionalIntAt(row, 9);
+    target.source_album_total = MySqlValueReader::optionalIntAt(row, 10);
+    target.sync_status = MySqlValueReader::intAt(row, 11);
+    target.synced_at = MySqlValueReader::uint64At(row, 12);
+    target.sync_count = MySqlValueReader::intAt(row, 13);
+    target.sync_error = MySqlValueReader::stringAt(row, 14);
+    target.updated_at = MySqlValueReader::uint64At(row, 15);
     return target;
 }
 

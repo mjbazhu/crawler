@@ -41,6 +41,9 @@ public:
     // 预览 Migu 从库歌手专辑采集命中范围，不认领目标。
     http::HttpResponse handlePreviewMiguSingerAlbumsCrawlFromDb(http::HttpRequest req);
 
+    // 刷新库内歌手主要信息中的歌曲和专辑总数。
+    http::HttpResponse handleRefreshMiguSingerProfiles(http::HttpRequest req);
+
     // 处理 Migu 专辑详情补齐请求，返回批量任务 ID。
     http::HttpResponse handleStartMiguAlbumDetailsBackfill(http::HttpRequest req);
 

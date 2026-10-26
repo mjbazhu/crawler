@@ -50,7 +50,7 @@ void testSingerSongCoverPrefersSongItemImg3()
                         "img1": "/data/oss/resource/low-img1.webp",
                         "img2": "/data/oss/resource/middle-img2.webp",
                         "img3": "/data/oss/resource/high-img3.webp",
-                        "singerList": [{"id": "18196", "name": "Test Artist"}],
+                        "singerList": [{"id": "18196", "name": "Test Artist", "nameSpelling": "testartist"}],
                         "audioFormats": [{"resourceType": "2", "formatType": "HQ"}]
                     }
                 }]
@@ -62,6 +62,8 @@ void testSingerSongCoverPrefersSongItemImg3()
     const auto songs = parser.parseSongSources(toBytes(raw));
     require(songs.size() == 1, "songs.size() == 1");
     require(songs.front().cover_url == "https://d.musicapp.migu.cn/data/oss/resource/high-img3.webp", "song cover should prefer songItem.img3 and add Migu prefix");
+    require(songs.front().artist_refs.size() == 1, "song artist refs should be parsed");
+    require(songs.front().artist_refs.front().source_artist_name_pinyin == "testartist", "song artist nameSpelling should be parsed for singer pinyin backfill");
 }
 
 } // namespace

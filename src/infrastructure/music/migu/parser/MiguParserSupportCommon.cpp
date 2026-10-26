@@ -9,6 +9,12 @@ namespace orchestrator::modules::crawler::infrastructure::music::migu::parser::d
 
 using json::JsonUtils;
 
+namespace {
+
+constexpr std::string_view kMiguResourcePrefix = "https://d.musicapp.migu.cn";
+
+} // namespace
+
 std::string firstNonEmpty(std::initializer_list<std::string> values)
 {
     for (const auto &value : values) {
@@ -92,6 +98,23 @@ std::string selectImageUrl(const nlohmann::json *items)
         }
     }
     return {};
+}
+
+std::string normalizeMiguResourceUrl(std::string resource_url)
+{
+    if (resource_url.empty() || resource_url.starts_with("http://") || resource_url.starts_with("https://")) {
+        return resource_url;
+    }
+    if (resource_url.starts_with("//")) {
+        return "https:" + resource_url;
+    }
+    if (resource_url.starts_with('/')) {
+        return std::string(kMiguResourcePrefix) + resource_url;
+    }
+    if (resource_url.starts_with("data/oss/") || resource_url.starts_with("data/resource-service/")) {
+        return std::string(kMiguResourcePrefix) + "/" + resource_url;
+    }
+    return resource_url;
 }
 
 bool hasValidSongItem(const nlohmann::json &item)

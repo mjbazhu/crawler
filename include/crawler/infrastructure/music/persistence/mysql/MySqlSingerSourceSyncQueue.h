@@ -16,14 +16,14 @@ class MySqlSingerSourceSyncQueue : public application::ports::SingerSourceSyncQu
 public:
     // 歌手来源同步队列所需 SQL 文件路径。
     struct SqlPaths {
-        std::string select_pending_songs = "sql/mysql/26_select_singer_sources_pending_songs_filtered.sql";   // 查询待同步歌曲列表歌手
-        std::string select_pending_albums = "sql/mysql/27_select_singer_sources_pending_albums_filtered.sql"; // 查询待同步专辑列表歌手
-        std::string count_pending_songs = "sql/mysql/30_count_singer_sources_pending_songs_filtered.sql";     // 统计歌曲列表同步预览范围
-        std::string count_pending_albums = "sql/mysql/31_count_singer_sources_pending_albums_filtered.sql";   // 统计专辑列表同步预览范围
-        std::string claim_pending_songs = "sql/mysql/28_claim_singer_source_songs_sync_status.sql";           // 认领歌曲同步目标
-        std::string claim_pending_albums = "sql/mysql/29_claim_singer_source_albums_sync_status.sql";         // 认领专辑同步目标
-        std::string update_songs_sync_status = "sql/mysql/09_update_singer_source_songs_sync_status.sql";     // 更新歌曲同步状态
-        std::string update_albums_sync_status = "sql/mysql/10_update_singer_source_albums_sync_status.sql";   // 更新专辑同步状态
+        std::string select_pending_songs = "sql/mysql/singer_source_refs/select_singer_sources_pending_songs_filtered.sql";   // 查询待同步歌曲列表歌手
+        std::string select_pending_albums = "sql/mysql/singer_source_refs/select_singer_sources_pending_albums_filtered.sql"; // 查询待同步专辑列表歌手
+        std::string count_pending_songs = "sql/mysql/singer_source_refs/count_singer_sources_pending_songs_filtered.sql";     // 统计歌曲列表同步预览范围
+        std::string count_pending_albums = "sql/mysql/singer_source_refs/count_singer_sources_pending_albums_filtered.sql";   // 统计专辑列表同步预览范围
+        std::string claim_pending_songs = "sql/mysql/singer_source_refs/claim_singer_source_songs_sync_status.sql";           // 认领歌曲同步目标
+        std::string claim_pending_albums = "sql/mysql/singer_source_refs/claim_singer_source_albums_sync_status.sql";         // 认领专辑同步目标
+        std::string update_songs_sync_status = "sql/mysql/singer_source_refs/update_singer_source_songs_sync_status.sql";     // 更新歌曲同步状态
+        std::string update_albums_sync_status = "sql/mysql/singer_source_refs/update_singer_source_albums_sync_status.sql";   // 更新专辑同步状态
     };
 
     // 保存连接池并加载默认 SQL 模板。

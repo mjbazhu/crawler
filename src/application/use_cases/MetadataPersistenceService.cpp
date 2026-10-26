@@ -1,6 +1,8 @@
 #include "crawler/application/use_cases/MetadataPersistenceService.h"
 
 #include <algorithm>
+#include <map>
+#include <utility>
 #include <variant>
 
 namespace orchestrator::modules::crawler::application::use_cases {
@@ -51,6 +53,33 @@ std::vector<T> limitedCopyAllowAll(const std::vector<T> &items, int limit)
     return limitedCopy(items, limit);
 }
 
+// 从歌曲解析结果中收集歌手拼音回填项，按平台歌手 ID 去重。
+std::vector<application::model::SingerSourceNamePinyinPatch> collectSingerNamePinyinPatches(const std::vector<application::model::SongSourceMetadata> &songs)
+{
+    std::map<std::pair<std::string, std::string>, std::string> unique_pinyin;
+    for (const auto &song : songs) {
+        if (song.source.empty()) {
+            continue;
+        }
+        for (const auto &artist_ref : song.artist_refs) {
+            if (artist_ref.source_artist_id.empty() || artist_ref.source_artist_name_pinyin.empty()) {
+                continue;
+            }
+            const auto key = std::make_pair(song.source, artist_ref.source_artist_id);
+            if (!unique_pinyin.contains(key)) {
+                unique_pinyin.emplace(key, artist_ref.source_artist_name_pinyin);
+            }
+        }
+    }
+
+    std::vector<application::model::SingerSourceNamePinyinPatch> patches;
+    patches.reserve(unique_pinyin.size());
+    for (const auto &[key, pinyin] : unique_pinyin) {
+        patches.push_back({key.first, key.second, pinyin});
+    }
+    return patches;
+}
+
 } // namespace
 
 MetadataPersistenceService::MetadataPersistenceService(
@@ -61,8 +90,10 @@ MetadataPersistenceService::MetadataPersistenceService(
     std::shared_ptr<application::ports::SongSourceRepository> song_source_repository,
     std::shared_ptr<application::ports::SingerSourceRepository> singer_source_repository,
     std::shared_ptr<application::ports::AlbumSourceWriter> album_source_writer,
-    std::shared_ptr<application::ports::TaskExecutor> persistence_executor
-) : file_store_(std::move(file_store)),
+    std::shared_ptr<application::ports::TaskExecutor> persistence_executor,
+    MetadataIngestionDependencies ingestion
+) : ingestion_(std::move(ingestion)),
+    file_store_(std::move(file_store)),
     song_repository_(std::move(song_repository)),
     album_repository_(std::move(album_repository)),
     singer_repository_(std::move(singer_repository)),
@@ -105,15 +136,26 @@ bool MetadataPersistenceService::saveParseResults(const std::vector<domain::Pars
 
 bool MetadataPersistenceService::saveSongSources(const std::vector<application::model::SongSourceMetadata> &songs, int limit)
 {
+    if (ingestion_.writer) {
+        application::model::MetadataWriteBatch batch;
+        batch.songs = limitedCopyAllowAll(songs, limit);
+        return !batch.songs.empty() && saveMetadataBatch(std::move(batch));
+    }
     if (!song_source_repository_ || songs.empty()) {
         return false;
     }
 
     auto repository = song_source_repository_;
+    auto singer_repository = singer_source_repository_;
     auto limited = limitedCopyAllowAll(songs, limit);
+    auto pinyin_patches = collectSingerNamePinyinPatches(limited);
     return persistence_runner_.run<bool>(
-        [repository, limited = std::move(limited)]() {
-            return repository ? repository->saveBatch(limited) : false;
+        [repository, singer_repository, limited = std::move(limited), pinyin_patches = std::move(pinyin_patches)]() {
+            const bool saved = repository ? repository->saveBatch(limited) : false;
+            if (saved && singer_repository && !pinyin_patches.empty()) {
+                (void)singer_repository->updateNamePinyinBatch(pinyin_patches);
+            }
+            return saved;
         },
         false,
         "save song sources"
@@ -122,6 +164,11 @@ bool MetadataPersistenceService::saveSongSources(const std::vector<application::
 
 bool MetadataPersistenceService::saveSingerSources(const std::vector<application::model::SingerSourceMetadata> &singers, int limit)
 {
+    if (ingestion_.writer) {
+        application::model::MetadataWriteBatch batch;
+        batch.singers = singerIndexLimitedCopy(singers, limit);
+        return !batch.singers.empty() && saveMetadataBatch(std::move(batch));
+    }
     if (!singer_source_repository_ || singers.empty()) {
         return false;
     }
@@ -137,8 +184,29 @@ bool MetadataPersistenceService::saveSingerSources(const std::vector<application
     );
 }
 
+bool MetadataPersistenceService::saveSingerSourceProfile(const application::model::SingerSourceProfile &profile)
+{
+    if (!singer_source_repository_ || profile.source.empty() || profile.source_singer_id.empty() || (!profile.source_song_total && !profile.source_album_total)) {
+        return false;
+    }
+
+    auto repository = singer_source_repository_;
+    return persistence_runner_.run<bool>(
+        [repository, profile]() {
+            return repository ? repository->updateProfileCounts(profile) : false;
+        },
+        false,
+        "save singer source profile"
+    );
+}
+
 bool MetadataPersistenceService::saveAlbumSources(const std::vector<application::model::AlbumSourceMetadata> &albums, int limit)
 {
+    if (ingestion_.writer) {
+        application::model::MetadataWriteBatch batch;
+        batch.albums = limitedCopyAllowAll(albums, limit);
+        return !batch.albums.empty() && saveMetadataBatch(std::move(batch));
+    }
     if (!album_source_writer_ || albums.empty()) {
         return false;
     }

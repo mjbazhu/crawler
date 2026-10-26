@@ -84,10 +84,21 @@ bool containsStatus(const std::vector<int> &statuses, int status)
     return std::find(statuses.begin(), statuses.end(), status) != statuses.end();
 }
 
-// 资源 preview 默认可治理状态按动作收敛，避免把已完成和永久跳过任务误纳入治理范围。
+// 资源 preview 默认可操作状态按动作收敛，避免把已完成和永久跳过任务误纳入处理范围。
 std::vector<int> eligibleResourceStatuses(const application::model::MiguResourceActionQuery &query)
 {
     std::vector<int> values;
+    if (query.action == "process") {
+        if (query.statuses.empty()) {
+            return {0, 3};
+        }
+        for (int status : query.statuses) {
+            if ((status == 0 || status == 3) && !containsStatus(values, status)) {
+                values.push_back(status);
+            }
+        }
+        return values.empty() ? std::vector<int> {kNoResourceStatus} : values;
+    }
     if (query.action == "retry") {
         if (query.statuses.empty()) {
             return {3};
@@ -133,11 +144,15 @@ application::model::MiguResourcePreviewItem previewItemFromResource(const applic
         item.eligible = resource.updated_at != 0 && resource.updated_at + stale_seconds <= static_cast<std::uint64_t>(std::time(nullptr));
     }
     if (item.eligible) {
-        item.reason = query.action == "retry" ? "eligible_for_retry" : (query.action == "reset" ? "eligible_for_reset" : "eligible_for_recover_stale");
+        item.reason = query.action == "process" ? "eligible_for_process" : (query.action == "retry" ? "eligible_for_retry" : (query.action == "reset" ? "eligible_for_reset" : "eligible_for_recover_stale"));
     } else if (query.action == "recover-stale" && resource.status == 1) {
         item.reason = "running_not_stale";
+    } else if (query.action == "process" && resource.status == 1) {
+        item.reason = "running";
     } else if (resource.status == 2) {
         item.reason = "completed";
+    } else if (resource.status == 4) {
+        item.reason = "skipped";
     } else {
         item.reason = "status_not_eligible";
     }
@@ -156,6 +171,17 @@ int optionalOrMinusOne(std::optional<int> value)
     return value ? *value : -1;
 }
 
+// 判断歌手列表是否需要先按真实关系数计算暴露状态，再做过滤。
+bool requiresSingerSummaryFilter(const application::model::MiguSingerCatalogQuery &query)
+{
+    return !query.songs_sync_statuses.empty()
+           || !query.albums_sync_statuses.empty()
+           || query.min_songs_count.has_value()
+           || query.max_songs_count.has_value()
+           || query.min_albums_count.has_value()
+           || query.max_albums_count.has_value();
+}
+
 // 当前 Unix 秒时间戳。
 std::uint64_t nowSeconds()
 {
@@ -170,6 +196,8 @@ MySqlMusicCatalogQueryRepository::MySqlMusicCatalogQueryRepository(std::shared_p
 MySqlMusicCatalogQueryRepository::MySqlMusicCatalogQueryRepository(std::shared_ptr<MySqlConnectionPool> pool, SqlPaths paths) : pool_(std::move(pool)),
                                                                                                                                 singer_list_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.singer_list)),
                                                                                                                                 singer_count_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.singer_count)),
+                                                                                                                                singer_list_filtered_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.singer_list_filtered)),
+                                                                                                                                singer_count_filtered_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.singer_count_filtered)),
                                                                                                                                 singer_find_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.singer_find)),
                                                                                                                                 album_list_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.album_list)),
                                                                                                                                 album_count_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.album_count)),
@@ -209,6 +237,20 @@ MySqlMusicCatalogQueryRepository::MySqlMusicCatalogQueryRepository(std::shared_p
     if (!pool_) {
         throw std::invalid_argument("[MySqlMusicCatalogQueryRepository] pool must not be null");
     }
+    overview_sql_.emplace("sql/mysql/singers/overview_count.sql", sql_loader::SqlFileLoader::loadOrThrow("sql/mysql/singers/overview_count.sql"));
+    overview_sql_.emplace("sql/mysql/singer_source_refs/overview_count.sql", sql_loader::SqlFileLoader::loadOrThrow("sql/mysql/singer_source_refs/overview_count.sql"));
+    overview_sql_.emplace("sql/mysql/songs/overview_count.sql", sql_loader::SqlFileLoader::loadOrThrow("sql/mysql/songs/overview_count.sql"));
+    overview_sql_.emplace("sql/mysql/song_source_refs/overview_count.sql", sql_loader::SqlFileLoader::loadOrThrow("sql/mysql/song_source_refs/overview_count.sql"));
+    overview_sql_.emplace("sql/mysql/albums/overview_count.sql", sql_loader::SqlFileLoader::loadOrThrow("sql/mysql/albums/overview_count.sql"));
+    overview_sql_.emplace("sql/mysql/album_source_refs/overview_count.sql", sql_loader::SqlFileLoader::loadOrThrow("sql/mysql/album_source_refs/overview_count.sql"));
+    overview_sql_.emplace("sql/mysql/song_artist_refs/overview_count.sql", sql_loader::SqlFileLoader::loadOrThrow("sql/mysql/song_artist_refs/overview_count.sql"));
+    overview_sql_.emplace("sql/mysql/album_artist_refs/overview_count.sql", sql_loader::SqlFileLoader::loadOrThrow("sql/mysql/album_artist_refs/overview_count.sql"));
+    overview_sql_.emplace("sql/mysql/album_song_refs/overview_count.sql", sql_loader::SqlFileLoader::loadOrThrow("sql/mysql/album_song_refs/overview_count.sql"));
+    overview_sql_.emplace("sql/mysql/singer_source_refs/overview_songs_sync_status.sql", sql_loader::SqlFileLoader::loadOrThrow("sql/mysql/singer_source_refs/overview_songs_sync_status.sql"));
+    overview_sql_.emplace("sql/mysql/singer_source_refs/overview_albums_sync_status.sql", sql_loader::SqlFileLoader::loadOrThrow("sql/mysql/singer_source_refs/overview_albums_sync_status.sql"));
+    overview_sql_.emplace("sql/mysql/album_source_refs/overview_detail_sync_status.sql", sql_loader::SqlFileLoader::loadOrThrow("sql/mysql/album_source_refs/overview_detail_sync_status.sql"));
+    overview_sql_.emplace("sql/mysql/album_source_refs/overview_songs_sync_status.sql", sql_loader::SqlFileLoader::loadOrThrow("sql/mysql/album_source_refs/overview_songs_sync_status.sql"));
+    overview_sql_.emplace("sql/mysql/song_resources/overview_status.sql", sql_loader::SqlFileLoader::loadOrThrow("sql/mysql/song_resources/overview_status.sql"));
 }
 
 application::model::MusicOverview MySqlMusicCatalogQueryRepository::overview()
@@ -367,34 +409,34 @@ boost::asio::awaitable<application::model::MusicOverview> MySqlMusicCatalogQuery
     auto connection = co_await pool_->coAcquire();
     boost::mysql::results result;
 
-    co_await connection->async_execute("SELECT COUNT(*) FROM singers", result, boost::asio::use_awaitable);
+    co_await connection->async_execute(overview_sql_.at("sql/mysql/singers/overview_count.sql"), result, boost::asio::use_awaitable);
     overview.singers = scalarCount(result);
-    co_await connection->async_execute("SELECT COUNT(*) FROM singer_source_refs WHERE source = 'migu'", result, boost::asio::use_awaitable);
+    co_await connection->async_execute(overview_sql_.at("sql/mysql/singer_source_refs/overview_count.sql"), result, boost::asio::use_awaitable);
     overview.singer_sources = scalarCount(result);
-    co_await connection->async_execute("SELECT COUNT(*) FROM songs", result, boost::asio::use_awaitable);
+    co_await connection->async_execute(overview_sql_.at("sql/mysql/songs/overview_count.sql"), result, boost::asio::use_awaitable);
     overview.songs = scalarCount(result);
-    co_await connection->async_execute("SELECT COUNT(*) FROM song_source_refs WHERE source = 'migu'", result, boost::asio::use_awaitable);
+    co_await connection->async_execute(overview_sql_.at("sql/mysql/song_source_refs/overview_count.sql"), result, boost::asio::use_awaitable);
     overview.song_sources = scalarCount(result);
-    co_await connection->async_execute("SELECT COUNT(*) FROM albums", result, boost::asio::use_awaitable);
+    co_await connection->async_execute(overview_sql_.at("sql/mysql/albums/overview_count.sql"), result, boost::asio::use_awaitable);
     overview.albums = scalarCount(result);
-    co_await connection->async_execute("SELECT COUNT(*) FROM album_source_refs WHERE source = 'migu'", result, boost::asio::use_awaitable);
+    co_await connection->async_execute(overview_sql_.at("sql/mysql/album_source_refs/overview_count.sql"), result, boost::asio::use_awaitable);
     overview.album_sources = scalarCount(result);
-    co_await connection->async_execute("SELECT COUNT(*) FROM song_artist_refs ar JOIN song_source_refs sr ON sr.id = ar.song_source_ref_id WHERE sr.source = 'migu'", result, boost::asio::use_awaitable);
+    co_await connection->async_execute(overview_sql_.at("sql/mysql/song_artist_refs/overview_count.sql"), result, boost::asio::use_awaitable);
     overview.singer_song_relations = scalarCount(result);
-    co_await connection->async_execute("SELECT COUNT(*) FROM album_source_refs WHERE source = 'migu' AND COALESCE(source_artist_id, '') <> ''", result, boost::asio::use_awaitable);
+    co_await connection->async_execute(overview_sql_.at("sql/mysql/album_artist_refs/overview_count.sql"), result, boost::asio::use_awaitable);
     overview.singer_album_relations = scalarCount(result);
-    co_await connection->async_execute("SELECT COUNT(*) FROM album_song_refs WHERE source = 'migu'", result, boost::asio::use_awaitable);
+    co_await connection->async_execute(overview_sql_.at("sql/mysql/album_song_refs/overview_count.sql"), result, boost::asio::use_awaitable);
     overview.album_song_relations = scalarCount(result);
 
-    co_await connection->async_execute("SELECT songs_sync_status, COUNT(*) FROM singer_source_refs WHERE source = 'migu' GROUP BY songs_sync_status", result, boost::asio::use_awaitable);
+    co_await connection->async_execute(overview_sql_.at("sql/mysql/singer_source_refs/overview_songs_sync_status.sql"), result, boost::asio::use_awaitable);
     readDistribution(result, overview.singer_song_sync);
-    co_await connection->async_execute("SELECT albums_sync_status, COUNT(*) FROM singer_source_refs WHERE source = 'migu' GROUP BY albums_sync_status", result, boost::asio::use_awaitable);
+    co_await connection->async_execute(overview_sql_.at("sql/mysql/singer_source_refs/overview_albums_sync_status.sql"), result, boost::asio::use_awaitable);
     readDistribution(result, overview.singer_album_sync);
-    co_await connection->async_execute("SELECT detail_sync_status, COUNT(*) FROM album_source_refs WHERE source = 'migu' GROUP BY detail_sync_status", result, boost::asio::use_awaitable);
+    co_await connection->async_execute(overview_sql_.at("sql/mysql/album_source_refs/overview_detail_sync_status.sql"), result, boost::asio::use_awaitable);
     readDistribution(result, overview.album_detail_sync);
-    co_await connection->async_execute("SELECT songs_sync_status, COUNT(*) FROM album_source_refs WHERE source = 'migu' GROUP BY songs_sync_status", result, boost::asio::use_awaitable);
+    co_await connection->async_execute(overview_sql_.at("sql/mysql/album_source_refs/overview_songs_sync_status.sql"), result, boost::asio::use_awaitable);
     readDistribution(result, overview.album_song_sync);
-    co_await connection->async_execute("SELECT status, COUNT(*) FROM song_resources GROUP BY status", result, boost::asio::use_awaitable);
+    co_await connection->async_execute(overview_sql_.at("sql/mysql/song_resources/overview_status.sql"), result, boost::asio::use_awaitable);
     readDistribution(result, overview.resource_status);
 
     co_return overview;
@@ -416,13 +458,24 @@ boost::asio::awaitable<application::model::MiguSingerCatalogPage> MySqlMusicCata
     const auto offset = static_cast<std::uint64_t>((query.page - 1) * query.page_size);
     auto connection = co_await pool_->coAcquire();
     boost::mysql::results result;
+    const bool summary_filter = requiresSingerSummaryFilter(query);
 
-    auto count_statement = co_await connection->async_prepare_statement(singer_count_sql_, boost::asio::use_awaitable);
-    co_await connection->async_execute(count_statement.bind(query.source, query.keyword, query.keyword, query.keyword, query.country, query.country, gender, gender, hasStatuses(query.songs_sync_statuses), songs[0], songs[1], songs[2], songs[3], songs[4], hasStatuses(query.albums_sync_statuses), albums[0], albums[1], albums[2], albums[3], albums[4], min_songs_count, min_songs_count, max_songs_count, max_songs_count, min_albums_count, min_albums_count, max_albums_count, max_albums_count), result, boost::asio::use_awaitable);
+    if (summary_filter) {
+        auto count_statement = co_await connection->async_prepare_statement(singer_count_filtered_sql_, boost::asio::use_awaitable);
+        co_await connection->async_execute(count_statement.bind(query.source, query.keyword, query.keyword, query.keyword, query.source_singer_id, query.source_singer_id, query.country, query.country, gender, gender, hasStatuses(query.songs_sync_statuses), songs[0], songs[1], songs[2], songs[3], songs[4], hasStatuses(query.albums_sync_statuses), albums[0], albums[1], albums[2], albums[3], albums[4], min_songs_count, min_songs_count, max_songs_count, max_songs_count, min_albums_count, min_albums_count, max_albums_count, max_albums_count), result, boost::asio::use_awaitable);
+    } else {
+        auto count_statement = co_await connection->async_prepare_statement(singer_count_sql_, boost::asio::use_awaitable);
+        co_await connection->async_execute(count_statement.bind(query.source, query.keyword, query.keyword, query.keyword, query.source_singer_id, query.source_singer_id, query.country, query.country, gender, gender), result, boost::asio::use_awaitable);
+    }
+
     page.total = scalarCount(result);
-
-    auto list_statement = co_await connection->async_prepare_statement(singer_list_sql_, boost::asio::use_awaitable);
-    co_await connection->async_execute(list_statement.bind(query.source, query.keyword, query.keyword, query.keyword, query.country, query.country, gender, gender, hasStatuses(query.songs_sync_statuses), songs[0], songs[1], songs[2], songs[3], songs[4], hasStatuses(query.albums_sync_statuses), albums[0], albums[1], albums[2], albums[3], albums[4], min_songs_count, min_songs_count, max_songs_count, max_songs_count, min_albums_count, min_albums_count, max_albums_count, max_albums_count, static_cast<std::uint64_t>(query.page_size), offset), result, boost::asio::use_awaitable);
+    if (summary_filter) {
+        auto list_statement = co_await connection->async_prepare_statement(singer_list_filtered_sql_, boost::asio::use_awaitable);
+        co_await connection->async_execute(list_statement.bind(query.source, query.keyword, query.keyword, query.keyword, query.source_singer_id, query.source_singer_id, query.country, query.country, gender, gender, hasStatuses(query.songs_sync_statuses), songs[0], songs[1], songs[2], songs[3], songs[4], hasStatuses(query.albums_sync_statuses), albums[0], albums[1], albums[2], albums[3], albums[4], min_songs_count, min_songs_count, max_songs_count, max_songs_count, min_albums_count, min_albums_count, max_albums_count, max_albums_count, query.keyword, static_cast<std::uint64_t>(query.page_size), offset, query.keyword), result, boost::asio::use_awaitable);
+    } else {
+        auto list_statement = co_await connection->async_prepare_statement(singer_list_sql_, boost::asio::use_awaitable);
+        co_await connection->async_execute(list_statement.bind(query.source, query.keyword, query.keyword, query.keyword, query.source_singer_id, query.source_singer_id, query.country, query.country, gender, gender, query.keyword, static_cast<std::uint64_t>(query.page_size), offset, query.keyword), result, boost::asio::use_awaitable);
+    }
     for (boost::mysql::row_view row : result.rows()) {
         page.items.push_back(mapSinger(row));
     }
@@ -717,7 +770,7 @@ boost::asio::awaitable<application::model::MiguSchemaStatus> MySqlMusicCatalogQu
 {
     application::model::MiguSchemaStatus status;
     status.checked_at = nowSeconds();
-    status.latest_available_version = 2026052111;
+    status.latest_available_version = 2026062701;
     auto connection = co_await pool_->coAcquire();
     boost::mysql::results result;
     co_await connection->async_execute(schema_status_sql_, result, boost::asio::use_awaitable);
@@ -771,7 +824,28 @@ boost::asio::awaitable<bool> MySqlMusicCatalogQueryRepository::coAppendGovernanc
         if (event.source.empty()) {
             event.source = "migu";
         }
-        co_await connection->async_execute(statement.bind(event.source, event.action, event.target_type, event.target_id, event.batch_id, event.before_status, event.after_status, event.result_code, event.error_category, event.reason, event.payload.empty() ? "{}" : event.payload, event.created_at), result, boost::asio::use_awaitable);
+        co_await connection->async_execute(
+            statement.bind(
+                event.source,
+                event.action,
+                event.target_type,
+                event.target_id,
+                event.target_name,
+                event.target_summary,
+                event.target_source_id,
+                event.target_owner_name,
+                event.batch_id,
+                event.before_status,
+                event.after_status,
+                event.result_code,
+                event.error_category,
+                event.reason,
+                event.payload.empty() ? "{}" : event.payload,
+                event.created_at
+            ),
+            result,
+            boost::asio::use_awaitable
+        );
     }
     co_return true;
 }
@@ -922,22 +996,23 @@ application::model::MiguSingerCatalogRecord MySqlMusicCatalogQueryRepository::ma
     singer.source_singer_id = MySqlValueReader::stringAt(row, 9);
     singer.source_country = MySqlValueReader::stringAt(row, 10);
     singer.source_tag = MySqlValueReader::stringAt(row, 11);
-    singer.source_metric = MySqlValueReader::stringAt(row, 12);
-    singer.avatar_url = MySqlValueReader::stringAt(row, 13);
-    singer.songs_sync_status = MySqlValueReader::intAt(row, 14);
-    singer.songs_synced_at = MySqlValueReader::uint64At(row, 15);
-    singer.songs_sync_count = MySqlValueReader::intAt(row, 16);
-    singer.songs_sync_error = MySqlValueReader::stringAt(row, 17);
-    singer.songs_last_batch_id = MySqlValueReader::stringAt(row, 18);
-    singer.songs_running_batch_id = MySqlValueReader::stringAt(row, 19);
-    singer.albums_sync_status = MySqlValueReader::intAt(row, 20);
-    singer.albums_synced_at = MySqlValueReader::uint64At(row, 21);
-    singer.albums_sync_count = MySqlValueReader::intAt(row, 22);
-    singer.albums_sync_error = MySqlValueReader::stringAt(row, 23);
-    singer.albums_last_batch_id = MySqlValueReader::stringAt(row, 24);
-    singer.albums_running_batch_id = MySqlValueReader::stringAt(row, 25);
-    singer.created_at = MySqlValueReader::uint64At(row, 26);
-    singer.updated_at = MySqlValueReader::uint64At(row, 27);
+    singer.source_song_total = MySqlValueReader::optionalIntAt(row, 12);
+    singer.source_album_total = MySqlValueReader::optionalIntAt(row, 13);
+    singer.avatar_url = MySqlValueReader::stringAt(row, 14);
+    singer.songs_sync_status = MySqlValueReader::intAt(row, 15);
+    singer.songs_synced_at = MySqlValueReader::uint64At(row, 16);
+    singer.songs_sync_count = MySqlValueReader::intAt(row, 17);
+    singer.songs_sync_error = MySqlValueReader::stringAt(row, 18);
+    singer.songs_last_batch_id = MySqlValueReader::stringAt(row, 19);
+    singer.songs_running_batch_id = MySqlValueReader::stringAt(row, 20);
+    singer.albums_sync_status = MySqlValueReader::intAt(row, 21);
+    singer.albums_synced_at = MySqlValueReader::uint64At(row, 22);
+    singer.albums_sync_count = MySqlValueReader::intAt(row, 23);
+    singer.albums_sync_error = MySqlValueReader::stringAt(row, 24);
+    singer.albums_last_batch_id = MySqlValueReader::stringAt(row, 25);
+    singer.albums_running_batch_id = MySqlValueReader::stringAt(row, 26);
+    singer.created_at = MySqlValueReader::uint64At(row, 27);
+    singer.updated_at = MySqlValueReader::uint64At(row, 28);
     return singer;
 }
 
@@ -977,6 +1052,7 @@ application::model::MiguAlbumCatalogRecord MySqlMusicCatalogQueryRepository::map
     album.songs_running_batch_id = MySqlValueReader::stringAt(row, 30);
     album.created_at = MySqlValueReader::uint64At(row, 31);
     album.updated_at = MySqlValueReader::uint64At(row, 32);
+    album.album_songs_count = MySqlValueReader::intAt(row, 33);
     return album;
 }
 
@@ -1027,19 +1103,22 @@ application::model::MiguResourceQueueRecord MySqlMusicCatalogQueryRepository::ma
     resource.format_type = MySqlValueReader::stringAt(row, 9);
     resource.remote_url = MySqlValueReader::stringAt(row, 10);
     resource.local_path = MySqlValueReader::stringAt(row, 11);
-    resource.size_bytes = MySqlValueReader::uint64At(row, 12);
-    resource.checksum = MySqlValueReader::stringAt(row, 13);
-    resource.status = MySqlValueReader::intAt(row, 14);
-    resource.retry_count = MySqlValueReader::intAt(row, 15);
-    resource.last_error = MySqlValueReader::stringAt(row, 16);
-    resource.error_category = MySqlValueReader::stringAt(row, 17);
-    resource.result_code = MySqlValueReader::stringAt(row, 18);
-    resource.last_batch_id = MySqlValueReader::stringAt(row, 19);
-    resource.running_batch_id = MySqlValueReader::stringAt(row, 20);
-    resource.last_processed_at = MySqlValueReader::uint64At(row, 21);
-    resource.fetched_at = MySqlValueReader::uint64At(row, 22);
-    resource.created_at = MySqlValueReader::uint64At(row, 23);
-    resource.updated_at = MySqlValueReader::uint64At(row, 24);
+    resource.cloud_backend = MySqlValueReader::stringAt(row, 12);
+    resource.cloud_path = MySqlValueReader::stringAt(row, 13);
+    resource.size_bytes = MySqlValueReader::uint64At(row, 14);
+    resource.checksum = MySqlValueReader::stringAt(row, 15);
+    resource.status = MySqlValueReader::intAt(row, 16);
+    resource.retry_count = MySqlValueReader::intAt(row, 17);
+    resource.last_error = MySqlValueReader::stringAt(row, 18);
+    resource.error_category = MySqlValueReader::stringAt(row, 19);
+    resource.result_code = MySqlValueReader::stringAt(row, 20);
+    resource.last_batch_id = MySqlValueReader::stringAt(row, 21);
+    resource.running_batch_id = MySqlValueReader::stringAt(row, 22);
+    resource.last_processed_at = MySqlValueReader::uint64At(row, 23);
+    resource.fetched_at = MySqlValueReader::uint64At(row, 24);
+    resource.cloud_uploaded_at = MySqlValueReader::uint64At(row, 25);
+    resource.created_at = MySqlValueReader::uint64At(row, 26);
+    resource.updated_at = MySqlValueReader::uint64At(row, 27);
     return resource;
 }
 
@@ -1051,14 +1130,18 @@ application::model::MiguGovernanceEventRecord MySqlMusicCatalogQueryRepository::
     event.action = MySqlValueReader::stringAt(row, 2);
     event.target_type = MySqlValueReader::stringAt(row, 3);
     event.target_id = MySqlValueReader::stringAt(row, 4);
-    event.batch_id = MySqlValueReader::stringAt(row, 5);
-    event.before_status = MySqlValueReader::stringAt(row, 6);
-    event.after_status = MySqlValueReader::stringAt(row, 7);
-    event.result_code = MySqlValueReader::stringAt(row, 8);
-    event.error_category = MySqlValueReader::stringAt(row, 9);
-    event.reason = MySqlValueReader::stringAt(row, 10);
-    event.payload = MySqlValueReader::stringAt(row, 11);
-    event.created_at = MySqlValueReader::uint64At(row, 12);
+    event.target_name = MySqlValueReader::stringAt(row, 5);
+    event.target_summary = MySqlValueReader::stringAt(row, 6);
+    event.target_source_id = MySqlValueReader::stringAt(row, 7);
+    event.target_owner_name = MySqlValueReader::stringAt(row, 8);
+    event.batch_id = MySqlValueReader::stringAt(row, 9);
+    event.before_status = MySqlValueReader::stringAt(row, 10);
+    event.after_status = MySqlValueReader::stringAt(row, 11);
+    event.result_code = MySqlValueReader::stringAt(row, 12);
+    event.error_category = MySqlValueReader::stringAt(row, 13);
+    event.reason = MySqlValueReader::stringAt(row, 14);
+    event.payload = MySqlValueReader::stringAt(row, 15);
+    event.created_at = MySqlValueReader::uint64At(row, 16);
     return event;
 }
 
@@ -1066,13 +1149,11 @@ application::model::AlbumSourceMetadata MySqlMusicCatalogQueryRepository::mapAlb
 {
     application::model::AlbumSourceMetadata album;
     album.source = MySqlValueReader::stringAt(row, 0);
-    album.source_item_key = MySqlValueReader::stringAt(row, 1);
     album.source_album_id = MySqlValueReader::stringAt(row, 2);
     album.source_resource_type = MySqlValueReader::stringAt(row, 3);
     album.source_res_type = MySqlValueReader::stringAt(row, 4);
     album.source_action = MySqlValueReader::stringAt(row, 5);
     album.source_album_kind = MySqlValueReader::intAt(row, 6);
-    album.source_title = MySqlValueReader::stringAt(row, 7);
     album.source_artist_id = MySqlValueReader::stringAt(row, 8);
     album.source_artist_name = MySqlValueReader::stringAt(row, 9);
     album.cover_url = MySqlValueReader::stringAt(row, 10);

@@ -53,14 +53,12 @@ application::model::AlbumSourceMetadata mapPendingDetailRow(boost::mysql::row_vi
 {
     application::model::AlbumSourceMetadata album;
     album.source = MySqlValueReader::stringAt(row, 2);
-    album.source_item_key = MySqlValueReader::stringAt(row, 3);
     album.source_album_id = MySqlValueReader::stringAt(row, 4);
     album.source_resource_type = MySqlValueReader::stringAt(row, 5);
     album.source_res_type = MySqlValueReader::stringAt(row, 6);
     album.source_action = MySqlValueReader::stringAt(row, 7);
     album.source_album_kind = MySqlValueReader::intAt(row, 8);
-    album.source_title = MySqlValueReader::stringAt(row, 9);
-    album.title = album.source_title;
+    album.title = MySqlValueReader::stringAt(row, 9);
     album.normalized_title = album.title;
     album.source_artist_id = MySqlValueReader::stringAt(row, 10);
     album.source_artist_name = MySqlValueReader::stringAt(row, 11);
@@ -75,14 +73,12 @@ application::model::AlbumSourceMetadata mapPendingSongsRow(boost::mysql::row_vie
 {
     application::model::AlbumSourceMetadata album;
     album.source = MySqlValueReader::stringAt(row, 2);
-    album.source_item_key = MySqlValueReader::stringAt(row, 3);
     album.source_album_id = MySqlValueReader::stringAt(row, 4);
     album.source_resource_type = MySqlValueReader::stringAt(row, 5);
     album.source_res_type = MySqlValueReader::stringAt(row, 6);
     album.source_action = MySqlValueReader::stringAt(row, 7);
     album.source_album_kind = MySqlValueReader::intAt(row, 8);
-    album.source_title = MySqlValueReader::stringAt(row, 9);
-    album.title = album.source_title;
+    album.title = MySqlValueReader::stringAt(row, 9);
     album.normalized_title = album.title;
     album.source_artist_id = MySqlValueReader::stringAt(row, 10);
     album.source_artist_name = MySqlValueReader::stringAt(row, 11);
@@ -99,10 +95,10 @@ MySqlAlbumSourceSyncQueue::MySqlAlbumSourceSyncQueue(std::shared_ptr<MySqlConnec
 {}
 
 MySqlAlbumSourceSyncQueue::MySqlAlbumSourceSyncQueue(std::shared_ptr<MySqlConnectionPool> pool, MySqlAlbumSourceSqlPaths paths) : pool_(std::move(pool)),
-                                                                                                                                    update_detail_sync_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.update_detail_sync_status)),
-                                                                                                                                    update_songs_sync_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.update_songs_sync_status)),
-                                                                                                                                    select_pending_details_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.select_pending_details)),
-                                                                                                                                    select_pending_songs_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.select_pending_songs))
+                                                                                                                                  update_detail_sync_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.update_detail_sync_status)),
+                                                                                                                                  update_songs_sync_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.update_songs_sync_status)),
+                                                                                                                                  select_pending_details_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.select_pending_details)),
+                                                                                                                                  select_pending_songs_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.select_pending_songs))
 {
     if (!pool_) {
         throw std::invalid_argument("[MySqlAlbumSourceSyncQueue] pool must not be null");
