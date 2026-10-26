@@ -64,13 +64,64 @@ void removeQuietly(const std::filesystem::path &path)
     std::filesystem::remove(path, ignored);
 }
 
+// Windows 下刚关闭文件后 rename 偶尔会被短暂占用，提交时做有限重试。
+std::string renameReplacingWithRetry(const std::filesystem::path &temp_path, const std::filesystem::path &full_path)
+{
+    constexpr int kMaxAttempts = 240;
+    std::string last_error;
+    for (int attempt = 0; attempt < kMaxAttempts; ++attempt) {
+        std::error_code rename_ec;
+        std::filesystem::rename(temp_path, full_path, rename_ec);
+        if (!rename_ec) {
+            return {};
+        }
+        last_error = rename_ec.message();
+
+        std::error_code exists_ec;
+        if (std::filesystem::exists(full_path, exists_ec)) {
+            std::error_code remove_ec;
+            std::filesystem::remove(full_path, remove_ec);
+            if (remove_ec) {
+                last_error = remove_ec.message();
+                if (attempt + 1 == kMaxAttempts) {
+                    std::cerr << "[FileStorage] Replace failed after retries: " << temp_path << " -> " << full_path << " Error: " << last_error << std::endl;
+                    return "file_replace_failed";
+                }
+            } else {
+                rename_ec.clear();
+                std::filesystem::rename(temp_path, full_path, rename_ec);
+                if (!rename_ec) {
+                    return {};
+                }
+                last_error = rename_ec.message();
+            }
+        } else if (!exists_ec) {
+            std::error_code copy_ec;
+            std::filesystem::copy_file(temp_path, full_path, std::filesystem::copy_options::overwrite_existing, copy_ec);
+            if (!copy_ec) {
+                removeQuietly(temp_path);
+                return {};
+            }
+            last_error = copy_ec.message();
+        } else {
+            last_error = exists_ec.message();
+        }
+
+        if (attempt + 1 < kMaxAttempts) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        }
+    }
+    std::cerr << "[FileStorage] Rename failed after retries: " << temp_path << " -> " << full_path << " Error: " << last_error << std::endl;
+    return "file_rename_failed";
+}
+
 // 本地文件流式写入会话，先写临时文件，commit 成功后才替换最终路径。
 class FileSongResourceBlobWriteSession : public application::ports::SongResourceBlobWriteSession {
 public:
     FileSongResourceBlobWriteSession(std::string relative_path, std::filesystem::path full_path, std::filesystem::path temp_path) : relative_path_(std::move(relative_path)),
                                                                                                                                     full_path_(std::move(full_path)),
                                                                                                                                     temp_path_(std::move(temp_path)),
-                                                                                                                                    output_(temp_path_, std::ios::binary | std::ios::out | std::ios::trunc)
+                                                                                                                                    output_(std::make_unique<std::ofstream>(temp_path_, std::ios::binary | std::ios::out | std::ios::trunc))
     {
         SHA256_Init(&sha_context_);
     }
@@ -84,7 +135,7 @@ public:
 
     bool opened() const
     {
-        return output_.is_open();
+        return output_ && output_->is_open();
     }
 
     bool write(std::string_view chunk, std::string &error) override
@@ -93,7 +144,7 @@ public:
             error = "blob_write_session_closed";
             return false;
         }
-        if (!output_.is_open()) {
+        if (!output_ || !output_->is_open()) {
             error = "temp_file_open_failed";
             return false;
         }
@@ -105,8 +156,8 @@ public:
             return false;
         }
 
-        output_.write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
-        if (!output_) {
+        output_->write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
+        if (!*output_) {
             error = "file_write_failed";
             return false;
         }
@@ -128,39 +179,24 @@ public:
             return result;
         }
 
-        output_.flush();
-        if (!output_) {
+        output_->flush();
+        if (!*output_) {
             result.error = "file_flush_failed";
             abort();
             return result;
         }
-        output_.close();
-        if (!output_) {
+        output_->close();
+        if (!*output_) {
             result.error = "file_close_failed";
             abort();
             return result;
         }
+        output_.reset();
 
-        std::error_code rename_ec;
-        std::filesystem::rename(temp_path_, full_path_, rename_ec);
-        if (rename_ec) {
-            std::error_code exists_ec;
-            if (std::filesystem::exists(full_path_, exists_ec)) {
-                std::error_code remove_ec;
-                std::filesystem::remove(full_path_, remove_ec);
-                if (remove_ec) {
-                    result.error = "file_replace_failed";
-                    abort();
-                    return result;
-                }
-                rename_ec.clear();
-                std::filesystem::rename(temp_path_, full_path_, rename_ec);
-            }
-            if (rename_ec) {
-                result.error = "file_rename_failed";
-                abort();
-                return result;
-            }
+        if (auto rename_error = renameReplacingWithRetry(temp_path_, full_path_); !rename_error.empty()) {
+            result.error = std::move(rename_error);
+            abort();
+            return result;
         }
 
         std::error_code size_ec;
@@ -189,8 +225,11 @@ public:
             return;
         }
         aborted_ = true;
-        if (output_.is_open()) {
-            output_.close();
+        if (output_) {
+            if (output_->is_open()) {
+                output_->close();
+            }
+            output_.reset();
         }
         removeQuietly(temp_path_);
     }
@@ -199,7 +238,7 @@ private:
     std::string relative_path_;       // 存储相对路径
     std::filesystem::path full_path_; // 最终文件路径
     std::filesystem::path temp_path_; // 临时文件路径
-    std::ofstream output_;            // 临时文件输出流
+    std::unique_ptr<std::ofstream> output_; // 临时文件输出流，commit 前销毁以释放 Windows 文件句柄
     SHA256_CTX sha_context_ {};       // 流式 SHA-256 上下文
     std::uint64_t size_bytes_ = 0;    // 已写入字节数
     bool committed_ = false;          // 是否已提交到最终路径
@@ -279,26 +318,10 @@ bool FileStorage::save(std::string_view relative_path, const std::vector<char> &
         } // ofs 在此处析构，文件关闭
 
         // 4. 将完整临时文件提交到最终路径；Windows 下目标存在时需要先移除。
-        std::error_code rename_ec;
-        std::filesystem::rename(temp_path, full_path, rename_ec);
-        if (rename_ec) {
-            std::error_code exists_ec;
-            if (std::filesystem::exists(full_path, exists_ec)) {
-                std::error_code remove_ec;
-                std::filesystem::remove(full_path, remove_ec);
-                if (remove_ec) {
-                    std::cerr << "[FileStorage] Failed to replace target file: " << full_path << " Error: " << remove_ec.message() << std::endl;
-                    removeQuietly(temp_path);
-                    return false;
-                }
-                rename_ec.clear();
-                std::filesystem::rename(temp_path, full_path, rename_ec);
-            }
-            if (rename_ec) {
-                std::cerr << "[FileStorage] Rename failed for: " << temp_path << " -> " << full_path << " Error: " << rename_ec.message() << std::endl;
-                removeQuietly(temp_path);
-                return false;
-            }
+        if (auto rename_error = renameReplacingWithRetry(temp_path, full_path); !rename_error.empty()) {
+            std::cerr << "[FileStorage] Rename failed for: " << temp_path << " -> " << full_path << " Error: " << rename_error << std::endl;
+            removeQuietly(temp_path);
+            return false;
         }
 
         // 5. 提交后校验最终文件，避免数据库回写一个不可见或不完整的文件。

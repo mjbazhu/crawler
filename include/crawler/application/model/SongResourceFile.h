@@ -88,8 +88,78 @@ struct SongResourceBlobSaveResult {
     bool ok = false;              // 是否保存成功
     std::string local_path;       // 存储系统返回的本地或对象相对路径
     std::uint64_t size_bytes = 0; // 保存字节数
-    std::string checksum;         // SHA-256 校验值
+    std::string checksum;         // 存储校验值，文件存储为 SHA-256，远端存储可带算法前缀
     std::string error;            // 失败原因
+};
+
+// 歌曲资源云端上传请求，输入必须是本地 blob store 已提交的相对路径。
+struct SongResourceCloudUploadRequest {
+    std::string local_path;       // 本地存储根目录下的相对路径
+    std::uint64_t size_bytes = 0; // 本地文件大小，供上传后回写和校验
+    std::string checksum;         // 本地文件校验值，上传成功后沿用到资源记录
+    int timeout_ms = 0;           // 单次上传等待超时；0 表示使用 adapter 默认值
+};
+
+// 歌曲资源云端上传结果，成功后由 workflow 和本地保存结果一起写库。
+struct SongResourceCloudUploadResult {
+    bool ok = false;              // 是否完成云端上传
+    std::string backend;          // 上传后端，例如 baidupcs、rclone
+    std::string cloud_path;       // 云端保存路径
+    std::uint64_t size_bytes = 0; // 云端对象大小；无法查询时沿用本地大小
+    std::string checksum;         // 云端对象校验值或沿用本地校验值
+    std::string error_category;   // 失败分类，例如 persistence、timeout、unknown
+    std::string result_code;      // 结果编码，例如 ok、cloud_upload_failed
+    std::string message;          // 脱敏后的诊断说明
+};
+
+// 批量云端上传对象，输入必须已经保存到本地存储根目录下。
+struct SongResourceBatchCloudUploadObject {
+    std::uint64_t resource_id = 0; // song_resources.id
+    std::string local_path;        // 本地存储根目录下的相对路径
+    std::uint64_t size_bytes = 0;  // 本地文件大小
+    std::string checksum;          // 本地文件校验值
+};
+
+// 批量云端上传请求，用于一次性上传一个资源处理批次。
+struct SongResourceBatchCloudUploadRequest {
+    std::string batch_id;                                      // 当前处理批次 ID
+    std::vector<SongResourceBatchCloudUploadObject> objects;   // 待上传对象
+    int timeout_ms = 0;                                        // 单次批量上传等待超时；0 表示 adapter 默认值
+};
+
+// 批量云端上传对象结果，成功后给 workflow 回写每条资源的云端路径。
+struct SongResourceBatchCloudUploadObjectResult {
+    std::uint64_t resource_id = 0; // song_resources.id
+    std::string local_path;        // 本地相对路径
+    std::string cloud_path;        // 云端保存路径
+};
+
+// 批量云端上传结果，adapter 负责保证返回路径稳定可回写。
+struct SongResourceBatchCloudUploadResult {
+    bool ok = false;                                                   // 是否完成整批上传
+    std::string backend;                                               // 上传后端，例如 baidupcs
+    std::vector<SongResourceBatchCloudUploadObjectResult> objects;     // 每条对象的云端路径
+    std::string error_category;                                        // 失败分类
+    std::string result_code;                                           // 结果编码
+    std::string message;                                               // 脱敏诊断说明
+};
+
+// 歌曲资源远端 URL 复制请求，由远端存储服务直接拉取资源 URL。
+struct SongResourceRemoteCopyRequest {
+    std::string source_url;         // 待复制的资源临时 URL
+    std::string relative_path_hint; // 期望写入的对象相对路径
+    int timeout_ms = 0;             // 单次远端复制等待超时；0 表示使用 adapter 默认值
+};
+
+// 歌曲资源远端 URL 复制结果，成功后可直接用于 song_resources 回写。
+struct SongResourceRemoteCopyResult {
+    bool ok = false;              // 是否完成远端复制并通过验证
+    std::string local_path;       // 存储系统返回的对象相对路径
+    std::uint64_t size_bytes = 0; // 远端对象大小
+    std::string checksum;         // 存储校验值或可诊断的远端对象指纹
+    std::string error_category;   // 失败分类，例如 network、timeout、persistence
+    std::string result_code;      // 结果编码，例如 ok、rclone_job_failed
+    std::string message;          // 脱敏后的诊断说明
 };
 
 } // namespace orchestrator::modules::crawler::application::model

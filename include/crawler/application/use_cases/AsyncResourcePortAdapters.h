@@ -8,7 +8,11 @@
 #include "crawler/application/ports/provider/SongResourceContentFetcher.h"
 #include "crawler/application/ports/provider/SongResourceProvider.h"
 #include "crawler/application/ports/storage/AsyncSongResourceBlobStore.h"
+#include "crawler/application/ports/storage/AsyncSongResourceBatchCloudUploader.h"
+#include "crawler/application/ports/storage/AsyncSongResourceCloudUploader.h"
 #include "crawler/application/ports/storage/SongResourceBlobStore.h"
+#include "crawler/application/ports/storage/SongResourceBatchCloudUploader.h"
+#include "crawler/application/ports/storage/SongResourceCloudUploader.h"
 
 #include <functional>
 #include <memory>
@@ -72,6 +76,30 @@ private:
 
     std::shared_ptr<application::ports::SongResourceBlobStore> store_; // 同步 blob store
     std::shared_ptr<application::ports::AsyncRuntime> runtime_;        // 阻塞调用隔离 runtime
+};
+
+// 把同步云端上传 port 包装成异步 port，外部命令执行由 runtime 隔离。
+class BlockingAsyncSongResourceCloudUploader : public application::ports::AsyncSongResourceCloudUploader {
+public:
+    BlockingAsyncSongResourceCloudUploader(std::shared_ptr<application::ports::SongResourceCloudUploader> uploader, std::shared_ptr<application::ports::AsyncRuntime> runtime);
+
+    application::async::Task<application::model::SongResourceCloudUploadResult> upload(application::model::SongResourceCloudUploadRequest request) override;
+
+private:
+    std::shared_ptr<application::ports::SongResourceCloudUploader> uploader_; // 同步上传 port
+    std::shared_ptr<application::ports::AsyncRuntime> runtime_;               // 阻塞调用隔离 runtime
+};
+
+// 把同步批量云端上传 port 包装成异步 port，外部命令执行由 runtime 隔离。
+class BlockingAsyncSongResourceBatchCloudUploader : public application::ports::AsyncSongResourceBatchCloudUploader {
+public:
+    BlockingAsyncSongResourceBatchCloudUploader(std::shared_ptr<application::ports::SongResourceBatchCloudUploader> uploader, std::shared_ptr<application::ports::AsyncRuntime> runtime);
+
+    application::async::Task<application::model::SongResourceBatchCloudUploadResult> uploadBatch(application::model::SongResourceBatchCloudUploadRequest request) override;
+
+private:
+    std::shared_ptr<application::ports::SongResourceBatchCloudUploader> uploader_; // 同步批量上传 port
+    std::shared_ptr<application::ports::AsyncRuntime> runtime_;                    // 阻塞调用隔离 runtime
 };
 
 } // namespace orchestrator::modules::crawler::application::use_cases

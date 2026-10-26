@@ -203,7 +203,7 @@ private:
 };
 
 BlockingAsyncSongResourceBlobStore::BlockingAsyncSongResourceBlobStore(std::shared_ptr<application::ports::SongResourceBlobStore> store, std::shared_ptr<application::ports::AsyncRuntime> runtime) : store_(std::move(store)),
-                                                                                                                                                                                                   runtime_(std::move(runtime))
+                                                                                                                                   runtime_(std::move(runtime))
 {}
 
 application::async::Task<std::unique_ptr<application::ports::AsyncBlobWriteSession>> BlockingAsyncSongResourceBlobStore::open(application::model::SongResourceBlobStreamSaveRequest request)
@@ -218,6 +218,42 @@ application::async::Task<std::unique_ptr<application::ports::AsyncBlobWriteSessi
         co_return nullptr;
     }
     co_return std::make_unique<Session>(std::move(session), runtime_);
+}
+
+BlockingAsyncSongResourceCloudUploader::BlockingAsyncSongResourceCloudUploader(std::shared_ptr<application::ports::SongResourceCloudUploader> uploader, std::shared_ptr<application::ports::AsyncRuntime> runtime) : uploader_(std::move(uploader)),
+                                                                                                                                                                                                         runtime_(std::move(runtime))
+{}
+
+application::async::Task<application::model::SongResourceCloudUploadResult> BlockingAsyncSongResourceCloudUploader::upload(application::model::SongResourceCloudUploadRequest request)
+{
+    application::model::SongResourceCloudUploadResult result;
+    if (!uploader_ || !runtime_) {
+        result.error_category = "invalid_target";
+        result.result_code = "missing_dependency";
+        result.message = "cloud uploader dependency is not configured";
+        co_return result;
+    }
+    co_return co_await runtime_->postBlocking<application::model::SongResourceCloudUploadResult>([uploader = uploader_, request = std::move(request)]() mutable {
+        return uploader->upload(std::move(request));
+    });
+}
+
+BlockingAsyncSongResourceBatchCloudUploader::BlockingAsyncSongResourceBatchCloudUploader(std::shared_ptr<application::ports::SongResourceBatchCloudUploader> uploader, std::shared_ptr<application::ports::AsyncRuntime> runtime) : uploader_(std::move(uploader)),
+                                                                                                                                                                                                                         runtime_(std::move(runtime))
+{}
+
+application::async::Task<application::model::SongResourceBatchCloudUploadResult> BlockingAsyncSongResourceBatchCloudUploader::uploadBatch(application::model::SongResourceBatchCloudUploadRequest request)
+{
+    application::model::SongResourceBatchCloudUploadResult result;
+    if (!uploader_ || !runtime_) {
+        result.error_category = "invalid_target";
+        result.result_code = "missing_dependency";
+        result.message = "batch cloud uploader dependency is not configured";
+        co_return result;
+    }
+    co_return co_await runtime_->postBlocking<application::model::SongResourceBatchCloudUploadResult>([uploader = uploader_, request = std::move(request)]() mutable {
+        return uploader->uploadBatch(std::move(request));
+    });
 }
 
 } // namespace orchestrator::modules::crawler::application::use_cases

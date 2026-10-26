@@ -160,6 +160,8 @@ add_crawler_test(SongResourceDownloadWorkflowTest tests/migu/flow/SongResourceDo
 add_crawler_test(CrawlerServiceResourceBatchEventTest tests/migu/service/CrawlerServiceResourceBatchEventTest.cpp)
 add_crawler_test(AsyncTaskTest tests/async/AsyncTaskTest.cpp)
 add_crawler_test(LoggerTest tests/infrastructure/logging/LoggerTest.cpp)
+add_crawler_test(RcloneRemoteCopierTest tests/infrastructure/storage/RcloneRemoteCopierTest.cpp)
+add_crawler_test(BaiduPcsGoUploaderTest tests/infrastructure/storage/BaiduPcsGoUploaderTest.cpp)
 add_crawler_test(AsyncSongResourceDownloadWorkflowTest tests/migu/flow/AsyncSongResourceDownloadWorkflowTest.cpp)
 add_crawler_test(AsyncHttpStreamTest tests/infrastructure/http/AsyncHttpStreamTest.cpp)
 add_crawler_test(AsyncFileBlobStoreTest tests/migu/resource/AsyncFileBlobStoreTest.cpp)
