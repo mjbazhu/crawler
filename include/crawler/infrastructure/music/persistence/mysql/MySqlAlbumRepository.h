@@ -20,10 +20,10 @@ class MySqlAlbumRepository : public MySqlCrudRepository<domain::Album, std::uint
 public:
     // 专辑仓储所需的外置 SQL 文件路径。
     struct SqlPaths {
-        std::string upsert = "sql/mysql/catalog/album_upsert.sql";             // 插入或更新专辑 SQL
-        std::string delete_by_id = "sql/mysql/catalog/album_delete_by_id.sql"; // 按本地专辑 id 删除 SQL
-        std::string find_by_id = "sql/mysql/catalog/album_find_by_id.sql";     // 按本地专辑 id 查询 SQL
-        std::string find_all = "sql/mysql/catalog/album_find_all.sql";         // 分页查询 SQL
+        std::string upsert = "sql/mysql/albums/upsert.sql";             // 插入或更新专辑 SQL
+        std::string delete_by_id = "sql/mysql/albums/delete_by_id.sql"; // 按本地专辑 id 删除 SQL
+        std::string find_by_id = "sql/mysql/albums/find_by_id.sql";     // 按本地专辑 id 查询 SQL
+        std::string find_all = "sql/mysql/albums/find_all.sql";         // 分页查询 SQL
     };
 
     // 保存连接池和 SQL 路径，构造阶段加载 SQL 文件以尽早暴露配置错误。

@@ -10,6 +10,7 @@
 #include "crawler/application/ports/provider/SongResourceContentFetcher.h"
 #include "crawler/application/ports/provider/SongResourceProvider.h"
 #include "crawler/application/ports/storage/SongResourceBlobStore.h"
+#include "crawler/application/ports/storage/SongResourceCloudUploader.h"
 #include "crawler/application/use_cases/SongResourcePathPlanner.h"
 
 #include <memory>
@@ -67,10 +68,11 @@ public:
         SongResourcePathPlanner path_planner = {},
         std::shared_ptr<application::ports::TaskExecutor> resource_executor = nullptr,
         std::shared_ptr<application::ports::MiguPacmtokenRefresher> pacmtoken_refresher = nullptr,
-        std::shared_ptr<application::ports::MiguPacmtokenStore> pacmtoken_store = nullptr
+        std::shared_ptr<application::ports::MiguPacmtokenStore> pacmtoken_store = nullptr,
+        std::shared_ptr<application::ports::SongResourceCloudUploader> cloud_uploader = nullptr
     );
 
-    // 处理一批待下载资源；默认不过滤资源类型，audio 成功或受限时顺手只认领一次 lyric/mrc/trc。
+    // 处理一批待下载资源；默认不过滤资源类型，audio 成功或受限时顺手只认领一次 cover/lyric/mrc/trc。
     application::model::SongResourceProcessResult processPending(application::model::SongResourceClaimQuery query, SongResourceProcessListener *listener = nullptr);
 
     // 处理单条已认领资源，供测试或手动编排使用。
@@ -83,7 +85,7 @@ private:
     application::model::SongResourceProcessItem processDirectResource(application::model::SongResourceQueueTarget target, const std::string &batch_id, const application::model::SongResourceProcessOptions &options, SongResourceProcessListener *listener);
     application::model::SongResourceProcessItem downloadAndStore(application::model::SongResourceQueueTarget target, std::string remote_url, const std::string &batch_id, const application::model::SongResourceProcessOptions &options);
     application::model::SongResourceProcessItem downloadAndStoreAttempt(application::model::SongResourceQueueTarget target, std::string remote_url, const std::string &batch_id, const application::model::SongResourceProcessOptions &options, bool write_failure, SongResourceProcessListener *listener);
-    void processRelatedTextResources(const application::model::SongResourceQueueTarget &audio_target, const application::model::SongResourceFetchResult &fetch_result, const std::string &batch_id, application::model::SongResourceProcessResult &batch_result, SongResourceProcessListener *listener, ProcessRunState *state);
+    void processRelatedResources(const application::model::SongResourceQueueTarget &audio_target, const application::model::SongResourceFetchResult &fetch_result, const std::string &batch_id, application::model::SongResourceProcessResult &batch_result, SongResourceProcessListener *listener, ProcessRunState *state);
     bool refreshPacmtoken(ProcessRunState &state, SongResourceProcessListener *listener, bool force);
     application::model::SongResourceProcessItem fail(application::model::SongResourceQueueTarget target, std::string category, std::string code, std::string message, const std::string &batch_id, SongResourceProcessListener *listener = nullptr);
     application::model::SongResourceProcessItem skip(application::model::SongResourceQueueTarget target, std::string category, std::string code, std::string message, const std::string &batch_id, SongResourceProcessListener *listener = nullptr);
@@ -97,6 +99,7 @@ private:
     std::shared_ptr<application::ports::TaskExecutor> resource_executor_;             // 资源下载并发执行器
     std::shared_ptr<application::ports::MiguPacmtokenRefresher> pacmtoken_refresher_; // pacmtoken 刷新 port
     std::shared_ptr<application::ports::MiguPacmtokenStore> pacmtoken_store_;         // pacmtoken 运行期存储
+    std::shared_ptr<application::ports::SongResourceCloudUploader> cloud_uploader_;   // 可选云端上传 port
 };
 
 } // namespace orchestrator::modules::crawler::application::use_cases

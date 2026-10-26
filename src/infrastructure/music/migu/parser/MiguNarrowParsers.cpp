@@ -2,6 +2,7 @@
 #include "crawler/infrastructure/music/migu/parser/MiguPageInspector.h"
 #include "crawler/infrastructure/music/migu/parser/MiguParseResultParser.h"
 #include "crawler/infrastructure/music/migu/parser/MiguParserSupport.h"
+#include "crawler/infrastructure/music/migu/parser/MiguSingerProfileParser.h"
 #include "crawler/infrastructure/music/migu/parser/MiguSingerSourceParser.h"
 #include "crawler/infrastructure/music/migu/parser/MiguSongSourceParser.h"
 #include "crawler/infrastructure/music/migu/parser/strategy/MiguStrategies.h"
@@ -37,6 +38,11 @@ std::vector<application::model::SingerSourceMetadata> MiguSingerSourceParser::pa
 std::vector<application::model::AlbumSourceMetadata> MiguAlbumSourceParser::parseAlbumSources(const std::vector<char> &raw_data) const
 {
     return detail::parseAlbumSourcesRaw(raw_data);
+}
+
+application::model::SingerSourceProfile MiguSingerProfileParser::parseSingerSourceProfile(const std::vector<char> &raw_data) const
+{
+    return detail::parseSingerSourceProfileRaw(raw_data);
 }
 
 application::ports::SingerSongPageInfo MiguPageInspector::inspectSingerSongPage(const std::vector<char> &raw_data) const

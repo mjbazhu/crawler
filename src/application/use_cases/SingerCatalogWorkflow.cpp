@@ -5,7 +5,10 @@
 #include <algorithm>
 #include <cstdint>
 #include <future>
+#include <optional>
 #include <set>
+#include <string>
+#include <string_view>
 #include <utility>
 
 namespace orchestrator::modules::crawler::application::use_cases {
@@ -86,6 +89,24 @@ int normalizeSingerIdsWorkflowLimit(int limit)
     return (std::min)(limit, 500);
 }
 
+// 判断歌手概览是否包含可保存的声明总数。
+bool hasSingerSourceProfileCounts(const application::model::SingerSourceProfile &profile)
+{
+    return profile.source_song_total || profile.source_album_total;
+}
+
+// 平台总数已知时，把受 limit 截断的成功结果暴露为部分完成。
+void applyDeclaredTotalCompletion(application::model::SingerCollectionResult &result, std::optional<int> declared_total, std::string_view item_name)
+{
+    if (!result.success || !declared_total || *declared_total <= result.written_count) {
+        return;
+    }
+
+    result.success = false;
+    result.partial = result.written_count > 0;
+    result.error = std::string(item_name) + " incomplete: fetched " + std::to_string(result.written_count) + " of " + std::to_string(*declared_total);
+}
+
 } // namespace
 
 SingerCatalogWorkflow::SingerCatalogWorkflow(
@@ -106,7 +127,7 @@ bool SingerCatalogWorkflow::crawlSingerSongsAndSave(std::uint64_t singer_id, int
     return result.written_count > 0 && (result.success || result.partial);
 }
 
-application::model::SingerCollectionResult SingerCatalogWorkflow::crawlSingerSongsAndSaveResult(std::uint64_t singer_id, int limit, int max_page_concurrency)
+application::model::SingerCollectionResult SingerCatalogWorkflow::crawlSingerSongsAndSaveResult(std::uint64_t singer_id, int limit, int max_page_concurrency, std::optional<int> source_song_total, std::optional<int> source_album_total)
 {
     if (!singer_catalog_provider_ || !parser_ || !persistence_ || singer_id == 0) {
         return {false, false, 0, "singer song workflow is not configured"};
@@ -181,6 +202,9 @@ application::model::SingerCollectionResult SingerCatalogWorkflow::crawlSingerSon
     } else if (save_failed) {
         result.error = "failed to save singer song sources";
     }
+    result.source_song_total = source_song_total;
+    result.source_album_total = source_album_total;
+    applyDeclaredTotalCompletion(result, source_song_total, "singer songs");
     return result;
 }
 
@@ -221,7 +245,7 @@ bool SingerCatalogWorkflow::crawlSingerAlbumsAndSave(std::uint64_t singer_id, in
     return result.written_count > 0 && (result.success || result.partial);
 }
 
-application::model::SingerCollectionResult SingerCatalogWorkflow::crawlSingerAlbumsAndSaveResult(std::uint64_t singer_id, int limit, int max_page_concurrency)
+application::model::SingerCollectionResult SingerCatalogWorkflow::crawlSingerAlbumsAndSaveResult(std::uint64_t singer_id, int limit, int max_page_concurrency, std::optional<int> source_song_total, std::optional<int> source_album_total)
 {
     if (!singer_catalog_provider_ || !parser_ || !persistence_ || singer_id == 0) {
         return {false, false, 0, "singer album workflow is not configured"};
@@ -269,6 +293,17 @@ application::model::SingerCollectionResult SingerCatalogWorkflow::crawlSingerAlb
                         if (album.source_artist_id.empty()) {
                             album.source_artist_id = source_artist_id;
                         }
+                        auto seed = std::find_if(album.artist_refs.begin(), album.artist_refs.end(), [&](const auto &artist) { return artist.source_artist_id == source_artist_id; });
+                        if (seed != album.artist_refs.end()) {
+                            seed->is_seed = true;
+                        } else {
+                            application::model::SongSourceArtistRef entry_artist;
+                            entry_artist.source_artist_id = source_artist_id;
+                            if (album.source_artist_id == source_artist_id) entry_artist.source_artist_name = album.source_artist_name;
+                            entry_artist.artist_order = static_cast<std::uint32_t>(album.artist_refs.size()) + 1;
+                            entry_artist.is_seed = true;
+                            album.artist_refs.push_back(std::move(entry_artist));
+                        }
                         collected.push_back(std::move(album));
                     }
                 }
@@ -286,6 +321,8 @@ application::model::SingerCollectionResult SingerCatalogWorkflow::crawlSingerAlb
 
     application::model::SingerCollectionResult result;
     result.written_count = static_cast<int>(collected.size());
+    result.source_song_total = source_song_total;
+    result.source_album_total = source_album_total;
     result.partial = !collected.empty() && fetch_failed;
     if (fetch_failed) {
         result.error = "failed to fetch singer album page";
@@ -296,6 +333,7 @@ application::model::SingerCollectionResult SingerCatalogWorkflow::crawlSingerAlb
 
     if (collected.empty()) {
         result.success = true;
+        applyDeclaredTotalCompletion(result, source_album_total, "singer albums");
         return result;
     }
 
@@ -308,7 +346,36 @@ application::model::SingerCollectionResult SingerCatalogWorkflow::crawlSingerAlb
     }
 
     result.success = !fetch_failed;
+    applyDeclaredTotalCompletion(result, source_album_total, "singer albums");
     return result;
+}
+
+application::model::SingerSourceProfile SingerCatalogWorkflow::fetchAndSaveSingerSourceProfile(std::uint64_t singer_id)
+{
+    application::model::SingerSourceProfile profile;
+    profile.source = "migu";
+    profile.source_singer_id = std::to_string(singer_id);
+
+    if (!singer_catalog_provider_ || !parser_) {
+        return profile;
+    }
+
+    auto response = singer_catalog_provider_->fetchSingerInfo(singer_id);
+    if (!response) {
+        return profile;
+    }
+
+    profile = parser_->parseSingerSourceProfile(std::move(response->body));
+    if (profile.source.empty()) {
+        profile.source = "migu";
+    }
+    if (profile.source_singer_id.empty()) {
+        profile.source_singer_id = std::to_string(singer_id);
+    }
+    if (persistence_ && hasSingerSourceProfileCounts(profile)) {
+        (void)persistence_->saveSingerSourceProfile(profile);
+    }
+    return profile;
 }
 
 } // namespace orchestrator::modules::crawler::application::use_cases

@@ -32,6 +32,8 @@ struct SingerSourceSyncTarget {
     std::string source_country;     // 平台地区
     int gender = 0;                 // 公共歌手性别
     std::string avatar_url;         // 平台头像
+    std::optional<int> source_song_total;  // 平台声明歌曲总数，空表示未知
+    std::optional<int> source_album_total; // 平台声明专辑总数，空表示未知
     int sync_status = 0;            // 当前同步状态
     std::uint64_t synced_at = 0;    // 最近同步完成时间
     int sync_count = 0;             // 最近同步数量

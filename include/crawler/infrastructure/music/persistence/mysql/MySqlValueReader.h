@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 
 namespace orchestrator::modules::crawler::infrastructure::music::persistence::mysql {
@@ -23,6 +24,9 @@ public:
 
     // 按列号读取 int；NULL 或不匹配字段返回 0。
     static int intAt(boost::mysql::row_view row, std::size_t index);
+
+    // 按列号读取可空 int；NULL 或不匹配字段返回空。
+    static std::optional<int> optionalIntAt(boost::mysql::row_view row, std::size_t index);
 };
 
 } // namespace orchestrator::modules::crawler::infrastructure::music::persistence::mysql

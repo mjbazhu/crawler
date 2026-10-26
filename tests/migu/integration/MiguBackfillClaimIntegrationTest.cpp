@@ -69,11 +69,8 @@ boost::asio::awaitable<void> executeSql(const std::shared_ptr<mysql::MySqlConnec
 // 清理补池认领测试 fixture。
 boost::asio::awaitable<void> cleanupClaimFixtures(const std::shared_ptr<mysql::MySqlConnectionPool> &pool)
 {
-    co_await executeSql(pool, "DELETE FROM song_source_refs WHERE source = 'migu' AND source_item_key LIKE 'codex_claim_%'");
     co_await executeSql(pool, "DELETE FROM songs WHERE normalized_title LIKE 'codex_claim_%'");
-    co_await executeSql(pool, "DELETE FROM album_source_refs WHERE source = 'migu' AND source_item_key LIKE 'codex_claim_%'");
     co_await executeSql(pool, "DELETE FROM albums WHERE normalized_title LIKE 'codex_claim_%'");
-    co_await executeSql(pool, "DELETE FROM singer_source_refs WHERE source = 'migu' AND source_item_key LIKE 'codex_claim_%'");
     co_await executeSql(pool, "DELETE FROM singers WHERE normalized_name LIKE 'codex_claim_%'");
 }
 
@@ -121,7 +118,7 @@ boost::asio::awaitable<void> seedSinger(
     co_await connection->async_execute("SELECT LAST_INSERT_ID()", result, boost::asio::use_awaitable);
     const auto singer_db_id = mysql::MySqlValueReader::uint64At(result.rows().front(), 0);
     co_await connection->async_execute(
-        "INSERT INTO singer_source_refs (singer_db_id, source, source_item_key, source_singer_id, source_name_pinyin, source_country, songs_sync_status, songs_sync_error, albums_sync_status, albums_sync_error, created_at, updated_at) VALUES (" + std::to_string(singer_db_id) + ", 'migu', 'codex_claim_singer:" + tag + ":" + suffix + "', '" + source_singer_id + "', 'codex', 'huayu', " + std::to_string(songs_status) + ", 'seed songs error', " + std::to_string(albums_status) + ", 'seed albums error', " + std::to_string(now) + ", " + std::to_string(now) + ")",
+        "INSERT INTO singer_source_refs (singer_db_id, source, source_singer_id, source_name_pinyin, source_country, songs_sync_status, songs_sync_error, albums_sync_status, albums_sync_error, created_at, updated_at) VALUES (" + std::to_string(singer_db_id) + ", 'migu', '" + source_singer_id + "', 'codex', 'huayu', " + std::to_string(songs_status) + ", 'seed songs error', " + std::to_string(albums_status) + ", 'seed albums error', " + std::to_string(now) + ", " + std::to_string(now) + ")",
         result,
         boost::asio::use_awaitable
     );
@@ -146,7 +143,7 @@ boost::asio::awaitable<void> seedSingerWithContent(
     co_await connection->async_execute("SELECT LAST_INSERT_ID()", result, boost::asio::use_awaitable);
     const auto singer_db_id = mysql::MySqlValueReader::uint64At(result.rows().front(), 0);
     co_await connection->async_execute(
-        "INSERT INTO singer_source_refs (singer_db_id, source, source_item_key, source_singer_id, source_name_pinyin, source_country, songs_sync_status, albums_sync_status, created_at, updated_at) VALUES (" + std::to_string(singer_db_id) + ", 'migu', 'codex_claim_singer:has_content:" + suffix + "', '" + source_singer_id + "', 'codex', 'huayu', 0, 0, " + std::to_string(now) + ", " + std::to_string(now) + ")",
+        "INSERT INTO singer_source_refs (singer_db_id, source, source_singer_id, source_name_pinyin, source_country, source_song_total, songs_sync_status, albums_sync_status, created_at, updated_at) VALUES (" + std::to_string(singer_db_id) + ", 'migu', '" + source_singer_id + "', 'codex', 'huayu', 1, 0, 0, " + std::to_string(now) + ", " + std::to_string(now) + ")",
         result,
         boost::asio::use_awaitable
     );
@@ -160,14 +157,14 @@ boost::asio::awaitable<void> seedSingerWithContent(
     co_await connection->async_execute("SELECT LAST_INSERT_ID()", result, boost::asio::use_awaitable);
     const auto song_db_id = mysql::MySqlValueReader::uint64At(result.rows().front(), 0);
     co_await connection->async_execute(
-        "INSERT INTO song_source_refs (song_db_id, source, source_item_key, source_song_id, source_content_id, source_resource_type, metadata_status, created_at, updated_at) VALUES (" + std::to_string(song_db_id) + ", 'migu', 'codex_claim_song:has_content:" + suffix + "', 'claim-song-" + suffix + "', 'claim-content-" + suffix + "', '2', 1, " + std::to_string(now) + ", " + std::to_string(now) + ")",
+        "INSERT INTO song_source_refs (song_db_id, source, source_song_id, source_content_id, source_resource_type, metadata_status, created_at, updated_at) VALUES (" + std::to_string(song_db_id) + ", 'migu', 'claim-song-" + suffix + "', 'claim-content-" + suffix + "', '2', 1, " + std::to_string(now) + ", " + std::to_string(now) + ")",
         result,
         boost::asio::use_awaitable
     );
     co_await connection->async_execute("SELECT LAST_INSERT_ID()", result, boost::asio::use_awaitable);
     const auto song_source_ref_id = mysql::MySqlValueReader::uint64At(result.rows().front(), 0);
     co_await connection->async_execute(
-        "INSERT INTO song_artist_refs (song_source_ref_id, singer_source_ref_id, artist_role, artist_order, is_primary, is_seed, created_at, updated_at) VALUES (" + std::to_string(song_source_ref_id) + ", (SELECT id FROM singer_source_refs WHERE source = 'migu' AND source_singer_id = '" + source_singer_id + "' LIMIT 1), 'artist', 1, 1, 1, " + std::to_string(now) + ", " + std::to_string(now) + ")",
+        "INSERT INTO song_artist_refs (song_source_ref_id, singer_source_ref_id, artist_role, artist_order, is_primary, is_seed, created_at, updated_at) VALUES (" + std::to_string(song_source_ref_id) + ", (SELECT id FROM singer_catalog_sources WHERE source = 'migu' AND source_singer_id = '" + source_singer_id + "' LIMIT 1), 'artist', 1, 1, 1, " + std::to_string(now) + ", " + std::to_string(now) + ")",
         result,
         boost::asio::use_awaitable
     );
@@ -188,17 +185,18 @@ boost::asio::awaitable<void> seedAlbum(
     boost::mysql::results result;
     const std::string title = "Codex Claim Album " + tag + " " + suffix;
     co_await connection->async_execute(
-        "INSERT INTO albums (title, normalized_title, primary_artist_name, release_date, identity_hash, created_at, updated_at) VALUES ('" + title + "', 'codex_claim_album_" + tag + "_" + suffix + "', 'Codex Claim Artist', '2026-01-01', '" + identityHash(suffix, tag) + "', " + std::to_string(now) + ", " + std::to_string(now) + ")",
+        "INSERT INTO albums (title, normalized_title, release_date, identity_hash, created_at, updated_at) VALUES ('" + title + "', 'codex_claim_album_" + tag + "_" + suffix + "', '2026-01-01', '" + identityHash(suffix, tag) + "', " + std::to_string(now) + ", " + std::to_string(now) + ")",
         result,
         boost::asio::use_awaitable
     );
     co_await connection->async_execute("SELECT LAST_INSERT_ID()", result, boost::asio::use_awaitable);
     const auto album_db_id = mysql::MySqlValueReader::uint64At(result.rows().front(), 0);
     co_await connection->async_execute(
-        "INSERT INTO album_source_refs (album_db_id, source, source_item_key, source_album_id, source_resource_type, source_res_type, source_album_kind, source_title, source_artist_id, source_artist_name, detail_sync_status, detail_sync_error, songs_sync_status, songs_sync_error, created_at, updated_at) VALUES (" + std::to_string(album_db_id) + ", 'migu', 'codex_claim_album:" + tag + ":" + suffix + "', '" + source_album_id + "', '5', '1', 2, '" + title + "', 'claim-artist', 'Codex Claim Artist', " + std::to_string(detail_status) + ", 'seed detail error', " + std::to_string(songs_status) + ", 'seed songs error', " + std::to_string(now) + ", " + std::to_string(now) + ")",
+        "INSERT INTO album_source_refs (album_db_id, source, source_album_id, source_resource_type, source_album_kind, detail_sync_status, detail_sync_error, songs_sync_status, songs_sync_error, created_at, updated_at) VALUES (" + std::to_string(album_db_id) + ", 'migu', '" + source_album_id + "', '5', 2, " + std::to_string(detail_status) + ", 'seed detail error', " + std::to_string(songs_status) + ", 'seed songs error', " + std::to_string(now) + ", " + std::to_string(now) + ")",
         result,
         boost::asio::use_awaitable
     );
+    co_await pool->coExecute("INSERT INTO album_artist_refs(album_source_ref_id,singer_source_ref_id,artist_role,artist_order,is_primary) SELECT a.id,s.id,'artist',1,1 FROM album_catalog_sources a JOIN singer_catalog_sources s ON s.source=a.source AND s.source_singer_id='claim-artist' WHERE a.source='migu' AND a.source_album_id='" + source_album_id + "' ON DUPLICATE KEY UPDATE is_primary=1");
 }
 
 // 插入完整认领测试数据。

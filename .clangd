@@ -1,0 +1,23 @@
+# clangd
+# https://clangd.llvm.org/config.html
+
+# Suppress warnings
+Diagnostics:
+  Suppress:
+    - unused-includes
+  UnusedIncludes: Strict
+
+# Strictly enforce unused includes
+# Diagnostics:
+
+
+# Complete all scopes
+Completion:
+  AllScopes: Yes
+  ArgumentLists: FullPlaceholders
+  HeaderInsertion: IWYU
+  CodePatterns: All
+
+# CompileFlags:
+CompileFlags:
+  CompilationDatabase: build/msvc-debug

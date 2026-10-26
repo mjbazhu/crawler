@@ -1,6 +1,7 @@
 #include "crawler/application/use_cases/AlbumDetailBackfillWorkflow.h"
 
 #include "crawler/application/use_cases/WorkflowPaging.h"
+#include "AlbumCollectionCompletion.h"
 
 #include <future>
 #include <utility>
@@ -19,9 +20,10 @@ struct AlbumDetailResult {
 
 // 专辑歌曲采集结果。
 struct AlbumSongResult {
-    application::model::AlbumSourceMetadata source;                   // 请求来源
-    std::vector<application::model::SongSourceMetadata> song_sources; // 歌曲来源解析结果
-    bool fetched = false;                                             // 是否成功获取响应
+    application::model::AlbumSourceMetadata source;                      // 请求来源
+    std::vector<application::model::SongSourceMetadata> song_sources;    // 歌曲来源解析结果
+    bool fetched = false;                                                // 是否成功获取响应
+    std::vector<application::model::AlbumSourceMetadata> detail_sources; // 同响应专辑实体
 };
 
 } // namespace
@@ -90,7 +92,7 @@ bool AlbumDetailBackfillWorkflow::crawlPendingAlbumDetailsAndSave(std::string so
                 (void)album_source_sync_queue_->updateDetailSyncStatus(result.source.source, result.source.source_album_id, 3, "album detail fetch or parse failed");
                 (void)album_source_sync_queue_->updateSongsSyncStatus(result.source.source, result.source.source_album_id, 3, 0, "album detail fetch or parse failed");
             } else {
-                const bool saved = persistence_->saveAlbumSources(result.detail_sources, static_cast<int>(result.detail_sources.size()));
+                const bool saved = persistence_->saveAlbumDetails(result.detail_sources, result.song_sources);
                 saved_any = saved || saved_any;
                 if (!saved) {
                     (void)album_source_sync_queue_->updateDetailSyncStatus(result.source.source, result.source.source_album_id, 3, "album detail save failed");
@@ -98,12 +100,12 @@ bool AlbumDetailBackfillWorkflow::crawlPendingAlbumDetailsAndSave(std::string so
                 } else {
                     const int song_count = static_cast<int>(result.song_sources.size());
                     if (song_count == 0) {
-                        (void)album_source_sync_queue_->updateSongsSyncStatus(result.source.source, result.source.source_album_id, 2, 0, {});
+                        (void)album_source_sync_queue_->updateSongsSyncStatus(result.source.source, result.source.source_album_id, albumSongSyncStatus(result.detail_sources, 0), 0, {});
                     } else {
-                        const bool songs_saved = persistence_->saveSongSources(result.song_sources, song_count);
+                        const bool songs_saved = saved;
                         saved_any = songs_saved || saved_any;
                         if (songs_saved) {
-                            (void)album_source_sync_queue_->updateSongsSyncStatus(result.source.source, result.source.source_album_id, 2, song_count, {});
+                            (void)album_source_sync_queue_->updateSongsSyncStatus(result.source.source, result.source.source_album_id, albumSongSyncStatus(result.detail_sources, song_count), song_count, {});
                         } else {
                             (void)album_source_sync_queue_->updateSongsSyncStatus(result.source.source, result.source.source_album_id, 3, 0, "album detail songs save failed");
                         }
@@ -149,6 +151,7 @@ bool AlbumDetailBackfillWorkflow::crawlPendingAlbumSongsAndSave(std::string sour
                         return result;
                     }
                     result.fetched = true;
+                    result.detail_sources = parser_->parseAlbumSources(response->body);
                     result.song_sources = parser_->parseSongSources(std::move(response->body));
                     return result;
                 },
@@ -164,12 +167,14 @@ bool AlbumDetailBackfillWorkflow::crawlPendingAlbumSongsAndSave(std::string sour
             } else {
                 const int song_count = static_cast<int>(result.song_sources.size());
                 if (song_count == 0) {
-                    (void)album_source_sync_queue_->updateSongsSyncStatus(result.source.source, result.source.source_album_id, 2, 0, {});
+                    const bool saved = !result.detail_sources.empty() && persistence_->saveAlbumDetails(result.detail_sources, {});
+                    saved_any = saved || saved_any;
+                    (void)album_source_sync_queue_->updateSongsSyncStatus(result.source.source, result.source.source_album_id, saved ? albumSongSyncStatus(result.detail_sources, 0) : 3, 0, {});
                 } else {
-                    const bool songs_saved = persistence_->saveSongSources(result.song_sources, song_count);
+                    const bool songs_saved = persistence_->saveAlbumDetails(result.detail_sources, result.song_sources);
                     saved_any = songs_saved || saved_any;
                     if (songs_saved) {
-                        (void)album_source_sync_queue_->updateSongsSyncStatus(result.source.source, result.source.source_album_id, 2, song_count, {});
+                        (void)album_source_sync_queue_->updateSongsSyncStatus(result.source.source, result.source.source_album_id, albumSongSyncStatus(result.detail_sources, song_count), song_count, {});
                     } else {
                         (void)album_source_sync_queue_->updateSongsSyncStatus(result.source.source, result.source.source_album_id, 3, 0, "album songs save failed");
                     }
@@ -223,7 +228,7 @@ bool AlbumDetailBackfillWorkflow::crawlAlbumDetailAndSave(application::model::Al
         return false;
     }
 
-    const bool saved = persistence_->saveAlbumSources(detail_sources, static_cast<int>(detail_sources.size()));
+    const bool saved = persistence_->saveAlbumDetails(detail_sources, song_sources);
     if (!saved) {
         (void)album_source_sync_queue_->updateDetailSyncStatus(source_metadata.source, source_metadata.source_album_id, 3, "album detail save failed");
         (void)album_source_sync_queue_->updateSongsSyncStatus(source_metadata.source, source_metadata.source_album_id, 3, 0, "album detail save failed");
@@ -232,12 +237,12 @@ bool AlbumDetailBackfillWorkflow::crawlAlbumDetailAndSave(application::model::Al
 
     const int song_count = static_cast<int>(song_sources.size());
     if (song_count == 0) {
-        (void)album_source_sync_queue_->updateSongsSyncStatus(source_metadata.source, source_metadata.source_album_id, 2, 0, {});
+        (void)album_source_sync_queue_->updateSongsSyncStatus(source_metadata.source, source_metadata.source_album_id, albumSongSyncStatus(detail_sources, 0), 0, {});
         return true;
     }
 
-    const bool songs_saved = persistence_->saveSongSources(song_sources, song_count);
-    (void)album_source_sync_queue_->updateSongsSyncStatus(source_metadata.source, source_metadata.source_album_id, songs_saved ? 2 : 3, songs_saved ? song_count : 0, songs_saved ? "" : "album detail songs save failed");
+    const bool songs_saved = saved;
+    (void)album_source_sync_queue_->updateSongsSyncStatus(source_metadata.source, source_metadata.source_album_id, songs_saved ? albumSongSyncStatus(detail_sources, song_count) : 3, songs_saved ? song_count : 0, songs_saved ? "" : "album detail songs save failed");
     return songs_saved;
 }
 
@@ -254,15 +259,17 @@ bool AlbumDetailBackfillWorkflow::crawlAlbumSongsAndSave(application::model::Alb
         return false;
     }
 
+    auto detail_sources = parser_->parseAlbumSources(response->body);
     auto song_sources = parser_->parseSongSources(std::move(response->body));
     const int song_count = static_cast<int>(song_sources.size());
     if (song_count == 0) {
-        (void)album_source_sync_queue_->updateSongsSyncStatus(source_metadata.source, source_metadata.source_album_id, 2, 0, {});
-        return true;
+        const bool saved = !detail_sources.empty() && persistence_->saveAlbumDetails(detail_sources, {});
+        (void)album_source_sync_queue_->updateSongsSyncStatus(source_metadata.source, source_metadata.source_album_id, saved ? albumSongSyncStatus(detail_sources, 0) : 3, 0, {});
+        return saved;
     }
 
-    const bool songs_saved = persistence_->saveSongSources(song_sources, song_count);
-    (void)album_source_sync_queue_->updateSongsSyncStatus(source_metadata.source, source_metadata.source_album_id, songs_saved ? 2 : 3, songs_saved ? song_count : 0, songs_saved ? "" : "album songs save failed");
+    const bool songs_saved = persistence_->saveAlbumDetails(detail_sources, song_sources);
+    (void)album_source_sync_queue_->updateSongsSyncStatus(source_metadata.source, source_metadata.source_album_id, songs_saved ? albumSongSyncStatus(detail_sources, song_count) : 3, songs_saved ? song_count : 0, songs_saved ? "" : "album songs save failed");
     return songs_saved;
 }
 

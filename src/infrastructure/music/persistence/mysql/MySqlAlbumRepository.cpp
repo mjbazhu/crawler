@@ -55,7 +55,7 @@ boost::asio::awaitable<bool> MySqlAlbumRepository::coSaveBatch(std::vector<domai
             const std::uint64_t now = nowSeconds();
             const std::uint64_t created_at = album.created_at == 0 ? now : album.created_at;
             const std::uint64_t updated_at = album.updated_at == 0 ? now : album.updated_at;
-            co_await connection->async_execute(statement.bind(album.title, album.title, album.artist, album.title, album.artist, created_at, updated_at), result, boost::asio::use_awaitable);
+            co_await connection->async_execute(statement.bind(album.title, album.title, album.title, created_at, updated_at), result, boost::asio::use_awaitable);
         }
 
         co_await connection->async_execute("COMMIT", result, boost::asio::use_awaitable);
@@ -88,7 +88,7 @@ boost::asio::awaitable<bool> MySqlAlbumRepository::coCreate(const domain::Album 
         const std::uint64_t now = nowSeconds();
         const std::uint64_t created_at = entity.created_at == 0 ? now : entity.created_at;
         const std::uint64_t updated_at = entity.updated_at == 0 ? now : entity.updated_at;
-        co_await connection->async_execute(statement.bind(entity.title, entity.title, entity.artist, entity.title, entity.artist, created_at, updated_at), result, boost::asio::use_awaitable);
+        co_await connection->async_execute(statement.bind(entity.title, entity.title, entity.title, created_at, updated_at), result, boost::asio::use_awaitable);
         co_return hasAffectedRows(result);
     } catch (const std::exception &e) {
         std::cerr << "[MySqlAlbumRepository] coCreate failed: " << e.what() << std::endl;

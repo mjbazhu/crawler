@@ -28,6 +28,13 @@ bool UrlIngestionWorkflow::processUrl(std::string url, int limit)
 
     std::vector<char> body = std::move(response->body);
     auto song_sources = parser_->parseSongSources(body);
+    if (persistence_->hasAtomicWriter()) {
+        application::model::MetadataWriteBatch batch;
+        batch.songs = std::move(song_sources);
+        batch.albums = parser_->parseAlbumSources(body);
+        batch.singers = parser_->parseSingerSources(body, {});
+        return persistence_->saveSources(std::move(batch), normalizeWorkflowLimit(limit));
+    }
     auto results = parser_->parse(body);
 
     bool saved = false;

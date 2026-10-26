@@ -60,6 +60,26 @@ paths:
           $ref: '#/components/responses/TaskAccepted'
         '400':
           $ref: '#/components/responses/BadRequest'
+  /api/migu/singer-songs/crawl-from-db/preview:
+    post:
+      tags: [migu]
+      summary: Preview singer songs crawl from database queue
+      description: Returns matched count, eligible count and target samples before claiming singer_source_refs rows for song crawling.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SingerFromDbCrawlRequest'
+      responses:
+        '200':
+          description: Preview result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SingerFromDbPreviewResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
   /api/migu/singer-albums/crawl:
     post:
       tags: [migu]
@@ -87,6 +107,42 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/SingerFromDbCrawlRequest'
+      responses:
+        '202':
+          $ref: '#/components/responses/TaskAccepted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /api/migu/singer-albums/crawl-from-db/preview:
+    post:
+      tags: [migu]
+      summary: Preview singer albums crawl from database queue
+      description: Returns matched count, eligible count and target samples before claiming singer_source_refs rows for album crawling.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SingerFromDbCrawlRequest'
+      responses:
+        '200':
+          description: Preview result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SingerFromDbPreviewResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /api/migu/singers/profile/refresh-from-db:
+    post:
+      tags: [migu]
+      summary: Refresh singer declared totals
+      description: Fetch Migu singer/info for local singer_source_refs rows that miss source_song_total or source_album_total unless force is true, then recalibrate singer song and album sync status from real relationship counts. This is the only default flow that requests singer/info for declared totals. Omit source_ids to refresh from local singer_source_refs; max_targets=0 or run_all=true refreshes every matching local singer.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SingerProfileRefreshRequest'
       responses:
         '202':
           $ref: '#/components/responses/TaskAccepted'
@@ -128,15 +184,16 @@ paths:
     get:
       tags: [migu]
       summary: List Migu singers
-      description: Supports q, gender, country, songs_sync_status and albums_sync_status. Song and album summary counts are derived from real relationships, using song_artist_refs for songs and album_source_refs.source_artist_id for albums. Status filters use the exposed status, so singers with real content and no sync error are treated as completed (2) instead of pending (0), while running (1) remains running.
+      description: Supports q, source_singer_id, gender, country, songs_sync_status and albums_sync_status. q keeps fuzzy singer name/source_singer_id matching, but exact source_singer_id matches are ranked first. source_singer_id applies an exact ID filter. Status filters use the same exposed status returned by SingerRecord. Song and album summary counts are derived from real relationships, while source_song_total/source_album_total come from Migu singer/info profile refresh. When declared totals are known, incomplete real counts remain partial (4); when totals are null, full completion cannot be confirmed from relationship existence alone.
       parameters:
         - { name: page, in: query, required: false, schema: { type: integer, minimum: 1, default: 1 } }
         - { name: page_size, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 20 } }
         - { name: q, in: query, required: false, schema: { type: string, maxLength: 128 } }
+        - { name: source_singer_id, in: query, required: false, description: "Exact Migu source_singer_id filter.", schema: { type: string, maxLength: 64 } }
         - { name: gender, in: query, required: false, schema: { type: integer, minimum: 0, maximum: 3 } }
         - { name: country, in: query, required: false, schema: { type: string, maxLength: 128 } }
-        - { name: songs_sync_status, in: query, required: false, description: "Comma-separated exposed singer-song sync statuses. Real song_artist_refs with no sync error are exposed as completed (2).", schema: { type: string, pattern: '^[0-4](,[0-4])*$' } }
-        - { name: albums_sync_status, in: query, required: false, description: "Comma-separated exposed singer-album sync statuses. Real album_source_refs.source_artist_id relations with no sync error are exposed as completed (2).", schema: { type: string, pattern: '^[0-4](,[0-4])*$' } }
+        - { name: songs_sync_status, in: query, required: false, description: "Comma-separated exposed singer-song sync statuses. Known source_song_total keeps incomplete real song_artist_refs as partial (4).", schema: { type: string, pattern: '^[0-4](,[0-4])*$' } }
+        - { name: albums_sync_status, in: query, required: false, description: "Comma-separated exposed singer-album sync statuses. Known source_album_total keeps incomplete album_source_refs.source_artist_id relations as partial (4).", schema: { type: string, pattern: '^[0-4](,[0-4])*$' } }
         - { name: min_songs_count, in: query, required: false, description: "Minimum real song relation count from song_artist_refs.", schema: { type: integer, minimum: 0 } }
         - { name: max_songs_count, in: query, required: false, description: "Maximum real song relation count from song_artist_refs.", schema: { type: integer, minimum: 0 } }
         - { name: min_albums_count, in: query, required: false, description: "Minimum real album relation count from album_source_refs.source_artist_id.", schema: { type: integer, minimum: 0 } }
@@ -148,7 +205,7 @@ paths:
     get:
       tags: [migu]
       summary: Get Migu singer
-      description: Returns one singer by Migu source_singer_id with real relationship summary counts from song_artist_refs and album_source_refs.source_artist_id. When real content exists and no sync error is stored, the exposed sync status is completed (2) instead of pending (0), except running (1) remains running.
+      description: Returns one singer by Migu source_singer_id with real relationship summary counts, Migu declared totals, remaining counts and completion booleans.
       parameters:
         - { name: source_singer_id, in: path, required: true, schema: { type: string } }
       responses:
@@ -460,13 +517,13 @@ paths:
     get:
       tags: [migu]
       summary: List Migu backfill queue
-      description: Singer-song and singer-album queue targets use the same real relationship summary as /api/migu/singers. singer-songs derives sync_count from song_artist_refs; singer-albums derives sync_count from album_source_refs.source_artist_id. Singers that already have real content and no sync error are exposed as completed (2) and are not returned by the default missing singer queues.
+      description: Singer-song and singer-album queue targets use the same real relationship summary and Migu declared totals as /api/migu/singers. singer-songs derives sync_count from song_artist_refs; singer-albums derives sync_count from album_source_refs.source_artist_id. When declared totals are known, incomplete real counts remain partial (4); only completed (2) singers are not returned by the default missing singer queues.
       parameters:
         - { name: type, in: path, required: true, schema: { type: string, enum: [singer-songs, singer-albums, album-details, album-songs] } }
         - { name: page, in: query, required: false, schema: { type: integer, minimum: 1, default: 1 } }
         - { name: page_size, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 20 } }
         - { name: q, in: query, required: false, schema: { type: string, maxLength: 128 } }
-        - { name: status, in: query, required: false, description: "Comma-separated effective metadata sync statuses. Defaults to 0,3,4. Singer queues derive completed status from real song_artist_refs or album_source_refs.source_artist_id when content exists and no sync error is stored.", schema: { type: string, pattern: '^[0-4](,[0-4])*$' } }
+        - { name: status, in: query, required: false, description: "Comma-separated effective metadata sync statuses. Defaults to 0,3,4. Singer queues use declared totals when known, so incomplete real counts remain partial (4).", schema: { type: string, pattern: '^[0-4](,[0-4])*$' } }
         - { name: sync_status, in: query, required: false, description: "Alias of status with the same effective real-relation status semantics.", schema: { type: string, pattern: '^[0-4](,[0-4])*$' } }
         - { name: country, in: query, required: false, schema: { type: string, maxLength: 128 } }
         - { name: gender, in: query, required: false, schema: { type: integer, minimum: 0, maximum: 3 } }
@@ -542,7 +599,7 @@ paths:
     get:
       tags: [migu]
       summary: List Migu governance events
-      description: Returns audit events produced by resource, backfill, maintenance and batch governance actions.
+      description: Returns audit events produced by resource, backfill, maintenance and batch governance actions. Events include optional target display fields for the affected song resource, singer, album or batch; old events may be enriched from current catalog rows when no snapshot was stored.
       parameters:
         - { name: page, in: query, required: false, schema: { type: integer, minimum: 1, default: 1 } }
         - { name: page_size, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 20 } }
@@ -1162,14 +1219,18 @@ components:
         source_name_pinyin: { type: string }
         country: { type: string }
         source_tag: { type: string }
-        source_metric: { type: string }
+        source_song_total: { nullable: true, type: integer, minimum: 0, description: "Migu-declared singer song total from singer/info. Null means not refreshed yet and full completion cannot be confirmed." }
+        source_album_total: { nullable: true, type: integer, minimum: 0, description: "Migu-declared singer album total from singer/info. Null means not refreshed yet and full completion cannot be confirmed." }
         avatar_url: { type: string }
         songs_sync_status:
           allOf:
             - $ref: '#/components/schemas/SyncStatus'
-          description: Exposed singer-song sync status. It is derived from real song_artist_refs, so when the singer has related songs and no sync error, pending or partial stored state is exposed as completed (2); running (1) remains running.
+          description: Exposed singer-song sync status. It is derived from real song_artist_refs and Migu declared totals; when totals are known, count below source_song_total is partial (4), and count reaching source_song_total is completed (2). When source_song_total is null, full completion cannot be confirmed from relationship existence alone. Running (1) remains running.
         songs_synced_at: { nullable: true, type: integer, minimum: 0, description: "Unix timestamp of the last singer-song sync or summary repair." }
         songs_count: { type: integer, minimum: 0, description: "Frontend display alias of songs_sync_count." }
+        songs_total: { nullable: true, type: integer, minimum: 0, description: "Alias of source_song_total for progress displays." }
+        songs_remaining_count: { nullable: true, type: integer, minimum: 0, description: "Remaining song count when source_song_total is known." }
+        songs_completed: { type: boolean, description: "True when the exposed singer-song sync status is completed." }
         songs_sync_count: { type: integer, minimum: 0, description: "Distinct related song count derived from song_artist_refs for this Migu source_singer_id." }
         songs_sync_error: { type: string, description: "Last singer-song sync error. A non-empty error prevents real-content summary repair from exposing the status as completed." }
         songs_last_batch_id: { nullable: true, type: string }
@@ -1177,9 +1238,12 @@ components:
         albums_sync_status:
           allOf:
             - $ref: '#/components/schemas/SyncStatus'
-          description: Exposed singer-album sync status. It is derived from album_source_refs.source_artist_id, so when the singer has related albums and no sync error, pending or partial stored state is exposed as completed (2); running (1) remains running.
+          description: Exposed singer-album sync status. It is derived from album_source_refs.source_artist_id and Migu declared totals; when totals are known, count below source_album_total is partial (4), and count reaching source_album_total is completed (2). When source_album_total is null, full completion cannot be confirmed from relationship existence alone. Running (1) remains running.
         albums_synced_at: { nullable: true, type: integer, minimum: 0, description: "Unix timestamp of the last singer-album sync or summary repair." }
         albums_count: { type: integer, minimum: 0, description: "Frontend display alias of albums_sync_count." }
+        albums_total: { nullable: true, type: integer, minimum: 0, description: "Alias of source_album_total for progress displays." }
+        albums_remaining_count: { nullable: true, type: integer, minimum: 0, description: "Remaining album count when source_album_total is known." }
+        albums_completed: { type: boolean, description: "True when the exposed singer-album sync status is completed." }
         albums_sync_count: { type: integer, minimum: 0, description: "Related album count derived from album_source_refs.source_artist_id for this Migu source_singer_id." }
         albums_sync_error: { type: string, description: "Last singer-album sync error. A non-empty error prevents real-content summary repair from exposing the status as completed." }
         albums_last_batch_id: { nullable: true, type: string }
@@ -1221,7 +1285,7 @@ components:
         songs_synced_at: { nullable: true, type: integer, minimum: 0 }
         songs_count: { type: integer, minimum: 0, description: "Frontend display alias of album_songs_count." }
         album_songs_count: { type: integer, minimum: 0, description: "Distinct related song count derived from album_song_refs for this source_album_id." }
-        songs_sync_count: { type: integer, minimum: 0, description: "Same real album-song relation count as album_songs_count." }
+        songs_sync_count: { type: integer, minimum: 0, description: "Successfully processed song entries in the most recent album-song collection attempt; independent of album_songs_count." }
         songs_sync_error: { type: string }
         songs_last_batch_id: { nullable: true, type: string }
         songs_running_batch_id: { nullable: true, type: string }
@@ -1277,6 +1341,12 @@ components:
         format_type: { type: string }
         remote_url: { type: string }
         local_path: { type: string }
+        cloud_backend:
+          type: string
+          description: Cloud upload backend, for example baidupcs. Empty when cloud upload is disabled.
+        cloud_path:
+          type: string
+          description: Stable cloud path after upload, for example /Media/migu/... Empty when cloud upload is disabled.
         size_bytes: { type: integer, minimum: 0 }
         checksum: { type: string }
         status: { type: integer, minimum: 0, maximum: 4 }
@@ -1292,6 +1362,7 @@ components:
         running_batch_id: { nullable: true, type: string }
         last_processed_at: { nullable: true, type: integer, minimum: 0 }
         fetched_at: { nullable: true, type: integer, minimum: 0 }
+        cloud_uploaded_at: { nullable: true, type: integer, minimum: 0 }
         created_at: { type: integer, minimum: 0 }
         updated_at: { type: integer, minimum: 0 }
     SingerRecordPage:
@@ -1360,7 +1431,7 @@ components:
           description: Supports status/resource_status, q, kind and format.
     ResourceProcessRequest:
       type: object
-      description: Claims pending Migu resource records, fetches the resource URL when needed, downloads content, stores bytes and writes back status. Use async=true for long-running batches. Audio resources use the runtime pacmtoken stored through POST /api/migu/pacmtoken/refresh and may auto-refresh it during processing; tokens are not written to batch tables or logs.
+      description: Claims pending Migu resource records, fetches the resource URL when needed, downloads content, optionally uploads the saved local file to cloud storage, and writes back status. Use async=true for long-running batches. Audio resources use the runtime pacmtoken stored through POST /api/migu/pacmtoken/refresh and may auto-refresh it during processing; tokens are not written to batch tables or logs.
       properties:
         source:
           type: string
@@ -1385,7 +1456,7 @@ components:
         filter:
           type: object
           additionalProperties: true
-          description: Supports status/resource_status/resourceStatus/statuses, kind/resource_kind/resourceKind, format/format_type/formatType and content_id/contentId/source_content_id/sourceContentId.
+          description: Supports status/resource_status/resourceStatus/statuses, kind/resource_kind/resourceKind, format/format_type/formatType and content_id/contentId/source_content_id/sourceContentId. Valid kinds are audio, cover, lyric/lrc, mrc and trc.
         options:
           $ref: '#/components/schemas/ResourceProcessOptions'
       example:
@@ -1455,6 +1526,12 @@ components:
           default: true
         refreshPacmtokenOn440013:
           type: boolean
+        process_related_resources:
+          type: boolean
+          default: true
+          description: When false, audio processing does not claim or store cover/lyric/mrc/trc URLs returned by the audio resource response.
+        processRelatedResources:
+          type: boolean
     ResourceProcessAcceptedResponse:
       type: object
       required: [accepted, async, batch_id, task_url, items_url, events_url]
@@ -1467,7 +1544,7 @@ components:
         events_url: { type: string }
     ResourceProcessItem:
       type: object
-      required: [resource_id, resource_kind, format_type, ok, skipped, related, synthetic, error_category, result_code, message]
+      required: [resource_id, resource_kind, format_type, ok, skipped, related, synthetic, local_path, cloud_backend, cloud_path, size_bytes, checksum, error_category, result_code, message]
       properties:
         resource_id: { type: integer, minimum: 0 }
         song_source_ref_id: { type: integer, minimum: 0 }
@@ -1481,10 +1558,21 @@ components:
         skipped: { type: boolean }
         related:
           type: boolean
-          description: True when the item was discovered from an audio response lyric/mrc/trc URL.
+          description: True when the item was discovered from an audio response cover/lyric/mrc/trc URL.
         synthetic:
           type: boolean
           description: True when no real resource row could be claimed, for example related_not_claimed.
+        local_path:
+          type: string
+          description: Storage path returned by the blob store after save. Empty when the item did not save content.
+        cloud_backend:
+          type: string
+          description: Cloud upload backend, for example baidupcs. Empty when cloud upload is disabled.
+        cloud_path:
+          type: string
+          description: Stable cloud path after upload, for example /Media/migu/... Empty when cloud upload is disabled.
+        size_bytes: { type: integer, minimum: 0 }
+        checksum: { type: string }
         error_category:
           type: string
           description: Failure or skip category. Empty when ok is true.
@@ -1616,8 +1704,11 @@ components:
         target_name: { type: string }
         owner_name: { type: string }
         source: { type: string, enum: [migu] }
-        sync_status: { nullable: true, type: integer, minimum: 0, maximum: 4, description: "Effective metadata sync status for this queue type. Singer-song and singer-album queues use the same real-relation derived status as SingerRecord, so real content with no sync error is completed (2) instead of pending (0)." }
+        sync_status: { nullable: true, type: integer, minimum: 0, maximum: 4, description: "Effective metadata sync status for this queue type. Singer-song and singer-album queues use the same real-relation derived status as SingerRecord; when Migu declared totals are known, incomplete real counts remain partial (4)." }
         sync_count: { type: integer, minimum: 0, description: "Effective synced item count for this queue type. Singer-song queues derive it from song_artist_refs; singer-album queues derive it from album_source_refs.source_artist_id." }
+        source_total: { nullable: true, type: integer, minimum: 0, description: "Migu-declared total for this singer queue type when known." }
+        remaining_count: { nullable: true, type: integer, minimum: 0, description: "Remaining item count when source_total is known." }
+        completed: { type: boolean, description: "True when sync_status is completed (2)." }
         last_error: { type: string }
         last_batch_id: { nullable: true, type: string }
         running_batch_id: { nullable: true, type: string }
@@ -1955,13 +2046,13 @@ components:
           maximum: 1000
         limit_per_singer:
           type: integer
-          minimum: 1
+          minimum: 0
           maximum: 500
-          default: 20
-          description: Maximum songs or albums fetched for each singer.
+          default: 0
+          description: Maximum songs or albums fetched for each singer. 0 means fetch all pages within workflow protection.
         limitPerSinger:
           type: integer
-          minimum: 1
+          minimum: 0
           maximum: 500
         include_stale_running:
           type: boolean
@@ -1972,6 +2063,73 @@ components:
           minimum: 60
           maximum: 86400
           default: 3600
+    SingerProfileRefreshRequest:
+      type: object
+      description: Refresh Migu singer/info declared song and album totals for singers in local singer_source_refs. This is the only default flow that requests singer/info for declared totals.
+      properties:
+        source:
+          type: string
+          enum: [migu]
+          default: migu
+        source_ids:
+          type: array
+          description: Optional explicit Migu source_singer_id list. Omit it to refresh singers selected from local singer_source_refs.
+          items:
+            type: string
+        sourceIds:
+          type: array
+          items:
+            type: string
+        force:
+          type: boolean
+          default: false
+          description: When false, only singers missing source_song_total or source_album_total are refreshed.
+        run_all:
+          type: boolean
+          default: false
+          description: When source_ids is omitted, true refreshes every matching local singer instead of applying max_targets.
+        runAll:
+          type: boolean
+          default: false
+          description: Alias of run_all.
+        filter:
+          $ref: '#/components/schemas/SingerFromDbFilter'
+        max_targets:
+          type: integer
+          minimum: 0
+          maximum: 1000
+          default: 50
+          description: Maximum local singers to refresh when source_ids is omitted. 0 means refresh all matching local singers.
+        maxTargets:
+          type: integer
+          minimum: 0
+          maximum: 1000
+          description: Alias of max_targets.
+    SingerFromDbPreviewItem:
+      type: object
+      required: [singer_id, source_name, sync_status]
+      properties:
+        singer_id: { type: string, description: "Migu source_singer_id." }
+        source_name: { type: string, description: "Singer display name from local catalog." }
+        country: { type: string, description: "Optional source_country filter value." }
+        gender: { type: integer, minimum: 0, maximum: 3 }
+        sync_status: { type: integer, minimum: 0, maximum: 4 }
+        sync_count: { type: integer, minimum: 0, description: "Effective synced item count for this preview type." }
+        source_song_total: { nullable: true, type: integer, minimum: 0, description: "Migu-declared singer song total when known." }
+        source_album_total: { nullable: true, type: integer, minimum: 0, description: "Migu-declared singer album total when known." }
+        source_total: { nullable: true, type: integer, minimum: 0, description: "Migu-declared total for this preview type when known." }
+        remaining_count: { nullable: true, type: integer, minimum: 0, description: "Remaining item count when source_total is known." }
+        completed: { type: boolean, description: "True when sync_status is completed (2)." }
+    SingerFromDbPreviewResponse:
+      type: object
+      required: [matched_count, eligible_count, items]
+      properties:
+        matched_count: { type: integer, minimum: 0, description: "Rows matching source/country/gender/q before sync-status eligibility is applied." }
+        eligible_count: { type: integer, minimum: 0, description: "Rows that match the current sync-status and stale-running policy." }
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SingerFromDbPreviewItem'
     TaskResponse:
       type: object
       required: [batch_id, message, target_count, limit]
@@ -2404,6 +2562,22 @@ components:
         action: { type: string }
         target_type: { type: string }
         target_id: { type: string }
+        target_name:
+          nullable: true
+          type: string
+          description: Primary display name of the affected target, such as song, singer, album or batch name.
+        target_summary:
+          nullable: true
+          type: string
+          description: Secondary display text, such as resource kind, audio quality, owner name or batch state and count.
+        target_source_id:
+          nullable: true
+          type: string
+          description: Platform object id, such as source_content_id, source_song_id, source_album_id or source_singer_id.
+        target_owner_name:
+          nullable: true
+          type: string
+          description: Owner display name for the target, such as resource artist name or album artist name.
         batch_id: { nullable: true, type: string }
         before_status: { nullable: true, type: string }
         after_status: { nullable: true, type: string }

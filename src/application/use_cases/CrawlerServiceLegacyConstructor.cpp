@@ -39,6 +39,7 @@ CrawlerServiceDependencies makeDependencies(
     dependencies.parsers.song_source_parser = parser;
     dependencies.parsers.singer_source_parser = parser;
     dependencies.parsers.album_source_parser = parser;
+    dependencies.parsers.singer_profile_parser = parser;
     dependencies.parsers.page_inspector = parser;
 
     dependencies.persistence.file_store = std::move(file_store);

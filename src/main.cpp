@@ -78,6 +78,26 @@ int main(int argc, char *argv[])
     config.persistence_backend = env::Environment::getStringOr("CRAWLER_PERSISTENCE_BACKEND", config.persistence_backend);
     config.db_path = env::Environment::getStringOr("CRAWLER_SQLITE_DB_PATH", "./data/song.db");
     config.storage_path = env::Environment::getStringOr("CRAWLER_STORAGE_PATH", config.storage_path);
+    config.resource_storage_backend = env::Environment::getStringOr("CRAWLER_RESOURCE_STORAGE_BACKEND", config.resource_storage_backend);
+    config.resource_cloud_upload_enabled = env::Environment::getBoolOr("CRAWLER_RESOURCE_CLOUD_UPLOAD_ENABLED", config.resource_cloud_upload_enabled);
+    config.resource_cloud_upload_backend = env::Environment::getStringOr("CRAWLER_RESOURCE_CLOUD_UPLOAD_BACKEND", config.resource_cloud_upload_backend);
+    // 当前采集主流程只落本地并回写 SQL，网盘上传由人工上传和对账脚本处理。
+    config.baidupcs.enabled = false;
+    config.baidupcs.local_root = config.storage_path;
+    config.baidupcs.cloud_root = env::Environment::getStringOr("CRAWLER_RESOURCE_CLOUD_ROOT", config.baidupcs.cloud_root);
+    config.baidupcs.executable_path = env::Environment::getStringOr("CRAWLER_BAIDUPCS_GO_PATH", config.baidupcs.executable_path);
+    config.baidupcs.upload_parallel = env::Environment::getIntOr("CRAWLER_BAIDUPCS_UPLOAD_PARALLEL", config.baidupcs.upload_parallel);
+    config.baidupcs.upload_load = env::Environment::getIntOr("CRAWLER_BAIDUPCS_UPLOAD_LOAD", config.baidupcs.upload_load);
+    config.baidupcs.upload_retries = env::Environment::getIntOr("CRAWLER_BAIDUPCS_UPLOAD_RETRIES", config.baidupcs.upload_retries);
+    config.baidupcs.upload_policy = env::Environment::getStringOr("CRAWLER_BAIDUPCS_UPLOAD_POLICY", config.baidupcs.upload_policy);
+    config.rclone.rc_url = env::Environment::getStringOr("CRAWLER_RCLONE_RC_URL", config.rclone.rc_url);
+    config.rclone.rc_user = env::Environment::getStringOr("CRAWLER_RCLONE_RC_USER", config.rclone.rc_user);
+    config.rclone.rc_password = env::Environment::getStringOr("CRAWLER_RCLONE_RC_PASSWORD", config.rclone.rc_password);
+    config.rclone.target_fs = env::Environment::getStringOr("CRAWLER_RCLONE_TARGET_FS", config.rclone.target_fs);
+    config.rclone.api_timeout_ms = env::Environment::getIntOr("CRAWLER_RCLONE_API_TIMEOUT_MS", config.rclone.api_timeout_ms);
+    config.rclone.job_timeout_ms = env::Environment::getIntOr("CRAWLER_RCLONE_JOB_TIMEOUT_MS", config.rclone.job_timeout_ms);
+    config.rclone.job_poll_interval_ms = env::Environment::getIntOr("CRAWLER_RCLONE_JOB_POLL_INTERVAL_MS", config.rclone.job_poll_interval_ms);
+    config.rclone.api_max_response_bytes = static_cast<std::size_t>(env::Environment::getIntOr("CRAWLER_RCLONE_API_MAX_RESPONSE_BYTES", static_cast<int>(config.rclone.api_max_response_bytes)));
     config.outbound_http_io_threads = env::Environment::getIntOr("CRAWLER_OUTBOUND_HTTP_IO_THREADS", config.outbound_http_io_threads);
     config.outbound_http_timeout_ms = env::Environment::getIntOr("CRAWLER_OUTBOUND_HTTP_TIMEOUT_MS", config.outbound_http_timeout_ms);
     config.outbound_http_max_response_bytes = static_cast<std::size_t>(env::Environment::getIntOr(
@@ -118,12 +138,14 @@ int main(int argc, char *argv[])
         app.executeCrawl(crawl_target);
     } else {
         // 在独立线程中启动服务器，防止阻塞主线程处理信号
-        std::thread server_thread([&app]() {
+        std::atomic<bool> server_finished {false}; // Drogon 收到信号并退出后通知主线程结束等待。
+        std::thread server_thread([&app, &server_finished]() {
             app.run();
+            server_finished = true;
         });
 
         // 主线程等待停止信号
-        while (g_running) {
+        while (g_running && !server_finished) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
 

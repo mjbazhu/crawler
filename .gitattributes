@@ -1,0 +1,11 @@
+# SQL 迁移按文件内容校验，跨平台检出时固定使用 LF。
+* text=auto
+*.sql text eol=lf
+*.cpp text eol=lf
+*.h text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+CMakeLists.txt text eol=lf
+.clang-format text eol=lf
+.clangd text eol=lf

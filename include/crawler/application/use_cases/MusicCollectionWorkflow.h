@@ -5,6 +5,7 @@
 #include "crawler/application/ports/parsing/AlbumSourceParser.h"
 #include "crawler/application/ports/parsing/PageInspector.h"
 #include "crawler/application/ports/parsing/ParseResultParser.h"
+#include "crawler/application/ports/parsing/SingerProfileParser.h"
 #include "crawler/application/ports/parsing/SingerSourceParser.h"
 #include "crawler/application/ports/parsing/SongSourceParser.h"
 #include "crawler/application/ports/persistence/AlbumSourceSyncQueue.h"
@@ -12,6 +13,7 @@
 #include "crawler/application/ports/provider/AlbumSearchProvider.h"
 #include "crawler/application/ports/provider/RawPageFetcher.h"
 #include "crawler/application/ports/provider/SingerCatalogProvider.h"
+#include "crawler/application/model/SingerSourceProfile.h"
 #include "crawler/application/ports/provider/SongSearchProvider.h"
 #include "crawler/application/use_cases/AlbumDetailBackfillWorkflow.h"
 #include "crawler/application/use_cases/MetadataPersistenceService.h"
@@ -21,6 +23,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 
 namespace orchestrator::modules::crawler::application::use_cases {
@@ -39,6 +42,7 @@ public:
         std::shared_ptr<application::ports::SongSourceParser> song_source_parser,
         std::shared_ptr<application::ports::SingerSourceParser> singer_source_parser,
         std::shared_ptr<application::ports::AlbumSourceParser> album_source_parser,
+        std::shared_ptr<application::ports::SingerProfileParser> singer_profile_parser,
         std::shared_ptr<application::ports::PageInspector> page_inspector,
         std::shared_ptr<application::ports::AlbumSourceSyncQueue> album_source_sync_queue,
         std::shared_ptr<MetadataPersistenceService> persistence,
@@ -57,7 +61,7 @@ public:
     bool crawlSingerSongsAndSave(std::uint64_t singer_id, int limit, int max_page_concurrency);
 
     // 获取指定歌手歌曲分页并返回写入数量。
-    application::model::SingerCollectionResult crawlSingerSongsAndSaveResult(std::uint64_t singer_id, int limit, int max_page_concurrency);
+    application::model::SingerCollectionResult crawlSingerSongsAndSaveResult(std::uint64_t singer_id, int limit, int max_page_concurrency, std::optional<int> source_song_total = std::nullopt, std::optional<int> source_album_total = std::nullopt);
 
     // 获取歌手分类列表并保存歌手来源参数。
     bool crawlSingerIndexAndSave(std::string tab, int limit);
@@ -69,7 +73,10 @@ public:
     bool crawlSingerAlbumsAndSave(std::uint64_t singer_id, int limit, int max_page_concurrency);
 
     // 获取指定歌手专辑分页并返回写入数量。
-    application::model::SingerCollectionResult crawlSingerAlbumsAndSaveResult(std::uint64_t singer_id, int limit, int max_page_concurrency);
+    application::model::SingerCollectionResult crawlSingerAlbumsAndSaveResult(std::uint64_t singer_id, int limit, int max_page_concurrency, std::optional<int> source_song_total = std::nullopt, std::optional<int> source_album_total = std::nullopt);
+
+    // 刷新并保存歌手主要信息中的平台声明歌曲/专辑总数。
+    application::model::SingerSourceProfile fetchAndSaveSingerSourceProfile(std::uint64_t singer_id);
 
     // 获取待补齐专辑详情并保存详情与歌曲来源参数。
     bool crawlPendingAlbumDetailsAndSave(std::string source, int limit, int max_page_concurrency);

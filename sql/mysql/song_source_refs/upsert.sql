@@ -1,0 +1,35 @@
+INSERT INTO song_source_refs (
+    song_db_id,
+    source,
+    source_song_id,
+    source_content_id,
+    source_resource_type,
+    source_title_pinyin,
+    source_duration_seconds,
+    copyright_id,
+    metadata_status,
+    created_at,
+    updated_at
+) VALUES (
+    ?,
+    ?,
+    NULLIF(?, ''),
+    NULLIF(?, ''),
+    NULLIF(?, ''),
+    NULLIF(?, ''),
+    ?,
+    NULLIF(?, ''),
+    1,
+    UNIX_TIMESTAMP(),
+    UNIX_TIMESTAMP()
+) ON DUPLICATE KEY UPDATE
+    id = LAST_INSERT_ID(id),
+    song_db_id = VALUES(song_db_id),
+    source_song_id = COALESCE(VALUES(source_song_id), source_song_id),
+    source_content_id = COALESCE(VALUES(source_content_id), source_content_id),
+    source_resource_type = COALESCE(VALUES(source_resource_type), source_resource_type),
+    source_title_pinyin = COALESCE(VALUES(source_title_pinyin), source_title_pinyin),
+    source_duration_seconds = IF(VALUES(source_duration_seconds) = 0, source_duration_seconds, VALUES(source_duration_seconds)),
+    copyright_id = COALESCE(VALUES(copyright_id), copyright_id),
+    metadata_status = 1,
+    updated_at = VALUES(updated_at);

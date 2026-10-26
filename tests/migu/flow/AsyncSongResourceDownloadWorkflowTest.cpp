@@ -320,6 +320,37 @@ private:
     std::mutex mutex_; // 保护并发打开记录
 };
 
+// 远端复制测试替身，用于验证 rclone 类 adapter 接入 workflow 后不再下载到本地。
+class FakeRemoteCopier : public ports::AsyncSongResourceRemoteCopier {
+public:
+    bool fail = false;                                          // 是否模拟复制失败
+    std::vector<model::SongResourceRemoteCopyRequest> requests; // 复制请求记录
+
+    app_async::Task<model::SongResourceRemoteCopyResult> copyUrl(model::SongResourceRemoteCopyRequest request) override
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            requests.push_back(request);
+        }
+        model::SongResourceRemoteCopyResult result;
+        if (fail) {
+            result.error_category = "network";
+            result.result_code = "rclone_request_failed";
+            result.message = "rclone failed";
+            co_return result;
+        }
+        result.ok = true;
+        result.local_path = request.relative_path_hint;
+        result.size_bytes = 123;
+        result.checksum = "rclone:md5:abc123";
+        result.result_code = "ok";
+        co_return result;
+    }
+
+private:
+    std::mutex mutex_; // 保护复制请求记录
+};
+
 // pacmtoken 刷新测试替身。
 class FakePacmtokenRefresher : public ports::MiguPacmtokenRefresher {
 public:
@@ -380,6 +411,7 @@ model::SongResourceQueueTarget audioTarget(std::uint64_t id = 101, std::string f
     target.copyright_id = "60054701947";
     target.title = "夜曲";
     target.resource_kind = "audio";
+    target.resource_fetch_format_type = format.empty() ? "ZQ24" : format;
     target.format_type = std::move(format);
     return target;
 }
@@ -720,6 +752,7 @@ void testAsyncWorkflowSkipsPermanentListenRestrictions()
         const char *message;
         const char *category;
     } cases[] = {
+        {"210001", "该内容暂不支持播放", "resource"},
         {"440000", "该歌曲暂无版权", "copyright"},
         {"440015", "应版权方要求，该数字专辑购买后即可无限畅享", "resource"},
     };
@@ -776,6 +809,111 @@ void testAsyncWorkflowDoesNotWriteCompletedWhenCommitFails()
     require(queue->failed.size() == 1, "commit failure should mark resource failed");
 }
 
+void testAsyncWorkflowUsesRemoteCopierWhenConfigured()
+{
+    auto runtime = std::make_shared<ThreadedAsyncRuntime>();
+    auto queue = std::make_shared<FakeAsyncSongResourceQueue>();
+    queue->pending = {directTarget(801, "https://example.test/lyric")};
+    auto fetcher = std::make_shared<ScriptedAsyncContentFetcher>();
+    auto blob_store = std::make_shared<MemoryAsyncBlobStore>();
+    auto remote_copier = std::make_shared<FakeRemoteCopier>();
+    auto parser = std::make_shared<migu_parser::MiguSongResourceParser>();
+    use_cases::AsyncSongResourceDownloadWorkflow workflow(runtime, queue, nullptr, parser, fetcher, blob_store, {}, nullptr, nullptr, remote_copier);
+    auto query = baseQuery("async-remote-copy");
+    query.resource_kind = "lyric";
+    RecordingResourceListener listener;
+    const auto result = runWorkflow(workflow, runtime, query, &listener);
+
+    require(result.succeeded_count == 1, "remote copier direct resource should succeed");
+    require(remote_copier->requests.size() == 1, "remote copier should receive one request");
+    require(fetcher->requested_urls.empty(), "remote copier path should not download content through fetcher");
+    require(blob_store->opened.empty(), "remote copier path should not open local blob writer");
+    require(queue->succeeded.size() == 1, "remote copy success should be written back once");
+    require(queue->succeeded.front().local_path == result.items.front().local_path, "result path should match DB writeback path");
+    require(queue->succeeded.front().checksum == "rclone:md5:abc123", "remote copy checksum should be written back");
+    require(listener.hasEvent("resourceRemoteCopyStarted"), "remote copy should emit start event");
+    require(listener.hasEvent("resourceRemoteCopyCompleted"), "remote copy should emit completion event");
+}
+
+void testAsyncWorkflowRefreshesMissingCoverUrlThroughListen()
+{
+    auto runtime = std::make_shared<ThreadedAsyncRuntime>();
+    auto queue = std::make_shared<FakeAsyncSongResourceQueue>();
+    auto target = directTarget(901, "");
+    target.resource_kind = "cover";
+    queue->pending = {target};
+
+    auto provider = std::make_shared<SequenceAsyncSongResourceProvider>();
+    provider->responses = {listenResponse("https://example.test/audio.flac", R"(,"img3":"/data/oss/resource/00/cover/new.webp")")};
+    auto fetcher = std::make_shared<ScriptedAsyncContentFetcher>();
+    StreamScript cover_script;
+    cover_script.content_type = "image/webp";
+    fetcher->scripts["https://d.musicapp.migu.cn/data/oss/resource/00/cover/new.webp"].push_back(cover_script);
+    auto blob_store = std::make_shared<MemoryAsyncBlobStore>();
+    auto parser = std::make_shared<migu_parser::MiguSongResourceParser>();
+    use_cases::AsyncSongResourceDownloadWorkflow workflow(runtime, queue, provider, parser, fetcher, blob_store);
+    auto query = baseQuery("async-cover-refresh");
+    query.resource_kind = "cover";
+    RecordingResourceListener listener;
+    const auto result = runWorkflow(workflow, runtime, query, &listener);
+
+    require(result.succeeded_count == 1, "cover with missing remote_url should be refreshed through listen");
+    require(provider->requests.size() == 1, "listen should be called once to refresh cover url");
+    require(provider->requests.front().tone_flag == "ZQ24", "cover refresh should use fallback audio tone flag");
+    require(fetcher->requested_urls.size() == 1, "refreshed cover url should be downloaded once");
+    require(fetcher->requested_urls.front() == "https://d.musicapp.migu.cn/data/oss/resource/00/cover/new.webp", "cover url should be normalized before download");
+    require(queue->succeeded.size() == 1, "refreshed cover should be written back");
+    require(queue->succeeded.front().remote_url == fetcher->requested_urls.front(), "success writeback should store refreshed cover url");
+    require(listener.hasEvent("resourceUrlFetched"), "cover refresh should emit url fetched event");
+}
+
+void testAsyncWorkflowSkipsRestrictedDirectRelatedResource()
+{
+    auto runtime = std::make_shared<ThreadedAsyncRuntime>();
+    auto queue = std::make_shared<FakeAsyncSongResourceQueue>();
+    queue->pending = {directTarget(902, "")};
+
+    auto provider = std::make_shared<SequenceAsyncSongResourceProvider>();
+    provider->responses = {listenRestrictedResponse("440000", "该歌曲暂无版权")};
+    auto parser = std::make_shared<migu_parser::MiguSongResourceParser>();
+    use_cases::AsyncSongResourceDownloadWorkflow workflow(runtime, queue, provider, parser, std::make_shared<ScriptedAsyncContentFetcher>(), std::make_shared<MemoryAsyncBlobStore>());
+    auto query = baseQuery("async-direct-related-skip");
+    query.resource_kind = "lyric";
+    const auto result = runWorkflow(workflow, runtime, query);
+
+    require(result.failed_count == 0, "restricted direct related resource should not fail");
+    require(result.skipped_count == 1, "restricted direct related resource should be skipped");
+    require(queue->failed.empty(), "restricted direct related resource should not use failure writeback");
+    require(queue->skipped.size() == 1, "restricted direct related resource should use skip writeback");
+    require(queue->skipped.front().resource_kind == "lyric", "restricted direct related skip should keep resource kind");
+    require(queue->skipped.front().result_code == "440000", "restricted direct related skip should preserve platform code");
+    require(result.items.size() == 1 && result.items.front().skipped, "restricted direct related item should be skipped");
+    require(result.items.front().error_category == "copyright", std::string("restricted direct related item should expose copyright category, got ") + result.items.front().error_category);
+}
+
+void testAsyncWorkflowUsesStableCodeForMissingDirectRelatedUrl()
+{
+    auto runtime = std::make_shared<ThreadedAsyncRuntime>();
+    auto queue = std::make_shared<FakeAsyncSongResourceQueue>();
+    auto target = directTarget(903, "");
+    target.resource_kind = "cover";
+    queue->pending = {target};
+
+    auto provider = std::make_shared<SequenceAsyncSongResourceProvider>();
+    provider->responses = {listenResponse("https://example.test/audio.flac")};
+    auto parser = std::make_shared<migu_parser::MiguSongResourceParser>();
+    use_cases::AsyncSongResourceDownloadWorkflow workflow(runtime, queue, provider, parser, std::make_shared<ScriptedAsyncContentFetcher>(), std::make_shared<MemoryAsyncBlobStore>());
+    auto query = baseQuery("async-direct-related-missing-url");
+    query.resource_kind = "cover";
+    const auto result = runWorkflow(workflow, runtime, query);
+
+    require(result.failed_count == 1, "missing direct related url should fail");
+    require(result.skipped_count == 0, "missing direct related url should not be skipped");
+    require(queue->failed.size() == 1, "missing direct related url should use failure writeback");
+    require(queue->failed.front().result_code == "missing_related_resource_url", "missing direct related url should use stable result code");
+    require(result.items.front().result_code == "missing_related_resource_url", "missing direct related result should expose stable result code");
+}
+
 } // namespace
 
 int main()
@@ -790,6 +928,10 @@ int main()
         testAsyncWorkflowDownloadsRelatedTextWhenAudioRestricted();
         testAsyncWorkflowSkipsPermanentListenRestrictions();
         testAsyncWorkflowDoesNotWriteCompletedWhenCommitFails();
+        testAsyncWorkflowUsesRemoteCopierWhenConfigured();
+        testAsyncWorkflowRefreshesMissingCoverUrlThroughListen();
+        testAsyncWorkflowSkipsRestrictedDirectRelatedResource();
+        testAsyncWorkflowUsesStableCodeForMissingDirectRelatedUrl();
         std::cout << "AsyncSongResourceDownloadWorkflowTest passed." << std::endl;
         return 0;
     } catch (const std::exception &e) {

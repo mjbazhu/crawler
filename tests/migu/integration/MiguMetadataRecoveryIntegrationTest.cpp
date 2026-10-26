@@ -36,14 +36,14 @@ void require(bool condition, const std::string &message)
 
 // stale recovery 测试 fixture 的平台 ID。
 struct RecoveryFixture {
-    std::string suffix;                // 唯一后缀
-    std::string stale_songs_singer;    // 歌曲同步 stale running 歌手
-    std::string fresh_songs_singer;    // 歌曲同步未超时 running 歌手
-    std::string stale_albums_singer;   // 专辑同步 stale running 歌手
-    std::string stale_detail_album;    // 详情同步 stale running 专辑
-    std::string fresh_detail_album;    // 详情同步未超时 running 专辑
-    std::string stale_songs_album;     // 专辑歌曲 stale running 专辑
-    std::string batch_id;              // stale running 批次
+    std::string suffix;              // 唯一后缀
+    std::string stale_songs_singer;  // 歌曲同步 stale running 歌手
+    std::string fresh_songs_singer;  // 歌曲同步未超时 running 歌手
+    std::string stale_albums_singer; // 专辑同步 stale running 歌手
+    std::string stale_detail_album;  // 详情同步 stale running 专辑
+    std::string fresh_detail_album;  // 详情同步未超时 running 专辑
+    std::string stale_songs_album;   // 专辑歌曲 stale running 专辑
+    std::string batch_id;            // stale running 批次
 };
 
 // 生成跨测试运行唯一后缀。
@@ -71,9 +71,7 @@ boost::asio::awaitable<void> executeSql(const std::shared_ptr<mysql::MySqlConnec
 boost::asio::awaitable<void> cleanupRecoveryFixtures(const std::shared_ptr<mysql::MySqlConnectionPool> &pool)
 {
     co_await executeSql(pool, "DELETE FROM crawl_batches WHERE batch_id LIKE 'codex_recovery_%'");
-    co_await executeSql(pool, "DELETE FROM album_source_refs WHERE source = 'migu' AND source_item_key LIKE 'codex_recovery_%'");
     co_await executeSql(pool, "DELETE FROM albums WHERE normalized_title LIKE 'codex_recovery_%'");
-    co_await executeSql(pool, "DELETE FROM singer_source_refs WHERE source = 'migu' AND source_item_key LIKE 'codex_recovery_%'");
     co_await executeSql(pool, "DELETE FROM singers WHERE normalized_name LIKE 'codex_recovery_%'");
 }
 
@@ -121,7 +119,7 @@ boost::asio::awaitable<void> seedSinger(
     co_await connection->async_execute("SELECT LAST_INSERT_ID()", result, boost::asio::use_awaitable);
     const auto singer_db_id = mysql::MySqlValueReader::uint64At(result.rows().front(), 0);
     co_await connection->async_execute(
-        "INSERT INTO singer_source_refs (singer_db_id, source, source_item_key, source_singer_id, source_name_pinyin, source_country, songs_sync_status, songs_sync_error, songs_claim_token, songs_claimed_at, songs_claim_owner, albums_sync_status, albums_sync_error, albums_claim_token, albums_claimed_at, albums_claim_owner, created_at, updated_at) VALUES (" + std::to_string(singer_db_id) + ", 'migu', 'codex_recovery_singer:" + tag + ":" + suffix + "', '" + source_singer_id + "', 'codex', 'huayu', " + std::to_string(songs_status) + ", 'seed songs running', 'seed-songs-token', " + std::to_string(updated_at) + ", 'test', " + std::to_string(albums_status) + ", 'seed albums running', 'seed-albums-token', " + std::to_string(updated_at) + ", 'test', " + std::to_string(updated_at) + ", " + std::to_string(updated_at) + ")",
+        "INSERT INTO singer_source_refs (singer_db_id, source, source_singer_id, source_name_pinyin, source_country, songs_sync_status, songs_sync_error, songs_claim_token, songs_claimed_at, songs_claim_owner, albums_sync_status, albums_sync_error, albums_claim_token, albums_claimed_at, albums_claim_owner, created_at, updated_at) VALUES (" + std::to_string(singer_db_id) + ", 'migu', '" + source_singer_id + "', 'codex', 'huayu', " + std::to_string(songs_status) + ", 'seed songs running', 'seed-songs-token', " + std::to_string(updated_at) + ", 'test', " + std::to_string(albums_status) + ", 'seed albums running', 'seed-albums-token', " + std::to_string(updated_at) + ", 'test', " + std::to_string(updated_at) + ", " + std::to_string(updated_at) + ")",
         result,
         boost::asio::use_awaitable
     );
@@ -142,17 +140,18 @@ boost::asio::awaitable<void> seedAlbum(
     boost::mysql::results result;
     const std::string title = "Codex Recovery Album " + tag + " " + suffix;
     co_await connection->async_execute(
-        "INSERT INTO albums (title, normalized_title, primary_artist_name, release_date, identity_hash, created_at, updated_at) VALUES ('" + title + "', 'codex_recovery_album_" + tag + "_" + suffix + "', 'Codex Recovery Artist', '2026-01-01', '" + identityHash(suffix, tag) + "', " + std::to_string(updated_at) + ", " + std::to_string(updated_at) + ")",
+        "INSERT INTO albums (title, normalized_title, release_date, identity_hash, created_at, updated_at) VALUES ('" + title + "', 'codex_recovery_album_" + tag + "_" + suffix + "', '2026-01-01', '" + identityHash(suffix, tag) + "', " + std::to_string(updated_at) + ", " + std::to_string(updated_at) + ")",
         result,
         boost::asio::use_awaitable
     );
     co_await connection->async_execute("SELECT LAST_INSERT_ID()", result, boost::asio::use_awaitable);
     const auto album_db_id = mysql::MySqlValueReader::uint64At(result.rows().front(), 0);
     co_await connection->async_execute(
-        "INSERT INTO album_source_refs (album_db_id, source, source_item_key, source_album_id, source_resource_type, source_res_type, source_album_kind, source_title, source_artist_id, source_artist_name, detail_sync_status, detail_sync_error, detail_claim_token, detail_claimed_at, detail_claim_owner, songs_sync_status, songs_sync_error, songs_claim_token, songs_claimed_at, songs_claim_owner, created_at, updated_at) VALUES (" + std::to_string(album_db_id) + ", 'migu', 'codex_recovery_album:" + tag + ":" + suffix + "', '" + source_album_id + "', '5', '1', 2, '" + title + "', 'recovery-artist', 'Codex Recovery Artist', " + std::to_string(detail_status) + ", 'seed detail running', 'seed-detail-token', " + std::to_string(updated_at) + ", 'test', " + std::to_string(songs_status) + ", 'seed songs running', 'seed-album-songs-token', " + std::to_string(updated_at) + ", 'test', " + std::to_string(updated_at) + ", " + std::to_string(updated_at) + ")",
+        "INSERT INTO album_source_refs (album_db_id, source, source_album_id, source_resource_type, source_album_kind, detail_sync_status, detail_sync_error, detail_claim_token, detail_claimed_at, detail_claim_owner, songs_sync_status, songs_sync_error, songs_claim_token, songs_claimed_at, songs_claim_owner, created_at, updated_at) VALUES (" + std::to_string(album_db_id) + ", 'migu', '" + source_album_id + "', '5', 2, " + std::to_string(detail_status) + ", 'seed detail running', 'seed-detail-token', " + std::to_string(updated_at) + ", 'test', " + std::to_string(songs_status) + ", 'seed songs running', 'seed-album-songs-token', " + std::to_string(updated_at) + ", 'test', " + std::to_string(updated_at) + ", " + std::to_string(updated_at) + ")",
         result,
         boost::asio::use_awaitable
     );
+    co_await pool->coExecute("INSERT INTO album_artist_refs(album_source_ref_id,singer_source_ref_id,artist_role,artist_order,is_primary) SELECT a.id,s.id,'artist',1,1 FROM album_catalog_sources a JOIN singer_catalog_sources s ON s.source=a.source AND s.source_singer_id='recovery-artist' WHERE a.source='migu' AND a.source_album_id='" + source_album_id + "' ON DUPLICATE KEY UPDATE is_primary=1");
 }
 
 // 插入完整 stale recovery 测试数据。

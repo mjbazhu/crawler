@@ -1,5 +1,6 @@
 #include "crawler/infrastructure/music/migu/parser/MiguSongResourceParser.h"
 
+#include "MiguParserSupportInternal.h"
 #include "crawler/infrastructure/json/JsonUtils.h"
 
 namespace orchestrator::modules::crawler::infrastructure::music::migu::parser {
@@ -36,6 +37,22 @@ application::model::SongResourceFetchResult MiguSongResourceParser::parseSongRes
     result.url = JsonUtils::getString(*data, "url");
     result.version = JsonUtils::getString(*data, "version");
     result.audio_format_type = JsonUtils::getString(*data, "audioFormatType");
+    const auto *song = JsonUtils::getObject(*data, "song");
+    result.cover_url = detail::normalizeMiguResourceUrl(detail::firstNonEmpty({
+        JsonUtils::getString(*data, "img3"),
+        song ? JsonUtils::getString(*song, "img3") : std::string {},
+        JsonUtils::getString(*data, "img2"),
+        song ? JsonUtils::getString(*song, "img2") : std::string {},
+        JsonUtils::getString(*data, "img1"),
+        song ? JsonUtils::getString(*song, "img1") : std::string {},
+        detail::selectImageUrl(JsonUtils::getArray(*data, "imgItem")),
+        detail::selectImageUrl(JsonUtils::getArray(*data, "imgItems")),
+        JsonUtils::getString(*data, "coverUrl"),
+        JsonUtils::getString(*data, "cover"),
+        JsonUtils::getString(*data, "landscapImg"),
+        JsonUtils::getString(*data, "img"),
+        JsonUtils::getString(*data, "picUrl"),
+    }));
     result.lyric_url = JsonUtils::getString(*data, "lrcUrl");
     result.mrc_url = JsonUtils::getString(*data, "mrcUrl");
     result.trc_url = JsonUtils::getString(*data, "trcUrl");

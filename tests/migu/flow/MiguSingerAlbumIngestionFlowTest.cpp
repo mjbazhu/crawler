@@ -42,7 +42,6 @@ crawler::application::model::AlbumSourceMetadata makeAlbum(std::string album_id,
     album.title = "太阳之子";
     album.normalized_title = album.title;
     album.artist_name = "周杰伦";
-    album.source_item_key = "album:" + album_id;
     album.source_album_id = std::move(album_id);
     album.source_res_type = std::move(source_res_type);
     album.detail_sync_status = detail_sync_status;

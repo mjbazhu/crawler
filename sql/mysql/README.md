@@ -1,36 +1,70 @@
-# MySQL SQL 目录说明
+# MySQL 表职责与执行顺序
 
-`migrations/` 是当前 MySQL 启动初始化入口。服务启动时会按 `V<version>__<name>.sql` 升序自动应用未执行 migration，并写入 `schema_migrations`。如果 migration 执行失败或已执行版本 checksum 与文件不一致，MySQL schema 初始化失败，服务不可用。checksum 使用 `MySqlMigrationRunner::checksumOf()` 的稳定算法，不是 MD5。
+运行期 SQL 按所属表组织，例如 `songs/upsert.sql`、`song_source_refs/upsert.sql`、`album_artist_refs/upsert.sql`。每个写入模板只修改自己的表，可以通过 JOIN 查询其他表。歌曲 SQL 不创建歌手或专辑，专辑 SQL 不回填歌曲关系。
 
-后续 DDL 变更必须新增 migration 文件；查询、插入、更新模板继续放在 `catalog/` 或编号 SQL 中。
+## 表职责
 
-根目录下 `01_` 到 `22_` 是当前 Migu 歌曲、资源、歌手、专辑来源入库和同步状态模板，编号表示设计和执行顺序，暂时保持在根目录便于按顺序检查。
+| 表 | 保存内容 | 去重或关联方式 |
+| --- | --- | --- |
+| `songs` | 公共歌曲标题、标准化标题、公共标识 | `normalized_title` |
+| `song_source_refs` | 平台歌曲身份、内容 ID、资源类型、歌曲拼音、时长、版权 ID | 来源业务键，关联 `songs` |
+| `singers` | 公共歌手名称、标准化名称、性别 | `normalized_name` |
+| `singer_source_refs` | 平台歌手身份、拼音、地区、声明总数及采集状态 | 平台与歌手 ID，关联 `singers` |
+| `singer_index_memberships` | 分类 tab、标签、顺序和指标 | 歌手来源主键与 tab |
+| `albums` | 专辑标题、标准化标题、发行日期、稳定身份 hash | `SHA256(source + '|' + source_album_id)` |
+| `album_source_refs` | 平台专辑身份、资源类型、专辑类型、拼音、简介、声明歌曲总数、采集状态 | 平台与专辑 ID，关联 `albums`；标题只由 `albums` 保存 |
+| `song_artist_refs` / `album_artist_refs` | 歌曲/专辑来源与歌手来源之间的角色、顺序、主歌手和入口标记 | 两端主键与角色 |
+| `album_song_refs` | 专辑来源与歌曲来源之间的 Disc、track、顺序 | 两端主键，均不可为空 |
+| `song_source_audio_formats` | 音质、资源类型、iOS/Android 格式编码及大小 | 歌曲来源主键与音质 |
+| `song_resources` | 歌曲资源任务、已保存文件/云端结果、状态和错误 | 歌曲来源主键、资源类型、音质 |
+| `singer_resources` / `album_resources` | 本地封面相对路径、字节数、checksum、状态和脱敏错误 | 所属来源主键与资源类型 |
+| `migu_dalbum_details` | 数字专辑来源与 `materialId` 的明确映射 | 专辑来源主键 |
+| `crawl_batches` / `crawl_batch_items` / `crawl_batch_events` | 任务、目标和事件 | 与音乐实体去重分离 |
+| `governance_events` | 治理操作记录 | 事件主键 |
 
-`23_` 到 `25_` 是采集控制台批次持久化表：`crawl_batches`、`crawl_batch_items`、`crawl_batch_events`。这三张表不参与音乐元数据去重，只记录任务生命周期、每个目标执行结果和事件流，供前端刷新页面或服务重启后继续查看批次。
+`song_catalog_sources`、`album_catalog_sources`、`singer_catalog_sources`、`album_song_catalog`、`album_catalog` 是只读视图。展示所需的名称和平台 ID 从实体及关系实时派生，不重新存储冗余字段。写入和删除必须针对真实表。
 
-`26_` 到 `29_` 是从 `singer_source_refs` 认领待同步歌手歌曲/专辑的模板，筛选条件中的 `country`、`gender`、`q` 为空时不参与过滤，默认同步状态为 `0/3/4`。
+三个来源表不保存 `source_item_key`。兼容查询按需生成 `singer:{source_singer_id}`、`album:{source_album_id}`；歌曲优先生成 `content:{source_content_id}`，没有内容 ID 时生成 `song:{source_song_id}`。歌曲保留两组来源 ID 唯一索引，并通过数据库 CHECK 与入库校验保证至少有一个有效外部 ID。专辑接口的 `source_title` 仅为 `albums.title` 的兼容别名。
 
-`30_` 到 `35_` 是当前元数据参数补强：歌曲歌手关系 `song_artist_refs`、专辑歌曲关系 `album_song_refs`、对应插入模板、缺省 audio 资源任务模板，以及 `crawler_schema_versions` schema 版本表。关系表用于支持多歌手、合唱、Disc/track 曲序和前端 schema/version 检查；`singers` 现在按 `normalized_name` 唯一，只保存公共歌手名和性别，平台拼音保存在 `singer_source_refs.source_name_pinyin`。`song_artist_refs` 只保存歌曲与歌手来源关系，歌手头像、拼音等属性不再放入关系表。
+专辑 `album_songs_count` 是当前 `album_song_refs` 中的关系数量，`songs_count` 是其展示别名；`songs_sync_count` 读取 `album_source_refs` 中最近一次专辑曲目采集成功处理条数。关系可由歌手歌曲等不同入口写入，完成情况只读取 `songs_sync_status`，不根据已有关系数量推断。详情同步与歌曲同步继续保留各自的状态、时间和错误。
 
-`common/` 存放跨入库模板复用的事务 SQL。
+歌曲、专辑和资源队列的常用查询直接读取真实表，先按索引分页，再为本页读取名称、关系和资源统计。兼容视图保留给已有查询入口，避免常用分页先展开全部关系或聚合全部资源。
 
-`catalog/` 存放通用 Song、Album、Singer 仓储的 CRUD、内容查询、补池治理、资源队列治理、schema 状态和治理审计 SQL 模板。这些模板由 repository 调用，不应写入 controller 或 application。
+## 首次采集的固定流程
 
-`migrations/` 存放正式 DDL migration：
+1. parser 从同一份响应提取歌曲、专辑、歌手与关系片段；传输对象可以携带响应中的关联信息。
+2. `MetadataBatchBuilder` 按来源身份合并实体输入，把歌曲携带的专辑名称、拼音分到专辑输入，把歌手名称、拼音分到歌手输入。
+3. application 在数据库事务外下载歌手和专辑封面，文件完整提交后才产生成功结果；下载失败记录资源失败状态。
+4. `MySqlMetadataBatchWriter` 开启一个事务，依次调用歌手、专辑、歌曲各自 SQL，取得来源主键。
+5. 用主键写分类归属、歌曲歌手、专辑歌手和专辑歌曲关系，再写音质、资源任务和本地封面结果。
+6. 任一实体或关系失败，整批回滚，清理本次新增封面；成功则提交，再清理被替换的旧封面。空字段不覆盖已知属性，缺失端点不能保存为空关系。
 
-- `V2026052001__baseline_current_schema.sql`：当前完整 schema 基线，幂等创建核心表。
-- `V2026052101__resource_error_fields.sql`：补齐资源队列错误分类和批次关联字段。
-- `V2026052102__governance_events.sql`：新增治理审计表。
-- `V2026052103__batch_archive_and_summary.sql`：补齐批次归档、父批次追溯和 summary 索引。
-- `V2026052104__song_source_duration_and_trc.sql`：把平台时长迁移到 `song_source_refs`，并补齐 `trc` 歌词资源参数。
-- `V2026052105__song_title_pool_and_source_ref_cleanup.sql`：把 `songs` 收敛为按 `normalized_title` 唯一的标题池，并清理 `song_source_refs` 中不再需要的版权类型和授权原始字段。
-- `V2026052106__song_artist_singer_ref_and_source_cleanup.sql`：给 `song_artist_refs` 补齐 `singer_source_ref_id/is_seed`，并移除 `song_source_refs` 中主歌手冗余字段。
-- `V2026052107__singer_source_refs_cleanup.sql`：把 `singers` 收敛为按 `normalized_name` 唯一的公共歌手池，迁移平台拼音到 `singer_source_refs`，并移除来源表中的歌手名和性别冗余字段。
-- `V2026052108__singer_source_summary_recount.sql`：按 `song_artist_refs` 和 `album_source_refs.source_artist_id` 重算歌手歌曲/专辑汇总，修正已有内容但状态仍待处理的来源记录。
-- `V2026052109__song_artist_refs_relationship_only.sql`：把 `song_artist_refs` 收敛为纯歌曲-歌手关系表，删除平台来源、头像和拼音冗余字段，并调整关系去重约束。
-- `V2026052110__singer_index_memberships.sql`：新增歌手分类归属表，记录唯一歌手来源出现在哪些 Migu 分类 tab 中，避免在 `singer_source_refs` 中重复保存同一平台歌手。
-- `V2026052111__song_artist_refs_strict_singer_relation.sql`：把 `song_artist_refs` 进一步收敛为强关系表，要求 `singer_source_ref_id` 非空并删除平台歌手 ID/名称冗余字段。
-- `V2026052402__migu_song_cover_url_prefix.sql`：补齐历史 Migu 歌曲封面相对路径的请求前缀，并同步修复 `song_resources` 中的 cover 远程地址。
-- `V2026052403__migu_text_resource_queue_cleanup.sql`：清理历史 Migu 空封面/歌词资源占位，并恢复被 440015/440016 连带跳过的封面、歌词、mrc、trc 资源任务。
+搜索、URL 采集、歌手歌曲、歌手专辑和专辑详情使用同一 MySQL 写入入口。专辑详情与详情内的歌曲一次提交。deprecated/SQLite 兼容装配保留旧 port，MySQL 生产装配使用事务 writer。
 
-`tests/` 存放集成测试和真实调试测试使用的校验 SQL，生产代码不应依赖该目录。
+专辑来源 ID 从列表到详情保持稳定。改名、补充歌手、拼音、日期或 `materialId` 不改变 hash；不同来源 ID 不凭名称合并，数字专辑物料 ID 单独保存映射。
+
+## 本次结构清理
+
+- `song_source_refs` 删除 `source_album_id`、`source_album_name`、`source_album_pinyin`、`cover_url`、`lyric_url`、`mrc_url`、`trc_url`。
+- `song_resources` 删除 `remote_url`。地址只在当前下载调用中传递，资源队列重试重新向平台获取。
+- `albums` 删除 `primary_artist_name`，歌手由 `album_artist_refs` 关联获得。
+- `album_song_refs` 删除 `source`、`source_song_id`、`source_album_id`、`source_content_id`。
+- `album_source_refs` 删除主歌手 ID/名称、封面 URL、跳转 action、重复列表类型、日期和播放数字段；`total_count` 改为可空整数 `source_song_total`，拼音使用 `source_title_pinyin`。
+- `singer_source_refs` 删除 `avatar_url` 和重复的 `source_tag`；封面归资源表，分类标签归 membership。
+- `migu_dalbum_details` 删除重复专辑来源 ID，以及价格、会员、售卖期等不参与采集的字段，仅保留物料身份映射。
+
+`song_source_audio_formats` 的 `iformat/aformat/isize/asize` 本轮保留，分别表示 iOS/Android 格式和大小。详情字段 `iosFormat/androidFormat/iosSize/androidSize` 与列表旧字段统一解析。
+
+## Schema 管理与实施计划
+
+启动初始化只通过 `migrations/` 升序执行未应用版本，在 `schema_migrations` 记录 checksum。历史 migration 不修改；`V2026102501__normalize_music_table_ownership.sql` 规整表职责，`V2026102502__optimize_normalized_catalog_queries.sql` 增加来源与更新时间组合索引，并将已知历史专辑类型转换为详情请求所需的资源类型。`V2026102601__source_identity_and_album_count_semantics.sql` 删除来源派生业务键和重复专辑标题、增加歌曲身份约束、修正专辑 hash 注释，并重建兼容查询视图；已有同步状态及处理数量保持不变。
+
+迁移先保存旧拼音和关系端点、建立专辑歌手关系，再删除旧列。已有本地文件路径、云端路径和完成状态保留，不清空音乐表或资源表。DDL 阶段具备存在性判断，可以在中断后重试；执行整个文件必须使用同一连接。
+
+已有大库首次升级时，可设置 `CRAWLER_MYSQL_STARTUP_TIMEOUT_MS=600000`，为数据迁移和索引创建预留时间。后续启动根据 migration 记录跳过已完成版本。
+
+各表 `create.sql` 是当前结构快照，用于查阅与独立建表；正式升级仍走 migration。`transactions/` 放事务控制，`schema/` 放跨表 schema/完整性检查，`tests/` 仅用于校验。
+
+实施顺序：新增 migration 与表级 SQL → 接入原子编排和封面存储 → 更新查询、资源队列和协议 → 独立库验证 → 常规部署时由启动初始化执行迁移。
+
+验证覆盖历史结构升级及重跑、拼音与关系保留、首次写入、幂等、详情不改变身份、合唱、多 tab、本地封面结果、失败回滚，以及全部运行期 SQL prepare。迁移集成测试必须显式使用独立 `crawler_ownership_test_*` 数据库。

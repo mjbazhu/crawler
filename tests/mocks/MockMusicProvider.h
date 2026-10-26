@@ -16,6 +16,7 @@ public:
     std::optional<Response> mock_album_search_response;
     std::optional<Response> mock_album_songs_response;
     std::optional<Response> mock_singer_albums_response;
+    std::optional<Response> mock_singer_info_response;
     std::optional<Response> mock_album_detail_response;
     std::optional<Response> mock_singer_songs_response;
     std::optional<Response> mock_singer_index_response;
@@ -66,6 +67,12 @@ public:
         last_singer_id = singer_id;
         last_page = page;
         return mock_singer_albums_response;
+    }
+
+    std::optional<Response> fetchSingerInfo(std::uint64_t singer_id) override
+    {
+        last_singer_id = singer_id;
+        return mock_singer_info_response;
     }
 
     std::optional<Response> fetchAlbumDetail(std::string album_id, std::string source_res_type) override

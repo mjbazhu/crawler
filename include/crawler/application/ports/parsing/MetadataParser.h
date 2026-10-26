@@ -3,6 +3,7 @@
 #include "crawler/application/ports/parsing/AlbumSourceParser.h"
 #include "crawler/application/ports/parsing/PageInspector.h"
 #include "crawler/application/ports/parsing/ParseResultParser.h"
+#include "crawler/application/ports/parsing/SingerProfileParser.h"
 #include "crawler/application/ports/parsing/SingerSourceParser.h"
 #include "crawler/application/ports/parsing/SongSourceParser.h"
 
@@ -13,6 +14,7 @@ class MetadataParser : public ParseResultParser,
                        public SongSourceParser,
                        public SingerSourceParser,
                        public AlbumSourceParser,
+                       public SingerProfileParser,
                        public PageInspector {
 public:
     using SingerSongPageInfo = application::ports::SingerSongPageInfo;
@@ -36,6 +38,13 @@ public:
         info.album_count = parseAlbumSources(raw_data).size();
         info.should_stop_paging = info.album_count < 50;
         return info;
+    }
+
+    // 解析歌手来源概览；兼容 parser 默认返回空概览。
+    application::model::SingerSourceProfile parseSingerSourceProfile(const std::vector<char> &raw_data) const override
+    {
+        (void)raw_data;
+        return {};
     }
 };
 

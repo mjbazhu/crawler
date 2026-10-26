@@ -39,9 +39,9 @@ struct IntegrityMetric {
 
 // 专辑歌曲关系未关联专辑来源的样例。
 struct MissingAlbumLinkSample {
-    std::string source_album_id;   // 平台专辑 ID
-    std::string source_album_name; // 歌曲来源表中的专辑名
-    std::uint64_t song_count = 0;  // 受影响歌曲来源数
+    std::string source_album_id;       // 平台专辑 ID
+    std::string source_album_name;     // 歌曲来源表中的专辑名
+    std::uint64_t song_count = 0;      // 受影响歌曲来源数
     std::uint64_t album_ref_count = 0; // album_source_refs 中可匹配记录数
 };
 
@@ -71,7 +71,7 @@ boost::asio::awaitable<SingerTarget> selectSinger(
         auto statement = co_await connection->async_prepare_statement(
             R"SQL(
 SELECT r.id, r.source_singer_id, s.name, COUNT(DISTINCT ar.song_source_ref_id) AS song_count
-FROM singer_source_refs r
+FROM singer_catalog_sources r
 JOIN singers s ON s.id = r.singer_db_id
 JOIN song_artist_refs ar ON ar.singer_source_ref_id = r.id
 WHERE r.source = 'migu'
@@ -89,7 +89,7 @@ LIMIT 1
         co_await connection->async_execute(
             R"SQL(
 SELECT r.id, r.source_singer_id, s.name, COUNT(DISTINCT ar.song_source_ref_id) AS song_count
-FROM singer_source_refs r
+FROM singer_catalog_sources r
 JOIN singers s ON s.id = r.singer_db_id
 JOIN song_artist_refs ar ON ar.singer_source_ref_id = r.id
 WHERE r.source = 'migu'
@@ -124,20 +124,20 @@ std::vector<IntegrityMetric> buildMetrics(const SingerTarget &target)
     metrics = {
         {"song_artist_relation_rows", "SELECT COUNT(*) FROM song_artist_refs ar WHERE ar.singer_source_ref_id = " + id},
         {"distinct_song_source_refs", "SELECT COUNT(DISTINCT ar.song_source_ref_id) FROM song_artist_refs ar WHERE ar.singer_source_ref_id = " + id},
-        {"distinct_song_rows", "SELECT COUNT(DISTINCT r.song_db_id) FROM song_artist_refs ar JOIN song_source_refs r ON r.id = ar.song_source_ref_id WHERE ar.singer_source_ref_id = " + id},
-        {"orphan_song_source_refs", "SELECT COUNT(*) FROM song_artist_refs ar LEFT JOIN song_source_refs r ON r.id = ar.song_source_ref_id WHERE ar.singer_source_ref_id = " + id + " AND r.id IS NULL"},
-        {"orphan_song_rows", "SELECT COUNT(*) FROM song_artist_refs ar JOIN song_source_refs r ON r.id = ar.song_source_ref_id LEFT JOIN songs s ON s.id = r.song_db_id WHERE ar.singer_source_ref_id = " + id + " AND s.id IS NULL"},
+        {"distinct_song_rows", "SELECT COUNT(DISTINCT r.song_db_id) FROM song_artist_refs ar JOIN song_catalog_sources r ON r.id = ar.song_source_ref_id WHERE ar.singer_source_ref_id = " + id},
+        {"orphan_song_source_refs", "SELECT COUNT(*) FROM song_artist_refs ar LEFT JOIN song_catalog_sources r ON r.id = ar.song_source_ref_id WHERE ar.singer_source_ref_id = " + id + " AND r.id IS NULL"},
+        {"orphan_song_rows", "SELECT COUNT(*) FROM song_artist_refs ar JOIN song_catalog_sources r ON r.id = ar.song_source_ref_id LEFT JOIN songs s ON s.id = r.song_db_id WHERE ar.singer_source_ref_id = " + id + " AND s.id IS NULL"},
         {"duplicate_artist_relations", "SELECT COUNT(*) FROM (SELECT ar.song_source_ref_id, ar.singer_source_ref_id, ar.artist_role, COUNT(*) AS c FROM song_artist_refs ar WHERE ar.singer_source_ref_id = " + id + " GROUP BY ar.song_source_ref_id, ar.singer_source_ref_id, ar.artist_role HAVING c > 1) d"},
-        {"missing_song_identity", "SELECT COUNT(DISTINCT r.id) FROM song_artist_refs ar JOIN song_source_refs r ON r.id = ar.song_source_ref_id WHERE ar.singer_source_ref_id = " + id + " AND COALESCE(r.source_song_id, '') = '' AND COALESCE(r.source_content_id, '') = ''"},
+        {"missing_song_identity", "SELECT COUNT(DISTINCT r.id) FROM song_artist_refs ar JOIN song_catalog_sources r ON r.id = ar.song_source_ref_id WHERE ar.singer_source_ref_id = " + id + " AND COALESCE(r.source_song_id, '') = '' AND COALESCE(r.source_content_id, '') = ''"},
         {"missing_audio_format_rows", "SELECT COUNT(*) FROM (SELECT DISTINCT ar.song_source_ref_id FROM song_artist_refs ar WHERE ar.singer_source_ref_id = " + id + ") x LEFT JOIN song_source_audio_formats f ON f.song_source_ref_id = x.song_source_ref_id WHERE f.id IS NULL"},
         {"audio_format_without_resource", "SELECT COUNT(*) FROM song_artist_refs ar JOIN song_source_audio_formats f ON f.song_source_ref_id = ar.song_source_ref_id LEFT JOIN song_resources sr ON sr.song_source_ref_id = f.song_source_ref_id AND sr.resource_kind = 'audio' AND sr.format_type = f.format_type WHERE ar.singer_source_ref_id = " + id + " AND sr.id IS NULL"},
         {"audio_resource_without_format", "SELECT COUNT(*) FROM song_artist_refs ar JOIN song_resources sr ON sr.song_source_ref_id = ar.song_source_ref_id AND sr.resource_kind = 'audio' LEFT JOIN song_source_audio_formats f ON f.song_source_ref_id = sr.song_source_ref_id AND f.format_type = sr.format_type WHERE ar.singer_source_ref_id = " + id + " AND f.id IS NULL"},
-        {"cover_url_without_resource", "SELECT COUNT(DISTINCT r.id) FROM song_artist_refs ar JOIN song_source_refs r ON r.id = ar.song_source_ref_id LEFT JOIN song_resources sr ON sr.song_source_ref_id = r.id AND sr.resource_kind = 'cover' AND sr.format_type = '' WHERE ar.singer_source_ref_id = " + id + " AND COALESCE(r.cover_url, '') <> '' AND sr.id IS NULL"},
-        {"lyric_url_without_resource", "SELECT COUNT(DISTINCT r.id) FROM song_artist_refs ar JOIN song_source_refs r ON r.id = ar.song_source_ref_id LEFT JOIN song_resources sr ON sr.song_source_ref_id = r.id AND sr.resource_kind = 'lyric' AND sr.format_type = '' WHERE ar.singer_source_ref_id = " + id + " AND COALESCE(r.lyric_url, '') <> '' AND sr.id IS NULL"},
-        {"mrc_url_without_resource", "SELECT COUNT(DISTINCT r.id) FROM song_artist_refs ar JOIN song_source_refs r ON r.id = ar.song_source_ref_id LEFT JOIN song_resources sr ON sr.song_source_ref_id = r.id AND sr.resource_kind = 'mrc' AND sr.format_type = '' WHERE ar.singer_source_ref_id = " + id + " AND COALESCE(r.mrc_url, '') <> '' AND sr.id IS NULL"},
-        {"trc_url_without_resource", "SELECT COUNT(DISTINCT r.id) FROM song_artist_refs ar JOIN song_source_refs r ON r.id = ar.song_source_ref_id LEFT JOIN song_resources sr ON sr.song_source_ref_id = r.id AND sr.resource_kind = 'trc' AND sr.format_type = '' WHERE ar.singer_source_ref_id = " + id + " AND COALESCE(r.trc_url, '') <> '' AND sr.id IS NULL"},
-        {"album_id_without_album_song_ref", "SELECT COUNT(DISTINCT r.id) FROM song_artist_refs ar JOIN song_source_refs r ON r.id = ar.song_source_ref_id LEFT JOIN album_song_refs abr ON abr.song_source_ref_id = r.id AND abr.source = r.source AND abr.source_album_id = r.source_album_id WHERE ar.singer_source_ref_id = " + id + " AND COALESCE(r.source_album_id, '') <> '' AND abr.id IS NULL"},
-        {"album_song_ref_without_album_source_ref", "SELECT COUNT(*) FROM song_artist_refs ar JOIN album_song_refs abr ON abr.song_source_ref_id = ar.song_source_ref_id WHERE ar.singer_source_ref_id = " + id + " AND abr.source_album_id <> '' AND abr.album_source_ref_id IS NULL"}
+        {"cover_url_without_resource", "SELECT COUNT(DISTINCT r.id) FROM song_artist_refs ar JOIN song_catalog_sources r ON r.id = ar.song_source_ref_id LEFT JOIN song_resources sr ON sr.song_source_ref_id = r.id AND sr.resource_kind = 'cover' AND sr.format_type = '' WHERE ar.singer_source_ref_id = " + id + " AND COALESCE(r.cover_url, '') <> '' AND sr.id IS NULL"},
+        {"lyric_url_without_resource", "SELECT COUNT(DISTINCT r.id) FROM song_artist_refs ar JOIN song_catalog_sources r ON r.id = ar.song_source_ref_id LEFT JOIN song_resources sr ON sr.song_source_ref_id = r.id AND sr.resource_kind = 'lyric' AND sr.format_type = '' WHERE ar.singer_source_ref_id = " + id + " AND COALESCE(r.lyric_url, '') <> '' AND sr.id IS NULL"},
+        {"mrc_url_without_resource", "SELECT COUNT(DISTINCT r.id) FROM song_artist_refs ar JOIN song_catalog_sources r ON r.id = ar.song_source_ref_id LEFT JOIN song_resources sr ON sr.song_source_ref_id = r.id AND sr.resource_kind = 'mrc' AND sr.format_type = '' WHERE ar.singer_source_ref_id = " + id + " AND COALESCE(r.mrc_url, '') <> '' AND sr.id IS NULL"},
+        {"trc_url_without_resource", "SELECT COUNT(DISTINCT r.id) FROM song_artist_refs ar JOIN song_catalog_sources r ON r.id = ar.song_source_ref_id LEFT JOIN song_resources sr ON sr.song_source_ref_id = r.id AND sr.resource_kind = 'trc' AND sr.format_type = '' WHERE ar.singer_source_ref_id = " + id + " AND COALESCE(r.trc_url, '') <> '' AND sr.id IS NULL"},
+        {"album_id_without_album_song_ref", "SELECT COUNT(DISTINCT r.id) FROM song_artist_refs ar JOIN song_catalog_sources r ON r.id = ar.song_source_ref_id LEFT JOIN album_song_catalog abr ON abr.song_source_ref_id = r.id AND abr.source = r.source AND abr.source_album_id = r.source_album_id WHERE ar.singer_source_ref_id = " + id + " AND COALESCE(r.source_album_id, '') <> '' AND abr.id IS NULL"},
+        {"album_song_ref_without_album_source_ref", "SELECT COUNT(*) FROM song_artist_refs ar JOIN album_song_catalog abr ON abr.song_source_ref_id = ar.song_source_ref_id WHERE ar.singer_source_ref_id = " + id + " AND abr.source_album_id <> '' AND abr.album_source_ref_id IS NULL"}
     };
     return metrics;
 }
@@ -182,10 +182,11 @@ SELECT
     COUNT(DISTINCT abr.song_source_ref_id) AS song_count,
     COUNT(DISTINCT al.id) AS album_ref_count
 FROM song_artist_refs ar
-JOIN album_song_refs abr ON abr.song_source_ref_id = ar.song_source_ref_id
-JOIN song_source_refs r ON r.id = abr.song_source_ref_id
-LEFT JOIN album_source_refs al ON al.source = abr.source AND al.source_album_id = abr.source_album_id
-WHERE ar.singer_source_ref_id = )SQL" + id + R"SQL(
+JOIN album_song_catalog abr ON abr.song_source_ref_id = ar.song_source_ref_id
+JOIN song_catalog_sources r ON r.id = abr.song_source_ref_id
+LEFT JOIN album_catalog_sources al ON al.source = abr.source AND al.source_album_id = abr.source_album_id
+WHERE ar.singer_source_ref_id = )SQL" + id
+                                         + R"SQL(
   AND abr.source_album_id <> ''
   AND abr.album_source_ref_id IS NULL
 GROUP BY abr.source_album_id

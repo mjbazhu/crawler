@@ -1,4 +1,5 @@
 #include "MiguParserSupportInternal.h"
+#include "MiguSongFieldParsing.h"
 
 #include "crawler/infrastructure/json/JsonUtils.h"
 #include "crawler/infrastructure/music/migu/parser/MiguParserSupport.h"
@@ -31,14 +32,14 @@ std::optional<application::model::AlbumSourceMetadata> parseAlbumSourceFromListI
     metadata.title = source_title;
     metadata.normalized_title = source_title;
     metadata.artist_name = JsonUtils::getString(item, "txt2");
-    metadata.source_item_key = "album:" + source_album_id;
     metadata.source_album_id = source_album_id;
     metadata.source_res_type = JsonUtils::getString(item, "resType");
     metadata.source_action = source_action;
     metadata.source_album_kind = albumKindFromTypes(metadata.source_res_type, {});
-    metadata.source_title = source_title;
+    metadata.source_title_pinyin = firstNonEmpty({JsonUtils::getString(item, "albumPinyin"), JsonUtils::getString(item, "albumNamePinyin")});
+    metadata.artist_refs = parseSourceArtists(item);
     metadata.source_artist_name = metadata.artist_name;
-    metadata.cover_url = JsonUtils::getString(item, "img");
+    metadata.cover_url = normalizeMiguResourceUrl(JsonUtils::getString(item, "img"));
     metadata.release_date = JsonUtils::getString(item, "txt3");
     metadata.detail_sync_status = 0;
     return metadata;
@@ -60,18 +61,30 @@ std::optional<application::model::AlbumSourceMetadata> parseAlbumSourceFromDetai
     metadata.title = source_title;
     metadata.normalized_title = source_title;
     metadata.artist_name = JsonUtils::getString(item, "singer");
-    metadata.source_item_key = "album:" + source_album_id;
     metadata.source_album_id = source_album_id;
     metadata.source_material_id = JsonUtils::getString(item, "materialId");
     metadata.source_resource_type = JsonUtils::getString(item, "resourceType");
     metadata.source_album_kind = albumKindFromTypes({}, metadata.source_resource_type);
-    metadata.source_title = source_title;
+    metadata.source_title_pinyin = firstNonEmpty({JsonUtils::getString(item, "albumPinyin"), JsonUtils::getString(item, "albumNamePinyin")});
+    metadata.artist_refs = parseSourceArtists(item);
     metadata.source_artist_id = JsonUtils::getString(item, "singerId");
     metadata.source_artist_name = metadata.artist_name;
     metadata.cover_url = firstNonEmpty({
         selectImageUrl(JsonUtils::getArray(item, "imgItem")),
         selectImageUrl(JsonUtils::getArray(item, "imgItems")),
     });
+    if (metadata.source_title_pinyin.empty()) {
+        if (const auto *songs = JsonUtils::getArray(item, "songItems")) {
+            for (const auto &song : *songs) {
+                const auto pinyin = firstNonEmpty({JsonUtils::getString(song, "albumNamePinyin"), JsonUtils::getString(song, "albumPinyin")});
+                if (!pinyin.empty()) {
+                    metadata.source_title_pinyin = pinyin;
+                    break;
+                }
+            }
+        }
+    }
+    metadata.cover_url = normalizeMiguResourceUrl(std::move(metadata.cover_url));
     metadata.summary = JsonUtils::getString(item, "summary");
     metadata.price = JsonUtils::getString(item, "price");
     metadata.total_count = JsonUtils::getString(item, "totalCount");

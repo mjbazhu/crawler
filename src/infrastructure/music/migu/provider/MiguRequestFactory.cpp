@@ -87,6 +87,14 @@ std::string MiguRequestFactory::singerAlbumsUrl(std::uint64_t singer_id, int pag
     return std::string(URL_SINGER_ALBUMS) + toQueryString(params);
 }
 
+std::string MiguRequestFactory::singerInfoUrl(std::uint64_t singer_id)
+{
+    Params params = {
+        .singerId = singer_id
+    };
+    return std::string(URL_SINGER_INFO) + toQueryString(params);
+}
+
 std::string MiguRequestFactory::albumDetailUrl(std::uint64_t album_id, std::string_view source_res_type)
 {
     Params params = {

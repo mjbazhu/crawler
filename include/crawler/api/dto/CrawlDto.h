@@ -65,7 +65,7 @@ struct MiguAlbumBackfillRequestDto {
 // Migu 从库歌手来源采集请求 DTO，用于按 singer_source_refs 状态批量获取歌曲或专辑。
 struct MiguSingerFromDbCrawlRequestDto {
     application::model::SingerSourceSyncQuery query; // 歌手来源筛选和认领参数
-    int limit_per_singer = 20;                       // 每个歌手最大采集歌曲或专辑数量
+    int limit_per_singer = 0;                        // 每个歌手最大采集数量，0 表示全量
 
     // 从原始 HTTP 请求构造 DTO。
     static std::optional<MiguSingerFromDbCrawlRequestDto> fromRequest(const http::HttpRequest &req);

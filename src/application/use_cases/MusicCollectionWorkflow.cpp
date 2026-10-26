@@ -16,6 +16,7 @@ MusicCollectionWorkflow::MusicCollectionWorkflow(
     std::shared_ptr<application::ports::SongSourceParser> song_source_parser,
     std::shared_ptr<application::ports::SingerSourceParser> singer_source_parser,
     std::shared_ptr<application::ports::AlbumSourceParser> album_source_parser,
+    std::shared_ptr<application::ports::SingerProfileParser> singer_profile_parser,
     std::shared_ptr<application::ports::PageInspector> page_inspector,
     std::shared_ptr<application::ports::AlbumSourceSyncQueue> album_source_sync_queue,
     std::shared_ptr<MetadataPersistenceService> persistence,
@@ -29,6 +30,7 @@ MusicCollectionWorkflow::MusicCollectionWorkflow(
         std::move(song_source_parser),
         std::move(singer_source_parser),
         std::move(album_source_parser),
+        std::move(singer_profile_parser),
         std::move(page_inspector),
         std::move(parse_executor),
         diagnostics
@@ -76,9 +78,9 @@ bool MusicCollectionWorkflow::crawlSingerSongsAndSave(std::uint64_t singer_id, i
     return singer_workflow_ ? singer_workflow_->crawlSingerSongsAndSave(singer_id, limit, max_page_concurrency) : false;
 }
 
-application::model::SingerCollectionResult MusicCollectionWorkflow::crawlSingerSongsAndSaveResult(std::uint64_t singer_id, int limit, int max_page_concurrency)
+application::model::SingerCollectionResult MusicCollectionWorkflow::crawlSingerSongsAndSaveResult(std::uint64_t singer_id, int limit, int max_page_concurrency, std::optional<int> source_song_total, std::optional<int> source_album_total)
 {
-    return singer_workflow_ ? singer_workflow_->crawlSingerSongsAndSaveResult(singer_id, limit, max_page_concurrency) : application::model::SingerCollectionResult {false, false, 0, "singer workflow is not configured"};
+    return singer_workflow_ ? singer_workflow_->crawlSingerSongsAndSaveResult(singer_id, limit, max_page_concurrency, source_song_total, source_album_total) : application::model::SingerCollectionResult {false, false, 0, "singer workflow is not configured"};
 }
 
 bool MusicCollectionWorkflow::crawlSingerIndexAndSave(std::string tab, int limit)
@@ -96,9 +98,14 @@ bool MusicCollectionWorkflow::crawlSingerAlbumsAndSave(std::uint64_t singer_id, 
     return singer_workflow_ ? singer_workflow_->crawlSingerAlbumsAndSave(singer_id, limit, max_page_concurrency) : false;
 }
 
-application::model::SingerCollectionResult MusicCollectionWorkflow::crawlSingerAlbumsAndSaveResult(std::uint64_t singer_id, int limit, int max_page_concurrency)
+application::model::SingerCollectionResult MusicCollectionWorkflow::crawlSingerAlbumsAndSaveResult(std::uint64_t singer_id, int limit, int max_page_concurrency, std::optional<int> source_song_total, std::optional<int> source_album_total)
 {
-    return singer_workflow_ ? singer_workflow_->crawlSingerAlbumsAndSaveResult(singer_id, limit, max_page_concurrency) : application::model::SingerCollectionResult {false, false, 0, "singer workflow is not configured"};
+    return singer_workflow_ ? singer_workflow_->crawlSingerAlbumsAndSaveResult(singer_id, limit, max_page_concurrency, source_song_total, source_album_total) : application::model::SingerCollectionResult {false, false, 0, "singer workflow is not configured"};
+}
+
+application::model::SingerSourceProfile MusicCollectionWorkflow::fetchAndSaveSingerSourceProfile(std::uint64_t singer_id)
+{
+    return singer_workflow_ ? singer_workflow_->fetchAndSaveSingerSourceProfile(singer_id) : application::model::SingerSourceProfile {};
 }
 
 bool MusicCollectionWorkflow::crawlPendingAlbumDetailsAndSave(std::string source, int limit, int max_page_concurrency)

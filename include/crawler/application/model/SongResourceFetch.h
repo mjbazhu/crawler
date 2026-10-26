@@ -21,6 +21,7 @@ struct SongResourceFetchResult {
     std::string url;               // 音频临时下载 URL
     std::string version;           // 资源版本标识
     std::string audio_format_type; // 实际返回音质档位
+    std::string cover_url;         // 封面 URL
     std::string lyric_url;         // 行级歌词 URL
     std::string mrc_url;           // 逐字歌词或扩展歌词 URL
     std::string trc_url;           // 翻译歌词或扩展歌词 URL

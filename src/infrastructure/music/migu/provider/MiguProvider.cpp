@@ -104,6 +104,15 @@ std::optional<MiguProvider::Response> MiguProvider::fetchSingerAlbumsPage(std::u
     return toProviderResponse(client_->get(MiguRequestFactory::singerAlbumsUrl(singer_id, page), headers_));
 }
 
+std::optional<MiguProvider::Response> MiguProvider::fetchSingerInfo(std::uint64_t singer_id)
+{
+    if (!client_ || singer_id == 0) {
+        return std::nullopt;
+    }
+
+    return toProviderResponse(client_->get(MiguRequestFactory::singerInfoUrl(singer_id), headers_));
+}
+
 std::optional<MiguProvider::Response> MiguProvider::fetchAlbumDetail(std::string album_id, std::string source_res_type)
 {
     if (!client_ || album_id.empty()) {
@@ -181,6 +190,11 @@ std::optional<MiguProvider::Response> MiguProvider::fetchAlbumSongsSync(const do
 std::optional<MiguProvider::Response> MiguProvider::fetchSingerAlbumsPageSync(std::uint64_t singer_id, int page)
 {
     return fetchSingerAlbumsPage(singer_id, page);
+}
+
+std::optional<MiguProvider::Response> MiguProvider::fetchSingerInfoSync(std::uint64_t singer_id)
+{
+    return fetchSingerInfo(singer_id);
 }
 
 std::optional<MiguProvider::Response> MiguProvider::fetchAlbumDetailSync(std::string album_id, std::string source_res_type)

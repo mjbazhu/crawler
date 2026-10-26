@@ -40,6 +40,9 @@ public:
     // 获取歌手专辑单页原始响应。
     std::optional<Response> fetchSingerAlbumsPage(std::uint64_t singer_id, int page) override;
 
+    // 获取歌手主要信息原始响应。
+    std::optional<Response> fetchSingerInfo(std::uint64_t singer_id) override;
+
     // 获取专辑详情原始响应；Migu resourceinfo.do 按 source_res_type 映射 resourceType。
     std::optional<Response> fetchAlbumDetail(std::string album_id, std::string source_res_type) override;
 
@@ -69,6 +72,9 @@ public:
 
     // 兼容调试入口，等价于 fetchSingerAlbumsPage。
     std::optional<Response> fetchSingerAlbumsPageSync(std::uint64_t singer_id, int page);
+
+    // 兼容调试入口，等价于 fetchSingerInfo。
+    std::optional<Response> fetchSingerInfoSync(std::uint64_t singer_id);
 
     // 兼容调试入口，等价于 fetchAlbumDetail。
     std::optional<Response> fetchAlbumDetailSync(std::string album_id, std::string source_res_type = {});

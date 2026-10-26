@@ -1,6 +1,7 @@
 #include "crawler/infrastructure/app/PersistenceAssembly.h"
 
 #include "crawler/infrastructure/music/persistence/mysql/MySqlAlbumRepository.h"
+#include "crawler/infrastructure/music/persistence/mysql/MySqlMetadataBatchWriter.h"
 #include "crawler/infrastructure/music/persistence/mysql/MySqlAlbumSourceRepository.h"
 #include "crawler/infrastructure/music/persistence/mysql/MySqlBatchTaskRepository.h"
 #include "crawler/infrastructure/music/persistence/mysql/MySqlMusicCatalogQueryRepository.h"
@@ -140,6 +141,7 @@ std::optional<PersistenceComponents> assemblePersistence(const ServerApplication
         return std::nullopt;
     }
     components.song_repository = std::make_shared<music::persistence::mysql::MySqlSongRepository>(components.mysql_pool, makeSongSqlPaths(config.mysql));
+    components.metadata_batch_writer = std::make_shared<music::persistence::mysql::MySqlMetadataBatchWriter>(components.mysql_pool);
     components.song_source_repository = std::make_shared<music::persistence::mysql::MySqlSongSourceRepository>(components.mysql_pool);
     components.singer_source_repository = std::make_shared<music::persistence::mysql::MySqlSingerSourceRepository>(components.mysql_pool);
     components.singer_source_sync_queue = std::make_shared<music::persistence::mysql::MySqlSingerSourceSyncQueue>(components.mysql_pool);

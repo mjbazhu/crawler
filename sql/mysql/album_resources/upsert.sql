@@ -1,0 +1,37 @@
+INSERT INTO album_resources (
+    album_source_ref_id,
+    resource_kind,
+    local_path,
+    size_bytes,
+    checksum,
+    status,
+    error_category,
+    result_code,
+    last_error,
+    fetched_at,
+    created_at,
+    updated_at
+) VALUES (
+    ?,
+    'cover',
+    NULLIF(?, ''),
+    ?,
+    NULLIF(?, ''),
+    ?,
+    ?,
+    ?,
+    ?,
+    IF(? = 2, UNIX_TIMESTAMP(), 0),
+    UNIX_TIMESTAMP(),
+    UNIX_TIMESTAMP()
+) ON DUPLICATE KEY UPDATE
+    id = LAST_INSERT_ID(id),
+    local_path = IF(VALUES(status) = 2, VALUES(local_path), local_path),
+    size_bytes = IF(VALUES(status) = 2, VALUES(size_bytes), size_bytes),
+    checksum = IF(VALUES(status) = 2, VALUES(checksum), checksum),
+    status = IF(status = 2 AND VALUES(status) <> 2, status, VALUES(status)),
+    error_category = VALUES(error_category),
+    result_code = VALUES(result_code),
+    last_error = VALUES(last_error),
+    fetched_at = IF(VALUES(fetched_at) = 0, fetched_at, VALUES(fetched_at)),
+    updated_at = VALUES(updated_at);

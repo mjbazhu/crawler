@@ -1,5 +1,7 @@
 #pragma once
 
+#include <map>
+
 #include "crawler/application/ports/persistence/BatchTaskRepository.h"
 #include "crawler/infrastructure/music/persistence/mysql/MySqlConnectionPool.h"
 
@@ -50,6 +52,7 @@ private:
     static application::model::CrawlBatchItemRecord mapItem(boost::mysql::row_view row);
     static application::model::CrawlBatchEventRecord mapEvent(boost::mysql::row_view row);
 
+    std::map<std::string, std::string> sql_;    // 按所属表加载的只读 SQL
     std::shared_ptr<MySqlConnectionPool> pool_; // MySQL 连接池
 };
 

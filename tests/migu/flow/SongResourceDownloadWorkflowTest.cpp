@@ -51,7 +51,7 @@ std::vector<char> bytes(std::string text)
 class FakeSongResourceQueue : public ports::SongResourceQueue {
 public:
     std::vector<model::SongResourceQueueTarget> pending;         // 主资源待认领队列
-    std::vector<model::SongResourceQueueTarget> related_targets; // 关联文本资源队列
+    std::vector<model::SongResourceQueueTarget> related_targets; // 关联资源队列
     std::vector<model::SongResourceSuccessUpdate> succeeded;     // 成功回写记录
     std::vector<model::SongResourceFailureUpdate> failed;        // 失败回写记录
     std::vector<model::SongResourceSkipUpdate> skipped;          // 跳过回写记录
@@ -149,6 +149,37 @@ public:
 
 private:
     std::mutex mutex_; // 保护并发保存记录
+};
+
+// 云端上传测试替身，验证 workflow 在本地保存后才执行上传。
+class FakeCloudUploader : public ports::SongResourceCloudUploader {
+public:
+    bool fail = false;                                           // 是否模拟上传失败
+    std::vector<model::SongResourceCloudUploadRequest> requests; // 上传请求记录
+
+    model::SongResourceCloudUploadResult upload(model::SongResourceCloudUploadRequest request) override
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        requests.push_back(request);
+
+        model::SongResourceCloudUploadResult result;
+        if (fail) {
+            result.error_category = "persistence";
+            result.result_code = "baidupcs_upload_failed";
+            result.message = "upload failed";
+            return result;
+        }
+        result.ok = true;
+        result.backend = "baidupcs";
+        result.cloud_path = "/Media/" + request.local_path;
+        result.size_bytes = request.size_bytes;
+        result.checksum = request.checksum;
+        result.result_code = "ok";
+        return result;
+    }
+
+private:
+    std::mutex mutex_; // 保护上传请求记录
 };
 
 // 返回不一致保存结果的 blob store，用于验证 workflow 不会误回写完成。
@@ -319,6 +350,7 @@ model::SongResourceQueueTarget audioTarget()
     target.source_content_id = "600902000006889266";
     target.source_resource_type = "2";
     target.audio_resource_type = "2";
+    target.resource_fetch_format_type = "ZQ24";
     target.copyright_id = "60054701947";
     target.title = "夜曲";
     target.resource_kind = "audio";
@@ -326,7 +358,7 @@ model::SongResourceQueueTarget audioTarget()
     return target;
 }
 
-// 构造同一首歌下的歌词资源任务。
+// 构造同一首歌下的关联资源任务。
 model::SongResourceQueueTarget relatedTarget(std::uint64_t id, std::string kind)
 {
     auto target = audioTarget();
@@ -444,7 +476,127 @@ void testWorkflowStreamsContentIntoBlobStore()
     const auto &saved = blob_store->saved.front();
     require(std::string(saved.data.begin(), saved.data.end()) == "aabb", "blob store should receive concatenated streamed chunks");
     require(queue->succeeded.size() == 1, "stream success should be written back once");
+    require(!queue->succeeded.front().local_path.empty(), "stream success should write local path");
+    require(queue->succeeded.front().cloud_backend.empty(), "local-only resource should not write cloud backend");
+    require(queue->succeeded.front().cloud_path.empty(), "local-only resource should not write cloud path");
+    require(result.items.front().cloud_backend.empty(), "local-only result should not expose cloud backend");
+    require(result.items.front().cloud_path.empty(), "local-only result should not expose cloud path");
     require(queue->failed.empty(), "stream success should not create failure writeback");
+}
+
+void testWorkflowUploadsSavedResourceToCloud()
+{
+    auto queue = std::make_shared<FakeSongResourceQueue>();
+    queue->pending = {directTextTarget(801, "https://example.test/lyric")};
+
+    auto fetcher = std::make_shared<ScriptedContentFetcher>();
+    fetcher->responses["https://example.test/lyric"] = {okContent("text/plain")};
+    auto blob_store = std::make_shared<MemoryBlobStore>();
+    auto cloud_uploader = std::make_shared<FakeCloudUploader>();
+    use_cases::SongResourceDownloadWorkflow workflow(queue, nullptr, nullptr, fetcher, blob_store, {}, nullptr, nullptr, nullptr, cloud_uploader);
+
+    model::SongResourceClaimQuery query;
+    query.source = "migu";
+    query.resource_kind = "lyric";
+    query.limit = 1;
+    query.batch_id = "workflow-cloud-upload-test";
+    RecordingResourceListener listener;
+    const auto result = workflow.processPending(query, &listener);
+
+    require(result.claimed_count == 1, "one direct resource should be claimed");
+    require(result.succeeded_count == 1, "cloud-uploaded resource should succeed");
+    require(cloud_uploader->requests.size() == 1, "cloud uploader should be called once");
+    require(queue->succeeded.size() == 1, "cloud upload success should be written back once");
+    require(queue->succeeded.front().local_path == cloud_uploader->requests.front().local_path, "cloud upload should use saved local path");
+    require(queue->succeeded.front().cloud_backend == "baidupcs", "cloud backend should be written back");
+    require(queue->succeeded.front().cloud_path == "/Media/" + queue->succeeded.front().local_path, "cloud path should be written back");
+    require(result.items.front().cloud_backend == queue->succeeded.front().cloud_backend, "result should expose cloud backend");
+    require(result.items.front().cloud_path == queue->succeeded.front().cloud_path, "result should expose cloud path");
+    require(listener.hasEvent("resourceCloudUploadStarted"), "cloud upload should emit start event");
+    require(listener.hasEvent("resourceCloudUploadCompleted"), "cloud upload should emit completion event");
+}
+
+void testWorkflowRefreshesMissingCoverUrlThroughListen()
+{
+    auto queue = std::make_shared<FakeSongResourceQueue>();
+    auto target = directTextTarget(901, "");
+    target.resource_kind = "cover";
+    queue->pending = {target};
+
+    auto provider = std::make_shared<StaticSongResourceProvider>();
+    provider->response = listenResponse("https://example.test/audio.flac", R"(,"img3":"/data/oss/resource/00/cover/new.webp")");
+    auto fetcher = std::make_shared<ScriptedContentFetcher>();
+    fetcher->responses["https://d.musicapp.migu.cn/data/oss/resource/00/cover/new.webp"] = {okContent("image/webp")};
+    auto blob_store = std::make_shared<MemoryBlobStore>();
+    auto parser = std::make_shared<migu_parser::MiguSongResourceParser>();
+    use_cases::SongResourceDownloadWorkflow workflow(queue, provider, parser, fetcher, blob_store);
+
+    model::SongResourceClaimQuery query;
+    query.source = "migu";
+    query.resource_kind = "cover";
+    query.limit = 1;
+    query.batch_id = "workflow-cover-refresh-test";
+    const auto result = workflow.processPending(query);
+
+    require(result.succeeded_count == 1, "cover with missing remote_url should be refreshed through listen");
+    require(provider->call_count == 1, "listen should be called once to refresh cover url");
+    require(fetcher->requested_urls.size() == 1, "refreshed cover url should be downloaded once");
+    require(fetcher->requested_urls.front() == "https://d.musicapp.migu.cn/data/oss/resource/00/cover/new.webp", "cover url should be normalized before download");
+    require(queue->succeeded.size() == 1, "refreshed cover should be written back");
+    require(queue->succeeded.front().remote_url == fetcher->requested_urls.front(), "success writeback should store refreshed cover url");
+}
+
+void testWorkflowSkipsRestrictedDirectRelatedResource()
+{
+    auto queue = std::make_shared<FakeSongResourceQueue>();
+    queue->pending = {directTextTarget(902, "")};
+
+    auto provider = std::make_shared<StaticSongResourceProvider>();
+    provider->response = listenRestrictedResponse("440000", "该歌曲暂无版权");
+    auto parser = std::make_shared<migu_parser::MiguSongResourceParser>();
+    use_cases::SongResourceDownloadWorkflow workflow(queue, provider, parser, std::make_shared<ScriptedContentFetcher>(), std::make_shared<MemoryBlobStore>());
+
+    model::SongResourceClaimQuery query;
+    query.source = "migu";
+    query.resource_kind = "lyric";
+    query.limit = 1;
+    query.batch_id = "workflow-direct-related-skip";
+    const auto result = workflow.processPending(query);
+
+    require(result.failed_count == 0, "restricted direct related resource should not fail");
+    require(result.skipped_count == 1, "restricted direct related resource should be skipped");
+    require(queue->failed.empty(), "restricted direct related resource should not use failure writeback");
+    require(queue->skipped.size() == 1, "restricted direct related resource should use skip writeback");
+    require(queue->skipped.front().resource_kind == "lyric", "restricted direct related skip should keep resource kind");
+    require(queue->skipped.front().result_code == "440000", "restricted direct related skip should preserve platform code");
+    require(result.items.size() == 1 && result.items.front().skipped, "restricted direct related item should be skipped");
+    require(result.items.front().error_category == "copyright", std::string("restricted direct related item should expose copyright category, got ") + result.items.front().error_category);
+}
+
+void testWorkflowUsesStableCodeForMissingDirectRelatedUrl()
+{
+    auto queue = std::make_shared<FakeSongResourceQueue>();
+    auto target = directTextTarget(903, "");
+    target.resource_kind = "cover";
+    queue->pending = {target};
+
+    auto provider = std::make_shared<StaticSongResourceProvider>();
+    provider->response = listenResponse("https://example.test/audio.flac");
+    auto parser = std::make_shared<migu_parser::MiguSongResourceParser>();
+    use_cases::SongResourceDownloadWorkflow workflow(queue, provider, parser, std::make_shared<ScriptedContentFetcher>(), std::make_shared<MemoryBlobStore>());
+
+    model::SongResourceClaimQuery query;
+    query.source = "migu";
+    query.resource_kind = "cover";
+    query.limit = 1;
+    query.batch_id = "workflow-direct-related-missing-url";
+    const auto result = workflow.processPending(query);
+
+    require(result.failed_count == 1, "missing direct related url should fail");
+    require(result.skipped_count == 0, "missing direct related url should not be skipped");
+    require(queue->failed.size() == 1, "missing direct related url should use failure writeback");
+    require(queue->failed.front().result_code == "missing_related_resource_url", "missing direct related url should use stable result code");
+    require(result.items.front().result_code == "missing_related_resource_url", "missing direct related result should expose stable result code");
 }
 
 void testWorkflowDownloadsAudioAndSingleLyric()
@@ -920,6 +1072,7 @@ void testWorkflowSkipsPermanentListenRestrictions()
         const char *message;
         const char *category;
     } cases[] = {
+        {"210001", "该内容暂不支持播放", "resource"},
         {"440000", "该歌曲暂无版权", "copyright"},
         {"440015", "应版权方要求，该数字专辑购买后即可无限畅享", "resource"},
     };
@@ -1074,6 +1227,10 @@ int main()
 {
     try {
         testWorkflowStreamsContentIntoBlobStore();
+        testWorkflowUploadsSavedResourceToCloud();
+        testWorkflowRefreshesMissingCoverUrlThroughListen();
+        testWorkflowSkipsRestrictedDirectRelatedResource();
+        testWorkflowUsesStableCodeForMissingDirectRelatedUrl();
         testWorkflowDownloadsAudioAndSingleLyric();
         testWorkflowProcessesRelatedResourcesOncePerSong();
         testWorkflowHonorsResourceDownloadConcurrency();

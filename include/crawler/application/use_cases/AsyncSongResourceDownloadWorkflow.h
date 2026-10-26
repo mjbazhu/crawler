@@ -10,6 +10,9 @@
 #include "crawler/application/ports/provider/MiguPacmtokenRefresher.h"
 #include "crawler/application/ports/provider/MiguPacmtokenStore.h"
 #include "crawler/application/ports/storage/AsyncSongResourceBlobStore.h"
+#include "crawler/application/ports/storage/AsyncSongResourceBatchCloudUploader.h"
+#include "crawler/application/ports/storage/AsyncSongResourceCloudUploader.h"
+#include "crawler/application/ports/storage/AsyncSongResourceRemoteCopier.h"
 #include "crawler/application/use_cases/SongResourceDownloadWorkflow.h"
 #include "crawler/application/use_cases/SongResourcePathPlanner.h"
 
@@ -34,10 +37,13 @@ public:
         std::shared_ptr<application::ports::AsyncSongResourceBlobStore> blob_store,
         SongResourcePathPlanner path_planner = {},
         std::shared_ptr<application::ports::MiguPacmtokenRefresher> pacmtoken_refresher = nullptr,
-        std::shared_ptr<application::ports::MiguPacmtokenStore> pacmtoken_store = nullptr
+        std::shared_ptr<application::ports::MiguPacmtokenStore> pacmtoken_store = nullptr,
+        std::shared_ptr<application::ports::AsyncSongResourceRemoteCopier> remote_copier = nullptr,
+        std::shared_ptr<application::ports::AsyncSongResourceCloudUploader> cloud_uploader = nullptr,
+        std::shared_ptr<application::ports::AsyncSongResourceBatchCloudUploader> batch_cloud_uploader = nullptr
     );
 
-    // 异步处理一批待下载资源；主资源并发处理，关联 lyric/mrc/trc 按歌曲去重。
+    // 异步处理一批待下载资源；主资源并发处理，关联 cover/lyric/mrc/trc 按歌曲去重。
     application::async::Task<application::model::SongResourceProcessResult> processPending(application::model::SongResourceClaimQuery query, SongResourceProcessListener *listener = nullptr);
 
 private:
@@ -47,7 +53,8 @@ private:
     application::async::Task<application::model::SongResourceProcessItem> processAudio(application::model::SongResourceQueueTarget target, const std::string &batch_id, std::shared_ptr<ProcessRunState> state, SongResourceProcessListener *listener);
     application::async::Task<application::model::SongResourceProcessItem> processDirectResource(application::model::SongResourceQueueTarget target, const std::string &batch_id, const application::model::SongResourceProcessOptions &options, SongResourceProcessListener *listener);
     application::async::Task<application::model::SongResourceProcessItem> downloadAndStoreAttempt(application::model::SongResourceQueueTarget target, std::string remote_url, const std::string &batch_id, const application::model::SongResourceProcessOptions &options, bool write_failure, SongResourceProcessListener *listener);
-    application::async::Task<void> processRelatedTextResources(const application::model::SongResourceQueueTarget &audio_target, const application::model::SongResourceFetchResult &fetch_result, const std::string &batch_id, std::shared_ptr<ProcessRunState> state, SongResourceProcessListener *listener);
+    application::async::Task<void> uploadBatchCloudObjects(std::shared_ptr<ProcessRunState> state, const std::string &batch_id, SongResourceProcessListener *listener);
+    application::async::Task<void> processRelatedResources(const application::model::SongResourceQueueTarget &audio_target, const application::model::SongResourceFetchResult &fetch_result, const std::string &batch_id, std::shared_ptr<ProcessRunState> state, SongResourceProcessListener *listener);
     application::async::Task<bool> refreshPacmtoken(std::shared_ptr<ProcessRunState> state, SongResourceProcessListener *listener, bool force);
     application::async::Task<application::model::SongResourceProcessItem> fail(application::model::SongResourceQueueTarget target, std::string category, std::string code, std::string message, const std::string &batch_id, SongResourceProcessListener *listener = nullptr);
     application::async::Task<application::model::SongResourceProcessItem> skip(application::model::SongResourceQueueTarget target, std::string category, std::string code, std::string message, const std::string &batch_id, SongResourceProcessListener *listener = nullptr);
@@ -66,6 +73,9 @@ private:
     SongResourcePathPlanner path_planner_;                                                 // 相对路径规划器
     std::shared_ptr<application::ports::MiguPacmtokenRefresher> pacmtoken_refresher_;      // 同步 pacmtoken 刷新 port
     std::shared_ptr<application::ports::MiguPacmtokenStore> pacmtoken_store_;              // pacmtoken 运行期存储
+    std::shared_ptr<application::ports::AsyncSongResourceRemoteCopier> remote_copier_;     // 可选远端 URL 复制 port
+    std::shared_ptr<application::ports::AsyncSongResourceCloudUploader> cloud_uploader_;   // 可选云端上传 port
+    std::shared_ptr<application::ports::AsyncSongResourceBatchCloudUploader> batch_cloud_uploader_; // 可选批量云端上传 port
 };
 
 } // namespace orchestrator::modules::crawler::application::use_cases

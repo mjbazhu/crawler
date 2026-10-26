@@ -20,10 +20,10 @@ class MySqlSingerRepository : public MySqlCrudRepository<domain::Singer, std::in
 public:
     // 歌手仓储所需的外置 SQL 文件路径。
     struct SqlPaths {
-        std::string upsert = "sql/mysql/catalog/singer_upsert.sql";             // 插入或更新歌手 SQL
-        std::string delete_by_id = "sql/mysql/catalog/singer_delete_by_id.sql"; // 按 singer_id 删除 SQL
-        std::string find_by_id = "sql/mysql/catalog/singer_find_by_id.sql";     // 按 singer_id 查询 SQL
-        std::string find_all = "sql/mysql/catalog/singer_find_all.sql";         // 分页查询 SQL
+        std::string upsert = "sql/mysql/singers/upsert.sql";             // 插入或更新歌手 SQL
+        std::string delete_by_id = "sql/mysql/singers/delete_by_id.sql"; // 按 singer_id 删除 SQL
+        std::string find_by_id = "sql/mysql/singers/find_by_id.sql";     // 按 singer_id 查询 SQL
+        std::string find_all = "sql/mysql/singers/find_all.sql";         // 分页查询 SQL
     };
 
     // 保存连接池和 SQL 路径，构造阶段加载 SQL 文件以尽早暴露配置错误。

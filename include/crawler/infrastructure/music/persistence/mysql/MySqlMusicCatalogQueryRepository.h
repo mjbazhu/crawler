@@ -1,5 +1,7 @@
 #pragma once
 
+#include <map>
+
 #include "crawler/application/ports/persistence/MusicCatalogQueryRepository.h"
 #include "crawler/infrastructure/music/persistence/mysql/MySqlConnectionPool.h"
 
@@ -18,43 +20,45 @@ class MySqlMusicCatalogQueryRepository : public application::ports::MusicCatalog
 public:
     // 查询 SQL 文件路径集合。
     struct SqlPaths {
-        std::string singer_list = "sql/mysql/catalog/migu_singer_list.sql";                       // 歌手列表查询
-        std::string singer_count = "sql/mysql/catalog/migu_singer_count.sql";                     // 歌手列表计数
-        std::string singer_find = "sql/mysql/catalog/migu_singer_find.sql";                       // 歌手详情查询
-        std::string album_list = "sql/mysql/catalog/migu_album_list.sql";                         // 专辑列表查询
-        std::string album_count = "sql/mysql/catalog/migu_album_count.sql";                       // 专辑列表计数
-        std::string album_find = "sql/mysql/catalog/migu_album_find.sql";                         // 专辑详情查询
-        std::string song_list = "sql/mysql/catalog/migu_song_list.sql";                           // 歌曲列表查询
-        std::string song_count = "sql/mysql/catalog/migu_song_count.sql";                         // 歌曲列表计数
-        std::string song_find = "sql/mysql/catalog/migu_song_find.sql";                           // 歌曲详情查询
-        std::string resource_list = "sql/mysql/catalog/migu_resource_queue_list.sql";             // 资源队列查询
-        std::string resource_count = "sql/mysql/catalog/migu_resource_queue_count.sql";           // 资源队列计数
-        std::string resource_find = "sql/mysql/catalog/migu_resource_queue_find.sql";             // 资源队列详情查询
-        std::string resource_retry = "sql/mysql/catalog/migu_resource_retry.sql";                 // 资源队列重试
-        std::string resource_reset = "sql/mysql/catalog/migu_resource_reset.sql";                 // 资源队列重置
-        std::string resource_recover_stale = "sql/mysql/catalog/migu_resource_recover_stale.sql"; // 资源队列超时恢复
-        std::string governance_event_insert = "sql/mysql/catalog/migu_governance_event_insert.sql"; // 治理审计写入
-        std::string governance_event_list = "sql/mysql/catalog/migu_governance_event_list.sql";   // 治理审计列表
-        std::string governance_event_count = "sql/mysql/catalog/migu_governance_event_count.sql"; // 治理审计计数
-        std::string integrity = "sql/mysql/catalog/migu_integrity.sql";                           // 一致性摘要查询
-        std::string schema_status = "sql/mysql/catalog/migu_schema_status.sql";                   // schema 版本和完整性查询
-        std::string album_source_find = "sql/mysql/catalog/migu_album_source_find.sql";           // 专辑来源查询
-        std::string claim_singer_songs_select = "sql/mysql/catalog/migu_claim_singer_songs_select.sql";   // 歌手歌曲认领候选查询
-        std::string claim_singer_songs_update = "sql/mysql/catalog/migu_claim_singer_songs_update.sql";   // 歌手歌曲认领更新
-        std::string claim_singer_albums_select = "sql/mysql/catalog/migu_claim_singer_albums_select.sql"; // 歌手专辑认领候选查询
-        std::string claim_singer_albums_update = "sql/mysql/catalog/migu_claim_singer_albums_update.sql"; // 歌手专辑认领更新
-        std::string claim_album_details_select = "sql/mysql/catalog/migu_claim_album_details_select.sql"; // 专辑详情认领候选查询
-        std::string claim_album_details_update = "sql/mysql/catalog/migu_claim_album_details_update.sql"; // 专辑详情认领更新
-        std::string claim_album_songs_select = "sql/mysql/catalog/migu_claim_album_songs_select.sql";     // 专辑歌曲认领候选查询
-        std::string claim_album_songs_update = "sql/mysql/catalog/migu_claim_album_songs_update.sql";     // 专辑歌曲认领更新
-        std::string reset_singer_songs = "sql/mysql/catalog/migu_reset_singer_songs.sql";         // 重置歌手歌曲状态
-        std::string reset_singer_albums = "sql/mysql/catalog/migu_reset_singer_albums.sql";       // 重置歌手专辑状态
-        std::string reset_album_details = "sql/mysql/catalog/migu_reset_album_details.sql";       // 重置专辑详情状态
-        std::string reset_album_songs = "sql/mysql/catalog/migu_reset_album_songs.sql";           // 重置专辑歌曲状态
-        std::string recover_singer_songs = "sql/mysql/catalog/migu_recover_stale_singer_songs.sql"; // 恢复歌手歌曲超时同步
-        std::string recover_singer_albums = "sql/mysql/catalog/migu_recover_stale_singer_albums.sql"; // 恢复歌手专辑超时同步
-        std::string recover_album_details = "sql/mysql/catalog/migu_recover_stale_album_details.sql"; // 恢复专辑详情超时同步
-        std::string recover_album_songs = "sql/mysql/catalog/migu_recover_stale_album_songs.sql"; // 恢复专辑歌曲超时同步
+        std::string singer_list = "sql/mysql/singer_source_refs/catalog_list.sql";                              // 歌手快速列表查询
+        std::string singer_count = "sql/mysql/singer_source_refs/catalog_count.sql";                            // 歌手快速计数
+        std::string singer_list_filtered = "sql/mysql/singer_source_refs/catalog_list_filtered.sql";            // 歌手状态/数量过滤列表查询
+        std::string singer_count_filtered = "sql/mysql/singer_source_refs/catalog_count_filtered.sql";          // 歌手状态/数量过滤计数
+        std::string singer_find = "sql/mysql/singer_source_refs/catalog_find.sql";                              // 歌手详情查询
+        std::string album_list = "sql/mysql/album_source_refs/catalog_list.sql";                                // 专辑列表查询
+        std::string album_count = "sql/mysql/album_source_refs/catalog_count.sql";                              // 专辑列表计数
+        std::string album_find = "sql/mysql/album_source_refs/catalog_find.sql";                                // 专辑详情查询
+        std::string song_list = "sql/mysql/song_source_refs/catalog_list.sql";                                  // 歌曲列表查询
+        std::string song_count = "sql/mysql/song_source_refs/catalog_count.sql";                                // 歌曲列表计数
+        std::string song_find = "sql/mysql/song_source_refs/catalog_find.sql";                                  // 歌曲详情查询
+        std::string resource_list = "sql/mysql/song_resources/catalog_queue_list.sql";                          // 资源队列查询
+        std::string resource_count = "sql/mysql/song_resources/catalog_queue_count.sql";                        // 资源队列计数
+        std::string resource_find = "sql/mysql/song_resources/catalog_queue_find.sql";                          // 资源队列详情查询
+        std::string resource_retry = "sql/mysql/song_resources/catalog_retry.sql";                              // 资源队列重试
+        std::string resource_reset = "sql/mysql/song_resources/catalog_reset.sql";                              // 资源队列重置
+        std::string resource_recover_stale = "sql/mysql/song_resources/catalog_recover_stale.sql";              // 资源队列超时恢复
+        std::string governance_event_insert = "sql/mysql/governance_events/insert.sql";                         // 治理审计写入
+        std::string governance_event_list = "sql/mysql/governance_events/list.sql";                             // 治理审计列表
+        std::string governance_event_count = "sql/mysql/governance_events/count.sql";                           // 治理审计计数
+        std::string integrity = "sql/mysql/schema/integrity.sql";                                               // 一致性摘要查询
+        std::string schema_status = "sql/mysql/schema/schema_status.sql";                                       // schema 版本和完整性查询
+        std::string album_source_find = "sql/mysql/album_source_refs/catalog_source_find.sql";                  // 专辑来源查询
+        std::string claim_singer_songs_select = "sql/mysql/singer_source_refs/claim_singer_songs_select.sql";   // 歌手歌曲认领候选查询
+        std::string claim_singer_songs_update = "sql/mysql/singer_source_refs/claim_singer_songs_update.sql";   // 歌手歌曲认领更新
+        std::string claim_singer_albums_select = "sql/mysql/singer_source_refs/claim_singer_albums_select.sql"; // 歌手专辑认领候选查询
+        std::string claim_singer_albums_update = "sql/mysql/singer_source_refs/claim_singer_albums_update.sql"; // 歌手专辑认领更新
+        std::string claim_album_details_select = "sql/mysql/album_source_refs/claim_album_details_select.sql";  // 专辑详情认领候选查询
+        std::string claim_album_details_update = "sql/mysql/album_source_refs/claim_album_details_update.sql";  // 专辑详情认领更新
+        std::string claim_album_songs_select = "sql/mysql/album_source_refs/claim_album_songs_select.sql";      // 专辑歌曲认领候选查询
+        std::string claim_album_songs_update = "sql/mysql/album_source_refs/claim_album_songs_update.sql";      // 专辑歌曲认领更新
+        std::string reset_singer_songs = "sql/mysql/singer_source_refs/reset_singer_songs.sql";                 // 重置歌手歌曲状态
+        std::string reset_singer_albums = "sql/mysql/singer_source_refs/reset_singer_albums.sql";               // 重置歌手专辑状态
+        std::string reset_album_details = "sql/mysql/album_source_refs/reset_album_details.sql";                // 重置专辑详情状态
+        std::string reset_album_songs = "sql/mysql/album_source_refs/reset_album_songs.sql";                    // 重置专辑歌曲状态
+        std::string recover_singer_songs = "sql/mysql/singer_source_refs/recover_stale_singer_songs.sql";       // 恢复歌手歌曲超时同步
+        std::string recover_singer_albums = "sql/mysql/singer_source_refs/recover_stale_singer_albums.sql";     // 恢复歌手专辑超时同步
+        std::string recover_album_details = "sql/mysql/album_source_refs/recover_stale_album_details.sql";      // 恢复专辑详情超时同步
+        std::string recover_album_songs = "sql/mysql/album_source_refs/recover_stale_album_songs.sql";          // 恢复专辑歌曲超时同步
     };
 
     // 保存线程安全 MySQL 连接池。
@@ -131,44 +135,47 @@ private:
     static application::model::MiguGovernanceEventRecord mapGovernanceEvent(boost::mysql::row_view row);
     static application::model::AlbumSourceMetadata mapAlbumSource(boost::mysql::row_view row);
 
-    std::shared_ptr<MySqlConnectionPool> pool_; // MySQL 连接池
-    std::string singer_list_sql_;               // 歌手列表 SQL
-    std::string singer_count_sql_;              // 歌手计数 SQL
-    std::string singer_find_sql_;               // 歌手详情 SQL
-    std::string album_list_sql_;                // 专辑列表 SQL
-    std::string album_count_sql_;               // 专辑计数 SQL
-    std::string album_find_sql_;                // 专辑详情 SQL
-    std::string song_list_sql_;                 // 歌曲列表 SQL
-    std::string song_count_sql_;                // 歌曲计数 SQL
-    std::string song_find_sql_;                 // 歌曲详情 SQL
-    std::string resource_list_sql_;             // 资源列表 SQL
-    std::string resource_count_sql_;            // 资源计数 SQL
-    std::string resource_find_sql_;             // 资源详情 SQL
-    std::string resource_retry_sql_;            // 资源重试 SQL
-    std::string resource_reset_sql_;            // 资源重置 SQL
-    std::string resource_recover_stale_sql_;    // 资源超时恢复 SQL
-    std::string governance_event_insert_sql_;   // 治理审计写入 SQL
-    std::string governance_event_list_sql_;     // 治理审计列表 SQL
-    std::string governance_event_count_sql_;    // 治理审计计数 SQL
-    std::string integrity_sql_;                 // 一致性摘要 SQL
-    std::string schema_status_sql_;             // schema 版本和完整性 SQL
-    std::string album_source_find_sql_;         // 专辑来源 SQL
-    std::string claim_singer_songs_select_sql_; // 歌手歌曲认领候选 SQL
-    std::string claim_singer_songs_update_sql_; // 歌手歌曲认领更新 SQL
-    std::string claim_singer_albums_select_sql_; // 歌手专辑认领候选 SQL
-    std::string claim_singer_albums_update_sql_; // 歌手专辑认领更新 SQL
-    std::string claim_album_details_select_sql_; // 专辑详情认领候选 SQL
-    std::string claim_album_details_update_sql_; // 专辑详情认领更新 SQL
-    std::string claim_album_songs_select_sql_;   // 专辑歌曲认领候选 SQL
-    std::string claim_album_songs_update_sql_;   // 专辑歌曲认领更新 SQL
-    std::string reset_singer_songs_sql_;        // 重置歌手歌曲 SQL
-    std::string reset_singer_albums_sql_;       // 重置歌手专辑 SQL
-    std::string reset_album_details_sql_;       // 重置专辑详情 SQL
-    std::string reset_album_songs_sql_;         // 重置专辑歌曲 SQL
-    std::string recover_singer_songs_sql_;      // 恢复歌手歌曲超时 SQL
-    std::string recover_singer_albums_sql_;     // 恢复歌手专辑超时 SQL
-    std::string recover_album_details_sql_;     // 恢复专辑详情超时 SQL
-    std::string recover_album_songs_sql_;       // 恢复专辑歌曲超时 SQL
+    std::map<std::string, std::string> overview_sql_; // 构造时加载的只读总览 SQL
+    std::shared_ptr<MySqlConnectionPool> pool_;       // MySQL 连接池
+    std::string singer_list_sql_;                     // 歌手列表 SQL
+    std::string singer_count_sql_;                    // 歌手计数 SQL
+    std::string singer_list_filtered_sql_;            // 歌手状态/数量过滤列表 SQL
+    std::string singer_count_filtered_sql_;           // 歌手状态/数量过滤计数 SQL
+    std::string singer_find_sql_;                     // 歌手详情 SQL
+    std::string album_list_sql_;                      // 专辑列表 SQL
+    std::string album_count_sql_;                     // 专辑计数 SQL
+    std::string album_find_sql_;                      // 专辑详情 SQL
+    std::string song_list_sql_;                       // 歌曲列表 SQL
+    std::string song_count_sql_;                      // 歌曲计数 SQL
+    std::string song_find_sql_;                       // 歌曲详情 SQL
+    std::string resource_list_sql_;                   // 资源列表 SQL
+    std::string resource_count_sql_;                  // 资源计数 SQL
+    std::string resource_find_sql_;                   // 资源详情 SQL
+    std::string resource_retry_sql_;                  // 资源重试 SQL
+    std::string resource_reset_sql_;                  // 资源重置 SQL
+    std::string resource_recover_stale_sql_;          // 资源超时恢复 SQL
+    std::string governance_event_insert_sql_;         // 治理审计写入 SQL
+    std::string governance_event_list_sql_;           // 治理审计列表 SQL
+    std::string governance_event_count_sql_;          // 治理审计计数 SQL
+    std::string integrity_sql_;                       // 一致性摘要 SQL
+    std::string schema_status_sql_;                   // schema 版本和完整性 SQL
+    std::string album_source_find_sql_;               // 专辑来源 SQL
+    std::string claim_singer_songs_select_sql_;       // 歌手歌曲认领候选 SQL
+    std::string claim_singer_songs_update_sql_;       // 歌手歌曲认领更新 SQL
+    std::string claim_singer_albums_select_sql_;      // 歌手专辑认领候选 SQL
+    std::string claim_singer_albums_update_sql_;      // 歌手专辑认领更新 SQL
+    std::string claim_album_details_select_sql_;      // 专辑详情认领候选 SQL
+    std::string claim_album_details_update_sql_;      // 专辑详情认领更新 SQL
+    std::string claim_album_songs_select_sql_;        // 专辑歌曲认领候选 SQL
+    std::string claim_album_songs_update_sql_;        // 专辑歌曲认领更新 SQL
+    std::string reset_singer_songs_sql_;              // 重置歌手歌曲 SQL
+    std::string reset_singer_albums_sql_;             // 重置歌手专辑 SQL
+    std::string reset_album_details_sql_;             // 重置专辑详情 SQL
+    std::string reset_album_songs_sql_;               // 重置专辑歌曲 SQL
+    std::string recover_singer_songs_sql_;            // 恢复歌手歌曲超时 SQL
+    std::string recover_singer_albums_sql_;           // 恢复歌手专辑超时 SQL
+    std::string recover_album_details_sql_;           // 恢复专辑详情超时 SQL
+    std::string recover_album_songs_sql_;             // 恢复专辑歌曲超时 SQL
 };
 
 } // namespace orchestrator::modules::crawler::infrastructure::music::persistence::mysql
