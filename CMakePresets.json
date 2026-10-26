@@ -15,6 +15,13 @@
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/msvc-debug",
 
+      "environment": {
+        "VCPKG_INSTALLED_DIR": "D:/curl/vcpkg/installed",
+        "VCPKG_ROOT": "D:/curl/vcpkg",
+        "VCPKG_DEFAULT_TRIPLET": "x64-windows",
+        "VCPKG_HOST_TRIPLET": "x64-windows"
+      },
+
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
 
@@ -24,6 +31,8 @@
         "CMAKE_TOOLCHAIN_FILE": "D:/curl/vcpkg/scripts/buildsystems/vcpkg.cmake",
 
         "VCPKG_TARGET_TRIPLET": "x64-windows",
+        "VCPKG_HOST_TRIPLET": "x64-windows",
+        "VCPKG_INSTALLED_DIR": "D:/curl/vcpkg/installed",
 
         "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreadedDebugDLL",
 

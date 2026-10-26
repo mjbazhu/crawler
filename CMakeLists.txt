@@ -26,13 +26,14 @@ find_package(boost_mysql CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
 
 file(GLOB_RECURSE SRC_FILES
+    CONFIGURE_DEPENDS
     src/*.cpp
 )
 
 list(FILTER SRC_FILES EXCLUDE REGEX "src/main.cpp$")
 
-# 生产源文件只在对象库中编译一次；demo 和测试目标复用这些对象，避免每个 exe 重复编译全量 src。
-add_library(crawler_core OBJECT
+# 生产源文件只编译一次，静态库让主程序和测试按需链接，避免每个测试都携带整个模块的调试信息。
+add_library(crawler_core STATIC
     ${SRC_FILES}
 )
 
@@ -79,6 +80,13 @@ function(configure_crawler_executable TARGET_NAME)
         crawler_core
     )
     configure_crawler_output(${TARGET_NAME})
+    if(MSVC)
+        # Ninja 默认清理未覆盖链接器的 PDB/ILK，显式交给 clean 管理，避免清理后仍占用数 GB。
+        set_property(TARGET ${TARGET_NAME} APPEND PROPERTY ADDITIONAL_CLEAN_FILES
+            "$<TARGET_PDB_FILE:${TARGET_NAME}>"
+            "$<TARGET_FILE_DIR:${TARGET_NAME}>/${TARGET_NAME}.ilk"
+        )
+    endif()
 endfunction()
 
 function(add_crawler_test TARGET_NAME SOURCE_FILE)
