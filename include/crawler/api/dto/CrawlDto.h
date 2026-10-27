@@ -30,38 +30,6 @@ struct MiguSingerIndexCrawlRequestDto {
     std::vector<std::string> selectedTargets() const;
 };
 
-// Migu 歌手 ID 采集请求 DTO，用于歌手歌曲和歌手专辑列表。
-struct MiguSingerIdsCrawlRequestDto {
-    std::vector<std::uint64_t> singer_ids; // Migu 歌手 ID 列表
-    int limit = 0;                         // 每个歌手最大采集数量，0 表示全部
-    int start_index = 0;                   // 选中区间起点，闭区间
-    std::optional<int> end_index;          // 选中区间终点，开区间
-
-    // 从原始 HTTP 请求构造 DTO。
-    static std::optional<MiguSingerIdsCrawlRequestDto> fromRequest(const http::HttpRequest &req);
-
-    // 校验 singer_ids、limit 和 [start_index, end_index) 范围。
-    std::optional<std::string> validate() const;
-
-    // 返回当前请求选中的歌曲采集目标。
-    std::vector<std::string> selectedSongTargets() const;
-
-    // 返回当前请求选中的专辑采集目标。
-    std::vector<std::string> selectedAlbumTargets() const;
-};
-
-// Migu 专辑补齐请求 DTO，用于详情补齐和专辑歌曲补齐。
-struct MiguAlbumBackfillRequestDto {
-    std::string source = "migu"; // 来源标识，目前仅允许 migu
-    int limit = 20;              // 最大补齐专辑数量
-
-    // 从原始 HTTP 请求构造 DTO。
-    static std::optional<MiguAlbumBackfillRequestDto> fromRequest(const http::HttpRequest &req);
-
-    // 校验 source 和 limit。
-    std::optional<std::string> validate() const;
-};
-
 // Migu 从库歌手来源采集请求 DTO，用于按 singer_source_refs 状态批量获取歌曲或专辑。
 struct MiguSingerFromDbCrawlRequestDto {
     application::model::SingerSourceSyncQuery query; // 歌手来源筛选和认领参数

@@ -288,9 +288,11 @@ std::vector<int> statusQuery(const http::HttpRequest &req, std::initializer_list
     return {};
 }
 
-std::vector<int> defaultBackfillStatuses(std::vector<int> statuses)
+std::vector<int> defaultBackfillStatuses(std::vector<int> statuses, bool force = false)
 {
-    return statuses.empty() ? std::vector<int> {0, 3, 4} : std::move(statuses);
+    if (statuses.empty()) statuses = {0, 3, 4};
+    if (force && std::find(statuses.begin(), statuses.end(), 2) == statuses.end()) statuses.push_back(2);
+    return statuses;
 }
 
 std::string pathValue(const std::string &path, const std::string &prefix, const std::string &suffix = {})
@@ -435,6 +437,7 @@ json singerToJson(const application::model::MiguSingerCatalogRecord &singer)
         {"source_name_pinyin", singer.source_name_pinyin},
         {"country", singer.source_country},
         {"source_tag", singer.source_tag},
+        {"avatar_url", singer.avatar_url},
         {"source_song_total", nullableInt(singer.source_song_total)},
         {"source_album_total", nullableInt(singer.source_album_total)},
         {"songs_sync_status", singer.songs_sync_status},
@@ -478,8 +481,11 @@ json albumToJson(const application::model::MiguAlbumCatalogRecord &album)
         {"source_res_type", album.source_res_type},
         {"source_album_kind", album.source_album_kind},
         {"source_title", album.source_title},
+        {"source_title_pinyin", album.source_title_pinyin},
+        {"summary", album.summary},
         {"source_artist_id", album.source_artist_id},
         {"source_artist_name", album.source_artist_name},
+        {"cover_url", album.cover_url},
         {"total_count", album.total_count},
         {"publish_date", album.publish_date},
         {"play_num", album.play_num},
@@ -590,6 +596,15 @@ bool isClaimableStatus(int status)
     return status == 0 || status == 3 || status == 4;
 }
 
+// 预览计数与数据库认领使用相同规则；空选择必须保持空，不能退回全范围。
+std::vector<int> previewRetryStatuses(std::vector<int> statuses, bool force)
+{
+    statuses = defaultBackfillStatuses(std::move(statuses), force);
+    std::erase_if(statuses, [force](int status) { return !isClaimableStatus(status) && !(force && status == 2); });
+    if (statuses.empty()) statuses.push_back(-999);
+    return statuses;
+}
+
 bool matchesRequestedStatus(int status, const std::vector<int> &statuses)
 {
     return statuses.empty() || std::find(statuses.begin(), statuses.end(), status) != statuses.end();
@@ -624,13 +639,15 @@ std::string ineligibleReason(bool eligible, int status, std::string extra_reason
     return "status_not_claimable";
 }
 
-json withPreviewEligibility(json item, const std::vector<int> &statuses)
+json withPreviewEligibility(json item, const std::vector<int> &statuses, bool force = false)
 {
-    const bool base_eligible = item.value("eligible", false);
-    const bool status_matched = item["sync_status"].is_number_integer() && matchesRequestedStatus(item["sync_status"].get<int>(), statuses);
+    const bool complete = item["sync_status"].is_number_integer() && item["sync_status"].get<int>() == 2;
+    const bool base_eligible = item.value("eligible", false) || (force && complete && item.value("reason", "") != "album_detail_not_completed");
+    const bool status_matched = (force && complete) || (item["sync_status"].is_number_integer() && matchesRequestedStatus(item["sync_status"].get<int>(), statuses));
     const bool eligible = base_eligible && status_matched;
     const int status = item["sync_status"].is_number_integer() ? item["sync_status"].get<int>() : -1;
     item["eligible"] = eligible;
+    if (eligible) item["reason"] = "";
     item["eligible_actions"] = eligibleActions(eligible, status);
     if (!eligible && base_eligible && !status_matched) {
         item["reason"] = "status_not_selected";
@@ -985,6 +1002,8 @@ std::optional<application::model::MiguBackfillTargetQuery> backfillQueryFromBody
         }
         query.limit = jsonIntField(body, {"limit", "max_targets", "maxTargets"}).value_or(50);
         query.source_ids = stringArrayField(body, {"source_ids", "sourceIds", "source_singer_ids", "sourceSingerIds", "source_album_ids", "sourceAlbumIds"});
+        if (body.contains("force") && !body["force"].is_boolean()) return std::nullopt;
+        query.force = body.value("force", false);
         const json *filter = &body;
         if (body.contains("filter") && body["filter"].is_object()) {
             filter = &body["filter"];
@@ -1443,31 +1462,7 @@ application::model::MiguGovernanceEventQuery governanceEventQueryFromRequest(con
     return query;
 }
 
-bool profileRefreshForceFromBody(const http::HttpRequest &req)
-{
-    try {
-        if (req.body.empty()) {
-            return false;
-        }
-        auto body = json::parse(req.body);
-        return jsonBoolField(body, {"force"}).value_or(false);
-    } catch (...) {
-        return false;
-    }
-}
 
-bool profileRefreshRunAllFromBody(const http::HttpRequest &req)
-{
-    try {
-        if (req.body.empty()) {
-            return false;
-        }
-        auto body = json::parse(req.body);
-        return jsonBoolField(body, {"run_all", "runAll"}).value_or(false);
-    } catch (...) {
-        return false;
-    }
-}
 
 http::HttpResponse taskAcceptedResponse(
     std::string batch_id,
@@ -1545,21 +1540,6 @@ http::HttpResponse CrawlerController::handleStartMiguSingerIndexCrawl(http::Http
     return taskAcceptedResponse(batch_id, "migu singer index crawl started", targets.size(), request->limit, request->start_index, end_index);
 }
 
-http::HttpResponse CrawlerController::handleStartMiguSingerSongsCrawl(http::HttpRequest req)
-{
-    auto request = dto::MiguSingerIdsCrawlRequestDto::fromRequest(req);
-    if (!request) {
-        return jsonError(400, "invalid migu singer songs crawl request");
-    }
-    if (auto error = request->validate()) {
-        return jsonError(400, *error);
-    }
-
-    auto targets = request->selectedSongTargets();
-    const std::string batch_id = service_->startBatchAsync(targets, request->limit, "singerSongs", req.body);
-    const int end_index = request->end_index.value_or(static_cast<int>(request->singer_ids.size()));
-    return taskAcceptedResponse(batch_id, "migu singer songs crawl started", targets.size(), request->limit, request->start_index, end_index);
-}
 
 http::HttpResponse CrawlerController::handleStartMiguSingerSongsCrawlFromDb(http::HttpRequest req)
 {
@@ -1596,21 +1576,6 @@ http::HttpResponse CrawlerController::handlePreviewMiguSingerSongsCrawlFromDb(ht
     return http::HttpResponse {200, {{"Content-Type", "application/json"}}, singerFromDbPreviewToJson(*preview, true).dump()};
 }
 
-http::HttpResponse CrawlerController::handleStartMiguSingerAlbumsCrawl(http::HttpRequest req)
-{
-    auto request = dto::MiguSingerIdsCrawlRequestDto::fromRequest(req);
-    if (!request) {
-        return jsonError(400, "invalid migu singer albums crawl request");
-    }
-    if (auto error = request->validate()) {
-        return jsonError(400, *error);
-    }
-
-    auto targets = request->selectedAlbumTargets();
-    const std::string batch_id = service_->startBatchAsync(targets, request->limit, "singerAlbums", req.body);
-    const int end_index = request->end_index.value_or(static_cast<int>(request->singer_ids.size()));
-    return taskAcceptedResponse(batch_id, "migu singer albums crawl started", targets.size(), request->limit, request->start_index, end_index);
-}
 
 http::HttpResponse CrawlerController::handleStartMiguSingerAlbumsCrawlFromDb(http::HttpRequest req)
 {
@@ -1647,61 +1612,8 @@ http::HttpResponse CrawlerController::handlePreviewMiguSingerAlbumsCrawlFromDb(h
     return http::HttpResponse {200, {{"Content-Type", "application/json"}}, singerFromDbPreviewToJson(*preview, false).dump()};
 }
 
-http::HttpResponse CrawlerController::handleRefreshMiguSingerProfiles(http::HttpRequest req)
-{
-    auto query = backfillQueryFromBody(req);
-    const bool run_all = profileRefreshRunAllFromBody(req);
-    if (query && run_all && query->source_ids.empty()) {
-        query->limit = 0;
-    }
-    if (!query || query->source != "migu" || query->limit < 0 || query->limit > 1000) {
-        return jsonError(400, "invalid migu singer profile refresh request");
-    }
 
-    const bool force = profileRefreshForceFromBody(req);
-    auto result = service_->refreshMiguSingerProfiles(std::move(*query), force, req.body.empty() ? R"({"source":"migu"})" : req.body);
-    if (result.batch_id.empty() && result.claimed_count == 0) {
-        json body;
-        body["batch_id"] = nullptr;
-        body["message"] = "no migu singer profiles need refresh";
-        body["target_count"] = 0;
-        body["claimed_count"] = 0;
-        body["skipped_count"] = result.skipped_count;
-        body["items"] = actionItemsToJson(result.items);
-        return http::HttpResponse {200, {{"Content-Type", "application/json"}}, body.dump()};
-    }
-    return taskAcceptedResponse(result.batch_id, "migu singer profile refresh started", static_cast<std::size_t>(result.claimed_count), 1, 0, result.claimed_count, result.claimed_count, result.skipped_count, actionItemsToJson(result.items));
-}
 
-http::HttpResponse CrawlerController::handleStartMiguAlbumDetailsBackfill(http::HttpRequest req)
-{
-    auto request = dto::MiguAlbumBackfillRequestDto::fromRequest(req);
-    if (!request) {
-        return jsonError(400, "invalid migu album details backfill request");
-    }
-    if (auto error = request->validate()) {
-        return jsonError(400, *error);
-    }
-
-    const std::string batch_id = service_->startAlbumDetailsBackfillAsync(request->source, request->limit, req.body.empty() ? R"({"source":"migu"})" : req.body);
-    const auto target_count = batchTargetCount(service_, batch_id);
-    return taskAcceptedResponse(batch_id, "migu album details backfill started", target_count, request->limit, 0, static_cast<int>(target_count));
-}
-
-http::HttpResponse CrawlerController::handleStartMiguAlbumSongsBackfill(http::HttpRequest req)
-{
-    auto request = dto::MiguAlbumBackfillRequestDto::fromRequest(req);
-    if (!request) {
-        return jsonError(400, "invalid migu album songs backfill request");
-    }
-    if (auto error = request->validate()) {
-        return jsonError(400, *error);
-    }
-
-    const std::string batch_id = service_->startAlbumSongsBackfillAsync(request->source, request->limit, req.body.empty() ? R"({"source":"migu"})" : req.body);
-    const auto target_count = batchTargetCount(service_, batch_id);
-    return taskAcceptedResponse(batch_id, "migu album songs backfill started", target_count, request->limit, 0, static_cast<int>(target_count));
-}
 
 http::HttpResponse CrawlerController::handleStopMiguBatch(http::HttpRequest req)
 {
@@ -2262,7 +2174,7 @@ http::HttpResponse CrawlerController::handlePreviewMiguBackfill(http::HttpReques
                     continue;
                 }
                 ++matched_count;
-                const auto item = withPreviewEligibility(singerQueueTargetToJson(*singer, type), query->statuses);
+                const auto item = withPreviewEligibility(singerQueueTargetToJson(*singer, type), query->statuses, query->force);
                 if (item.value("eligible", false)) {
                     ++eligible_count;
                 }
@@ -2280,15 +2192,15 @@ http::HttpResponse CrawlerController::handlePreviewMiguBackfill(http::HttpReques
             auto matched = service_->listMiguSingers(base);
             matched_count = matched.total;
             for (const auto &singer : matched.items) {
-                body["items"].push_back(withPreviewEligibility(singerQueueTargetToJson(singer, type), query->statuses));
+                body["items"].push_back(withPreviewEligibility(singerQueueTargetToJson(singer, type), query->statuses, query->force));
             }
 
             application::model::MiguSingerCatalogQuery eligible_query = base;
             eligible_query.page_size = 1;
             if (type == "singer-songs") {
-                eligible_query.songs_sync_statuses = defaultBackfillStatuses(query->statuses);
+                eligible_query.songs_sync_statuses = previewRetryStatuses(query->statuses, query->force);
             } else {
-                eligible_query.albums_sync_statuses = defaultBackfillStatuses(query->statuses);
+                eligible_query.albums_sync_statuses = previewRetryStatuses(query->statuses, query->force);
             }
             eligible_count = service_->listMiguSingers(std::move(eligible_query)).total;
         }
@@ -2304,7 +2216,7 @@ http::HttpResponse CrawlerController::handlePreviewMiguBackfill(http::HttpReques
                     continue;
                 }
                 ++matched_count;
-                const auto item = withPreviewEligibility(albumQueueTargetToJson(*album, type), query->statuses);
+                const auto item = withPreviewEligibility(albumQueueTargetToJson(*album, type), query->statuses, query->force);
                 if (item.value("eligible", false)) {
                     ++eligible_count;
                 }
@@ -2322,16 +2234,16 @@ http::HttpResponse CrawlerController::handlePreviewMiguBackfill(http::HttpReques
             auto matched = service_->listMiguAlbums(base);
             matched_count = matched.total;
             for (const auto &album : matched.items) {
-                body["items"].push_back(withPreviewEligibility(albumQueueTargetToJson(album, type), query->statuses));
+                body["items"].push_back(withPreviewEligibility(albumQueueTargetToJson(album, type), query->statuses, query->force));
             }
 
             application::model::MiguAlbumCatalogQuery eligible_query = base;
             eligible_query.page_size = 1;
             if (type == "album-details") {
-                eligible_query.detail_sync_statuses = defaultBackfillStatuses(query->statuses);
+                eligible_query.detail_sync_statuses = previewRetryStatuses(query->statuses, query->force);
             } else {
                 eligible_query.detail_sync_statuses = {2};
-                eligible_query.songs_sync_statuses = defaultBackfillStatuses(query->statuses);
+                eligible_query.songs_sync_statuses = previewRetryStatuses(query->statuses, query->force);
             }
             eligible_count = service_->listMiguAlbums(std::move(eligible_query)).total;
         }
@@ -2371,6 +2283,7 @@ http::HttpResponse CrawlerController::handleResetMiguBackfill(http::HttpRequest 
     if (type.empty() || !query) {
         return jsonError(400, "invalid backfill reset request");
     }
+    if (query->force) return jsonError(400, "force is supported by retry and preview only");
     if (query->source != "migu") {
         return jsonError(400, "source must be migu");
     }
