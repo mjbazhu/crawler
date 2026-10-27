@@ -333,7 +333,7 @@ src/main.cpp / infrastructure::app::ServerApplication 负责装配具体实现
 - `album_song_refs` 只保存非空的 `album_source_ref_id`、`song_source_ref_id`、disc、track 和来源顺序，平台身份通过两端来源表取得。
 - 歌手歌曲响应已提供专辑身份和名称时，直接创建专辑摘要，再写专辑歌曲关系，不额外发详情请求。实体创建、关系、音质与资源结果在同一数据库事务提交。
 - `album_artist_refs` 维护专辑与歌手来源的角色、顺序、主歌手和入口标记；`albums` 与 `album_source_refs` 不重复保存歌手属性。专辑身份 hash 使用平台与专辑来源 ID，不依赖名称、歌手或后到的物料 ID。
-- `singer_resources`、`album_resources` 保存采集时实际下载的本地封面结果，不保存 source 或远端 URL；数据库事务失败时清理本次新增封面。
+- `singer_resources`、`album_resources` 的 `remote_url` 保存采集响应中的歌手头像、专辑封面地址，与实体和关系同事务提交；采集阶段不下载图片或歌词。新资源只登记为待获取，重采只更新非空地址并保留已有本地文件、成功状态和校验信息。歌曲资源仍使用现有 `/resources/process` 与 listen 链路，歌曲来源表和歌曲资源表不新增远端 URL。歌手、专辑封面的独立下载入口后续再接入。
 
 ### 歌手索引与 tab 归属
 
