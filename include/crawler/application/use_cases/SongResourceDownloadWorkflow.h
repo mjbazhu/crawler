@@ -1,6 +1,7 @@
 #pragma once
 
 #include "crawler/application/model/SongResourceQueue.h"
+#include "crawler/application/ports/execution/ResourcePostProcessor.h"
 #include "crawler/application/model/MiguPacmtoken.h"
 #include "crawler/application/ports/execution/TaskExecutor.h"
 #include "crawler/application/ports/parsing/SongResourceParser.h"
@@ -69,7 +70,8 @@ public:
         std::shared_ptr<application::ports::TaskExecutor> resource_executor = nullptr,
         std::shared_ptr<application::ports::MiguPacmtokenRefresher> pacmtoken_refresher = nullptr,
         std::shared_ptr<application::ports::MiguPacmtokenStore> pacmtoken_store = nullptr,
-        std::shared_ptr<application::ports::SongResourceCloudUploader> cloud_uploader = nullptr
+        std::shared_ptr<application::ports::SongResourceCloudUploader> cloud_uploader = nullptr,
+        application::ports::ResourceProcessingExtensions extensions = {}
     );
 
     // 处理一批待下载资源；默认不过滤资源类型，audio 成功或受限时顺手只认领一次 cover/lyric/mrc/trc。
@@ -80,6 +82,9 @@ public:
 
 private:
     struct ProcessRunState;
+    // 同步入口在当前受限 worker 上复用独立后处理，失败不撤销下载。
+    void postProcessCompleted(const application::model::SongResourceProcessItem &item, SongResourceProcessListener *listener);
+    application::ports::ResourceProcessingExtensions extensions_; // 创建后不变的后处理依赖组
 
     application::model::SongResourceProcessItem processAudio(application::model::SongResourceQueueTarget target, const std::string &batch_id, application::model::SongResourceProcessResult *batch_result, SongResourceProcessListener *listener, ProcessRunState *state);
     application::model::SongResourceProcessItem processDirectResource(application::model::SongResourceQueueTarget target, const std::string &batch_id, const application::model::SongResourceProcessOptions &options, SongResourceProcessListener *listener);

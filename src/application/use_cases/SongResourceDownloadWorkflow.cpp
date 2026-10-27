@@ -298,8 +298,9 @@ SongResourceDownloadWorkflow::SongResourceDownloadWorkflow(
     std::shared_ptr<application::ports::TaskExecutor> resource_executor,
     std::shared_ptr<application::ports::MiguPacmtokenRefresher> pacmtoken_refresher,
     std::shared_ptr<application::ports::MiguPacmtokenStore> pacmtoken_store,
-    std::shared_ptr<application::ports::SongResourceCloudUploader> cloud_uploader
-) : resource_queue_(std::move(resource_queue)),
+    std::shared_ptr<application::ports::SongResourceCloudUploader> cloud_uploader,
+    application::ports::ResourceProcessingExtensions extensions
+) : extensions_(std::move(extensions)), resource_queue_(std::move(resource_queue)),
     resource_provider_(std::move(resource_provider)),
     resource_parser_(std::move(resource_parser)),
     content_fetcher_(std::move(content_fetcher)),
@@ -564,6 +565,7 @@ application::model::SongResourceProcessItem SongResourceDownloadWorkflow::proces
         emitItemEvent(listener, target, "resourceAttemptStarted", stagePayload(target, "resource_attempt_started", "\"attempt\":" + std::to_string(attempt) + ",\"max_attempts\":" + std::to_string(max_attempts)));
         auto item = downloadAndStoreAttempt(target, remote_url, batch_id, options, attempt == max_attempts, listener);
         if (item.ok || item.skipped) {
+            if (item.ok) postProcessCompleted(item, listener);
             emitItemEvent(listener, target, "resourceAttemptFinished", stagePayload(target, "resource_attempt_finished", "\"attempt\":" + std::to_string(attempt) + ",\"result_code\":\"" + escapeJson(item.result_code) + "\",\"error_category\":\"" + escapeJson(item.error_category) + "\""));
             return item;
         }
