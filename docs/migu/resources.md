@@ -13,6 +13,7 @@
 - 下载成功前不得回写完成状态。blob store 必须保持 staging/commit 语义；本地文件当前用临时文件、校验大小和 checksum 后提交，后续 rclone/API 存储也必须保持“完整对象提交后才回写 DB”的语义。
 - 当前主流程不再自动上传百度网盘，也不在资源下载 workflow 中调用 BaiduPCS-Go、rclone 或其它云端 uploader。后续除非用户明确要求重新做上传实验，不要把 BaiduPCS-Go 上传重新接回主流程。历史实验、本机路径与对账步骤见 [运行操作](../operations/resource-storage.md)。
 - 资源相对路径约定为 `migu/songs/{contentId}/audio/{format}.{ext}`、`migu/songs/{contentId}/lyrics/lyric.lrc`、`migu/songs/{contentId}/lyrics/mrc.mrc`、`migu/songs/{contentId}/lyrics/trc.trc`。不要改用短 `song_id`，`contentId` 更稳定且与平台资源接口一致。
+- 配置 `CRAWLER_MIGU_MRC_KEY` 后，本地 MRC 下载及数据库确认成功会触发独立后处理，生成同目录的 `words.json` 和 `words.enhanced.lrc`；产物元信息写入独立索引表，处理失败不撤销原始下载成功。配置、存储及离线使用见 [逐字歌词处理](lyrics.md)。
 - 同一首歌的 `lyric/mrc/trc` 只处理一次。并发场景下必须保留去重集合保护，避免每个音质重复下载歌词。关联 URL 存在但队列无可认领资源时返回 synthetic skipped item：`resource_id=0`、`related=true`、`synthetic=true`、`result_code=related_not_claimed`。
 - 同步 workflow 保留小批量兼容；异步 workflow 是正式长跑入口。异步资源管线使用 application 自定义 `Task<T>`，application 层不得直接 include Boost.Asio；Asio 只能出现在 infrastructure async runtime、HTTP client、MySQL adapter 等基础设施实现中。
 

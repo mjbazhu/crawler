@@ -12,6 +12,7 @@
 | 查看项目推进路线 | [项目路线图](roadmap/README.md) | M1 现状校准、M2 运行闭环、M3 可靠性验收、M4 按证据演进；含依赖、交付、验收和状态 |
 | 理解音乐元数据 | [Migu 元数据模型与关系](migu/metadata.md) | 实体与来源分工、关系不变量、事实计数和同步计数、迁移约束 |
 | 理解资源处理 | [Migu 资源流程](migu/resources.md) | 认领、URL 获取、完整提交、状态码、重试、token 与接口注意事项 |
+| 处理逐字歌词 | [MRC 解密与歌词产物](migu/lyrics.md) | C++ 解密、逐字 JSON、增强 LRC、固定路径、数据库索引与离线导出 |
 | 调用 HTTP API | [Migu API 说明](api/mg/migu-api.md)、[静态 OpenAPI](api/mg/openapi-migu.yaml) | 路由、请求、响应和 schema 已有；已知描述差异见下方 |
 | 理解批次事件 | [资源批次事件规范](observability/resource-batch-events.md) | 事件名、payload、trace 和脱敏规则 |
 | 修改 MySQL 存储 | [表职责与执行顺序](../sql/mysql/README.md) | 表级持久化、事务写入、结构快照、migration 与独立库验证要求 |
