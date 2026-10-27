@@ -18,8 +18,9 @@ AsyncSongResourceDownloadWorkflow::AsyncSongResourceDownloadWorkflow(
     std::shared_ptr<application::ports::MiguPacmtokenStore> pacmtoken_store,
     std::shared_ptr<application::ports::AsyncSongResourceRemoteCopier> remote_copier,
     std::shared_ptr<application::ports::AsyncSongResourceCloudUploader> cloud_uploader,
-    std::shared_ptr<application::ports::AsyncSongResourceBatchCloudUploader> batch_cloud_uploader
-) : runtime_(std::move(runtime)),
+    std::shared_ptr<application::ports::AsyncSongResourceBatchCloudUploader> batch_cloud_uploader,
+    application::ports::ResourceProcessingExtensions extensions
+) : extensions_(std::move(extensions)), runtime_(std::move(runtime)),
     resource_queue_(std::move(resource_queue)),
     resource_provider_(std::move(resource_provider)),
     resource_parser_(std::move(resource_parser)),

@@ -5,6 +5,7 @@
 #include "crawler/application/model/SongResourceQueue.h"
 #include "crawler/application/model/MiguPacmtoken.h"
 #include "crawler/application/ports/execution/AsyncRuntime.h"
+#include "crawler/application/ports/execution/ResourcePostProcessor.h"
 #include "crawler/application/ports/execution/TaskExecutor.h"
 #include "crawler/application/ports/parsing/SongResourceParser.h"
 #include "crawler/application/ports/persistence/SongResourceQueue.h"
@@ -80,7 +81,8 @@ public:
         std::shared_ptr<application::ports::TaskExecutor> resource_executor = nullptr,
         std::shared_ptr<application::ports::MiguPacmtokenRefresher> pacmtoken_refresher = nullptr,
         std::shared_ptr<application::ports::MiguPacmtokenStore> pacmtoken_store = nullptr,
-        std::shared_ptr<application::ports::SongResourceCloudUploader> cloud_uploader = nullptr
+        std::shared_ptr<application::ports::SongResourceCloudUploader> cloud_uploader = nullptr,
+        application::ports::ResourceProcessingExtensions extensions = {}
     );
 
     // 处理一批待下载资源；默认不过滤资源类型，audio 成功或受限时顺手只认领一次 cover/lyric/mrc/trc。

@@ -914,12 +914,64 @@ void testAsyncWorkflowUsesStableCodeForMissingDirectRelatedUrl()
     require(result.items.front().result_code == "missing_related_resource_url", "missing direct related result should expose stable result code");
 }
 
+// 验证下载完成后的处理器不参与原始资源成功/失败回写。
+class CheckingPostProcessor final : public ports::ResourcePostProcessor {
+public:
+    bool throw_unknown = false; // 模拟非标准异常
+    std::shared_ptr<FakeAsyncSongResourceQueue> queue; // 单目标测试中检查已完成写回
+    bool fail = false;                                 // 模拟解密失败
+    bool throw_error = false;                          // 模拟未知 adapter 故障
+    mutable std::atomic<int> calls {0};                // 跨 blocking worker 的调用次数
+    // 只有原始文件与数据库均确认成功后才允许进入后处理。
+    crawler::application::result::ServiceResult<bool> process(const model::SongResourceProcessItem &item) const override
+    {
+        ++calls;
+        require(item.ok && !item.local_path.empty() && !queue->succeeded.empty(), "post-processing must follow confirmed download");
+        if (throw_error) throw std::runtime_error("simulated adapter failure");
+        if (throw_unknown) throw 7;
+        if (fail) return crawler::application::result::ServiceResult<bool>::failure(crawler::application::result::ServiceErrorType::InvalidParam, "mrc_invalid_timing");
+        return crawler::application::result::ServiceResult<bool>::success(true);
+    }
+};
+
+// 后处理失败和异常只产生阶段事件，文件提交失败则完全不调用处理器。
+void testResourcePostProcessingIsolation()
+{
+    for (int scenario = 0; scenario < 5; ++scenario) {
+        auto runtime = std::make_shared<ThreadedAsyncRuntime>();
+        auto queue = std::make_shared<FakeAsyncSongResourceQueue>();
+        auto target = directTarget(950 + scenario, "https://example.test/mrc");
+        target.resource_kind = "mrc";
+        queue->pending = {target};
+        auto processor = std::make_shared<CheckingPostProcessor>();
+        processor->queue = queue;
+        processor->fail = scenario == 1;
+        processor->throw_error = scenario == 2;
+        processor->throw_unknown = scenario == 3;
+        auto blob = std::make_shared<MemoryAsyncBlobStore>();
+        blob->fail_commit = scenario == 4;
+        use_cases::AsyncSongResourceDownloadWorkflow workflow(runtime, queue, nullptr, nullptr, std::make_shared<ScriptedAsyncContentFetcher>(), blob, {}, nullptr, nullptr, nullptr, nullptr, nullptr, {processor});
+        auto query = baseQuery("post-processing-isolation");
+        query.resource_kind = "mrc";
+        query.options.resource_download_retries = 0;
+        RecordingResourceListener listener;
+        const auto result = runWorkflow(workflow, runtime, query, &listener);
+        if (scenario == 4) {
+            require(processor->calls == 0 && result.failed_count == 1, "failed raw commit must not trigger post-processing");
+        } else {
+            require(processor->calls == 1 && result.succeeded_count == 1 && result.failed_count == 0, "post-processing cannot undo raw download success");
+            require(listener.hasEvent(scenario == 0 ? "resourcePostProcessingCompleted" : "resourcePostProcessingFailed"), "post-processing must report its independent outcome");
+        }
+    }
+}
+
 } // namespace
 
 int main()
 {
     try {
         testAsyncWorkflowHonorsConcurrency();
+        testResourcePostProcessingIsolation();
         testAsyncWorkflowDeduplicatesRelatedResourcesUnderConcurrency();
         testAsyncWorkflowRetriesAudioWithFreshListenUrl();
         testAsyncWorkflowRefreshesPacmtokenOn440013();

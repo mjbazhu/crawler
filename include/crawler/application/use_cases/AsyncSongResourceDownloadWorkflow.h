@@ -5,6 +5,7 @@
 #include "crawler/application/model/MiguPacmtoken.h"
 #include "crawler/application/model/SongResourceQueue.h"
 #include "crawler/application/ports/execution/AsyncRuntime.h"
+#include "crawler/application/ports/execution/ResourcePostProcessor.h"
 #include "crawler/application/ports/parsing/SongResourceParser.h"
 #include "crawler/application/ports/persistence/AsyncSongResourceQueue.h"
 #include "crawler/application/ports/provider/AsyncSongResourceContentFetcher.h"
@@ -42,7 +43,8 @@ public:
         std::shared_ptr<application::ports::MiguPacmtokenStore> pacmtoken_store = nullptr,
         std::shared_ptr<application::ports::AsyncSongResourceRemoteCopier> remote_copier = nullptr,
         std::shared_ptr<application::ports::AsyncSongResourceCloudUploader> cloud_uploader = nullptr,
-        std::shared_ptr<application::ports::AsyncSongResourceBatchCloudUploader> batch_cloud_uploader = nullptr
+        std::shared_ptr<application::ports::AsyncSongResourceBatchCloudUploader> batch_cloud_uploader = nullptr,
+        application::ports::ResourceProcessingExtensions extensions = {}
     );
 
     // 异步处理一批待下载资源；主资源并发处理，关联 cover/lyric/mrc/trc 按歌曲去重。
@@ -56,6 +58,9 @@ public:
 
 private:
     struct ProcessRunState;
+    // 完整文件和数据库确认后才投递后处理；失败通过独立事件报告。
+    application::async::Task<void> postProcessCompleted(const application::model::SongResourceProcessItem &item, SongResourceProcessListener *listener);
+    application::ports::ResourceProcessingExtensions extensions_; // 创建后不变的后处理依赖组
 
     application::async::Task<void> processWorker(std::shared_ptr<ProcessRunState> state, application::model::SongResourceQueueTarget target, std::string batch_id, SongResourceProcessListener *listener);
     application::async::Task<application::model::SongResourceProcessItem> processAudio(application::model::SongResourceQueueTarget target, const std::string &batch_id, std::shared_ptr<ProcessRunState> state, SongResourceProcessListener *listener);

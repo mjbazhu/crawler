@@ -88,7 +88,8 @@ SongResourceDownloadWorkflow::SongResourceDownloadWorkflow(
     std::shared_ptr<application::ports::TaskExecutor> resource_executor,
     std::shared_ptr<application::ports::MiguPacmtokenRefresher> pacmtoken_refresher,
     std::shared_ptr<application::ports::MiguPacmtokenStore> pacmtoken_store,
-    std::shared_ptr<application::ports::SongResourceCloudUploader> cloud_uploader
+    std::shared_ptr<application::ports::SongResourceCloudUploader> cloud_uploader,
+    application::ports::ResourceProcessingExtensions extensions
 ) :
     runtime_(std::make_shared<CompatibilityResourceRuntime>())
 {
@@ -104,7 +105,8 @@ SongResourceDownloadWorkflow::SongResourceDownloadWorkflow(
         std::move(pacmtoken_store),
         nullptr,
         cloud_uploader ? std::make_shared<BlockingAsyncSongResourceCloudUploader>(cloud_uploader, runtime_) : nullptr,
-        nullptr
+        nullptr,
+        std::move(extensions)
     );
 }
 

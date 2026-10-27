@@ -1325,7 +1325,8 @@ CrawlerService::CrawlerService(CrawlerServiceDependencies dependencies) : runtim
             std::move(dependencies.executors.resource_executor),
             migu_pacmtoken_refresher,
             migu_pacmtoken_store,
-            song_resource_cloud_uploader
+            song_resource_cloud_uploader,
+            dependencies.resource_processing
         );
     }
 
@@ -1361,7 +1362,8 @@ CrawlerService::CrawlerService(CrawlerServiceDependencies dependencies) : runtim
                 migu_pacmtoken_store,
                 async_song_resource_remote_copier,
                 async_song_resource_cloud_uploader,
-                async_song_resource_batch_cloud_uploader
+                async_song_resource_batch_cloud_uploader,
+                dependencies.resource_processing
             );
         }
     }

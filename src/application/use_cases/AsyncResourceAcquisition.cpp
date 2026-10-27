@@ -144,6 +144,7 @@ application::async::Task<application::model::SongResourceProcessItem> AsyncSongR
         co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), "resourceAttemptStarted", stagePayload(target, "resource_attempt_started", "\"attempt\":" + std::to_string(attempt) + ",\"max_attempts\":" + std::to_string(max_attempts)));
         auto item = co_await downloadAndStoreAttempt(target, remote_url, batch_id, options, attempt == max_attempts, listener);
         if (item.ok || item.skipped) {
+            if (item.ok) co_await postProcessCompleted(item, listener);
             co_await notifyItemEvent(listener, makeStartedItem(target, isRelatedResource(target.resource_kind)), "resourceAttemptFinished", stagePayload(target, "resource_attempt_finished", "\"attempt\":" + std::to_string(attempt) + ",\"result_code\":\"" + escapeJson(item.result_code) + "\",\"error_category\":\"" + escapeJson(item.error_category) + "\""));
             co_return item;
         }

@@ -8,6 +8,7 @@
 #include "crawler/application/use_cases/CrawlerService.h"
 #include "crawler/application/use_cases/MiguPacmtokenService.h"
 #include "crawler/infrastructure/app/HttpClientOptionsFactory.h"
+#include "crawler/infrastructure/app/LyricProcessingComposition.h"
 #include "crawler/infrastructure/app/PersistenceAssembly.h"
 #include "crawler/infrastructure/app/RuntimeSettingsSnapshotFactory.h"
 #include "crawler/infrastructure/execution/asio/AsioExecutionContext.h"
@@ -30,6 +31,7 @@
 #include "crawler/infrastructure/storage/rclone/RcloneRemoteCopier.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <chrono>
 #include <cstddef>
 #include <cctype>
@@ -210,6 +212,9 @@ bool ServerApplication::initialize()
         impl_->diagnostics_ = std::make_shared<observability::logging::ConsoleDiagnosticsSink>();
 
         application::use_cases::CrawlerServiceDependencies crawler_dependencies;
+        if (const char *mrc_key = std::getenv("CRAWLER_MIGU_MRC_KEY"); mrc_key && *mrc_key && !isRcloneBackend(impl_->config_.resource_storage_backend)) {
+            crawler_dependencies.resource_processing.post_processor = makeMiguLyricProcessingWorkflow(impl_->config_.storage_path, mrc_key, impl_->mysql_pool_);
+        }
         crawler_dependencies.providers.raw_page_fetcher = impl_->music_provider_;
         crawler_dependencies.providers.song_search_provider = impl_->music_provider_;
         crawler_dependencies.providers.album_search_provider = impl_->music_provider_;

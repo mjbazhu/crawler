@@ -53,6 +53,7 @@ FROM (
     SELECT 2026102502, _utf8mb4'optimize_normalized_catalog_queries' COLLATE utf8mb4_unicode_ci, _utf8mb4'55b4ebb3fd1a1787ed75a0e4ec8e912b' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102601, _utf8mb4'source_identity_and_album_count_semantics' COLLATE utf8mb4_unicode_ci, _utf8mb4'247abb66a7e3c100b1c6c56ed0d9b5c4' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102602, _utf8mb4'resource_claim_generation' COLLATE utf8mb4_unicode_ci, _utf8mb4'b633fca210d1b102062ef69f292f9c66' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT 2026102603, _utf8mb4'lyric_resource_artifacts' COLLATE utf8mb4_unicode_ci, _utf8mb4'8e66529109a6db265864b5563f957e8a' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102701, _utf8mb4'migu_album_material_lookup' COLLATE utf8mb4_unicode_ci, _utf8mb4'b830cb1af262e73ec4669f5f39ae4312' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102702, _utf8mb4'singer_source_gender_ownership' COLLATE utf8mb4_unicode_ci, _utf8mb4'c920c30b5f4fd81c1c9dff0fb7167f00' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102703, _utf8mb4'metadata_cover_remote_urls' COLLATE utf8mb4_unicode_ci, _utf8mb4'75da4ef101026533d80bf7e8830b391f' COLLATE utf8mb4_unicode_ci
@@ -91,6 +92,7 @@ FROM (
     SELECT 2026102502, _utf8mb4'55b4ebb3fd1a1787ed75a0e4ec8e912b' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102601, _utf8mb4'247abb66a7e3c100b1c6c56ed0d9b5c4' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102602, _utf8mb4'b633fca210d1b102062ef69f292f9c66' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT 2026102603, _utf8mb4'8e66529109a6db265864b5563f957e8a' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102701, _utf8mb4'b830cb1af262e73ec4669f5f39ae4312' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102702, _utf8mb4'c920c30b5f4fd81c1c9dff0fb7167f00' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102703, _utf8mb4'75da4ef101026533d80bf7e8830b391f' COLLATE utf8mb4_unicode_ci
@@ -107,6 +109,7 @@ FROM (
     SELECT _utf8mb4'song_source_refs' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT _utf8mb4'song_source_audio_formats' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT _utf8mb4'song_resources' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT _utf8mb4'song_resource_artifacts' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT _utf8mb4'song_artist_refs' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT _utf8mb4'album_song_refs' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT _utf8mb4'singers' COLLATE utf8mb4_unicode_ci UNION ALL
@@ -157,6 +160,15 @@ FROM (
     SELECT _utf8mb4'singer_index_memberships' COLLATE utf8mb4_unicode_ci, _utf8mb4'singer_source_ref_id' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT _utf8mb4'singer_index_memberships' COLLATE utf8mb4_unicode_ci, _utf8mb4'tab' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT _utf8mb4'singer_index_memberships' COLLATE utf8mb4_unicode_ci, _utf8mb4'index_order' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT _utf8mb4'song_resource_artifacts' COLLATE utf8mb4_unicode_ci, _utf8mb4'source_resource_id' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT _utf8mb4'song_resource_artifacts' COLLATE utf8mb4_unicode_ci, _utf8mb4'artifact_type' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT _utf8mb4'song_resource_artifacts' COLLATE utf8mb4_unicode_ci, _utf8mb4'source_checksum' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT _utf8mb4'song_resource_artifacts' COLLATE utf8mb4_unicode_ci, _utf8mb4'processor_version' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT _utf8mb4'song_resource_artifacts' COLLATE utf8mb4_unicode_ci, _utf8mb4'schema_version' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT _utf8mb4'song_resource_artifacts' COLLATE utf8mb4_unicode_ci, _utf8mb4'local_path' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT _utf8mb4'song_resource_artifacts' COLLATE utf8mb4_unicode_ci, _utf8mb4'status' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT _utf8mb4'song_resource_artifacts' COLLATE utf8mb4_unicode_ci, _utf8mb4'cloud_backend' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT _utf8mb4'song_resource_artifacts' COLLATE utf8mb4_unicode_ci, _utf8mb4'cloud_path' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT _utf8mb4'song_resources' COLLATE utf8mb4_unicode_ci, _utf8mb4'resource_kind' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT _utf8mb4'song_resources' COLLATE utf8mb4_unicode_ci, _utf8mb4'format_type' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT _utf8mb4'song_resources' COLLATE utf8mb4_unicode_ci, _utf8mb4'error_category' COLLATE utf8mb4_unicode_ci UNION ALL

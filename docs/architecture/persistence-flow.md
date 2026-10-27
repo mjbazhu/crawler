@@ -295,3 +295,14 @@ API 覆盖与数据完整性还存在以下缺口：
 本轮基于 PR1，只在 `singer_resources`、`album_resources` 增加 `remote_url`，新增迁移 `V2026102703__metadata_cover_remote_urls.sql`。保存非空图片地址与元数据同事务；URL 更新不重置已有下载状态、本地路径或校验信息。专辑物料来源归一时同时迁移待下载地址。歌手、专辑查询从各自资源表读取地址。
 
 元数据用例已取消封面下载和提交后歌词下载依赖；现有歌曲资源的 provider、parser、下载器、队列 SQL 及 `/resources/process` 执行逻辑不作调整。歌手、专辑下载入口和云端上传不在本轮范围。前文历史验收记录仅描述当时版本，不表示当前采集仍附带二进制下载。
+
+## 最新 main 整合验证（2026-10-28）
+
+本分支已合入 main 的 `2636a26`（文档整理和逐字歌词 PR），保留文档拆分、歌词领域模型、解密导出、CLI、数据库索引及下载后的后处理。同步下载现在委托统一异步编排，后处理依赖随之传递，在拆分后的资源获取流程中只执行一次；不会重新挂回元数据采集。
+
+- `demo`、`crawler_lyrics` 和所选测试 target 构建通过；28 项离线及本机 I/O CTest 全部通过，包括 API、provider/parser、目录分页、资源持久化、同步/异步下载和逐字歌词。
+- 5 项 MySQL 集成测试通过：`MySqlMetadataOwnershipTest`、`MySqlMetadataCoverUrlTest`、`MySqlAlbumIdentityTest`、`MySqlSourceBindingTest`、`MySqlSingerIdentityTest`；160 条运行时 SQL 模板 prepare 通过。
+- 主测试库为 `crawler_ownership_test_pr_main_20261028_004949`；同名歌手用例要求空库，单独使用 `crawler_ownership_test_pr_main_20261028_005125_988843`，初次复用其他用例数据被安全校验拒绝的日志仍保留。
+- 资源后处理和获取实现的两项 clangd 检查通过。本轮仅作合入回归，没有新增真实音乐平台请求、资源下载或正式库变更；GitHub CI 以创建 PR 后的远端结果为准。
+
+合入前的小批量真实接口验收在 `crawler_ownership_test_live_urls_20261028_002001` 执行：孙燕姿、五月天、Taylor Swift 按歌手、专辑、歌曲顺序跑两轮，6 首歌曲、7 张专辑及关系无重复增长，3 条头像 URL 与 7 条专辑封面 URL 保留，55 条资源记录待处理，二进制文件为 0。限量目录返回 `partial_completed`，不代表全量目录完成；三处同步摘要按歌曲阶段补入的专辑关系校准，不计为业务字段丢失。

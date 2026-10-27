@@ -43,6 +43,7 @@
 #include "crawler/application/ports/storage/SongResourceBatchCloudUploader.h"
 #include "crawler/application/ports/storage/SongResourceBlobStore.h"
 #include "crawler/application/ports/execution/AsyncRuntime.h"
+#include "crawler/application/ports/execution/ResourcePostProcessor.h"
 
 #include <chrono>
 #include <memory>
@@ -121,6 +122,7 @@ struct CrawlerRuntimeOptions {
 
 // CrawlerService 窄依赖结构，避免继续扩展超长构造函数。
 struct CrawlerServiceDependencies {
+    application::ports::ResourceProcessingExtensions resource_processing; // 下载完成后的独立处理能力
     CrawlerProviderPorts providers;                                   // provider 依赖组
     CrawlerParserPorts parsers;                                       // parser 依赖组
     CrawlerPersistencePorts persistence;                              // 持久化依赖组
