@@ -1221,12 +1221,56 @@ void testWorkflowDoesNotWriteCompletedWhenBlobValidationFails()
     require(queue->failed.front().result_code == "persist_validation_failed", "failure writeback should preserve validation result code");
 }
 
+// 单目标测试处理器，检查同步入口也遵守先确认下载再执行后处理。
+class CheckingSyncPostProcessor final : public ports::ResourcePostProcessor {
+public:
+    std::shared_ptr<FakeSongResourceQueue> queue; // 已确认资源的测试队列
+    bool fail = false;                          // 模拟独立歌词处理失败
+    mutable int calls = 0;                      // 单目标任务调用次数
+
+    // 检查独立阶段调用顺序，不直接回写原始队列。
+    crawler::application::result::ServiceResult<bool> process(const model::SongResourceProcessItem &item) const override
+    {
+        ++calls;
+        require(item.ok && !item.local_path.empty() && queue->succeeded.size() == 1, "sync post-processing must follow confirmed download");
+        if (fail) return crawler::application::result::ServiceResult<bool>::failure(crawler::application::result::ServiceErrorType::InvalidParam, "mrc_invalid_timing");
+        return crawler::application::result::ServiceResult<bool>::success(true);
+    }
+};
+
+// main 的同步实现独立于异步实现，迁移时单独验证完成回调和失败隔离。
+void testSyncResourcePostProcessingIsolation()
+{
+    for (const bool fail : {false, true}) {
+        auto queue = std::make_shared<FakeSongResourceQueue>();
+        auto target = directTextTarget(951, "https://example.test/mrc");
+        target.resource_kind = "mrc";
+        queue->pending = {target};
+        auto fetcher = std::make_shared<ScriptedContentFetcher>();
+        fetcher->responses[target.remote_url] = {okContent()};
+        auto processor = std::make_shared<CheckingSyncPostProcessor>();
+        processor->queue = queue;
+        processor->fail = fail;
+        use_cases::SongResourceDownloadWorkflow workflow(queue, nullptr, nullptr, fetcher, std::make_shared<MemoryBlobStore>(), {}, nullptr, nullptr, nullptr, nullptr, {processor});
+        model::SongResourceClaimQuery query;
+        query.resource_kind = "mrc";
+        query.limit = 1;
+        query.options.resource_download_retries = 0;
+        RecordingResourceListener listener;
+        const auto result = workflow.processPending(query, &listener);
+        require(processor->calls == 1 && result.succeeded_count == 1 && result.failed_count == 0, "sync post-processing must preserve raw success");
+        require(queue->failed.empty(), "sync post-processing must not fail the original resource");
+        require(listener.hasEvent(fail ? "resourcePostProcessingFailed" : "resourcePostProcessingCompleted"), "sync post-processing should report an independent event");
+    }
+}
+
 } // namespace
 
 int main()
 {
     try {
         testWorkflowStreamsContentIntoBlobStore();
+        testSyncResourcePostProcessingIsolation();
         testWorkflowUploadsSavedResourceToCloud();
         testWorkflowRefreshesMissingCoverUrlThroughListen();
         testWorkflowSkipsRestrictedDirectRelatedResource();

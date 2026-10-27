@@ -123,6 +123,10 @@ configure_crawler_executable(demo)
 add_executable(crawler_lyrics src/infrastructure/app/LyricsCliMain.cpp)
 configure_crawler_executable(crawler_lyrics)
 
+add_crawler_test(MiguTimedLyricsTest tests/lyrics/MiguTimedLyricsTest.cpp)
+add_crawler_test(LyricProcessingWorkflowTest tests/lyrics/LyricProcessingWorkflowTest.cpp)
+add_crawler_test(LocalLyricArtifactStoreTest tests/lyrics/LocalLyricArtifactStoreTest.cpp)
+
 add_crawler_test(MiguSingerSongIngestionTest tests/migu/ingestion/MiguSingerSongIngestionTest.cpp)
 set_tests_properties(MiguSingerSongIngestionTest
     PROPERTIES
