@@ -31,6 +31,7 @@ file(GLOB_RECURSE SRC_FILES
 )
 
 list(FILTER SRC_FILES EXCLUDE REGEX "src/main.cpp$")
+list(FILTER SRC_FILES EXCLUDE REGEX "src/infrastructure/app/LyricsCliMain.cpp$")
 
 # 生产源文件只编译一次，静态库让主程序和测试按需链接，避免每个测试都携带整个模块的调试信息。
 add_library(crawler_core STATIC
@@ -118,6 +119,9 @@ add_executable(demo
     src/main.cpp
 )
 configure_crawler_executable(demo)
+
+add_executable(crawler_lyrics src/infrastructure/app/LyricsCliMain.cpp)
+configure_crawler_executable(crawler_lyrics)
 
 add_crawler_test(MiguSingerSongIngestionTest tests/migu/ingestion/MiguSingerSongIngestionTest.cpp)
 set_tests_properties(MiguSingerSongIngestionTest
