@@ -47,25 +47,26 @@ struct SongResourceClaimQuery {
 
 // 歌曲资源队列目标，包含 provider、下载和路径规划所需参数。
 struct SongResourceQueueTarget {
-    std::uint64_t resource_id = 0;        // song_resources.id
-    std::uint64_t song_source_ref_id = 0; // song_source_refs.id
-    std::string source = "migu";          // 音乐平台标识
-    std::string source_song_id;           // 平台歌曲 ID
-    std::string source_content_id;        // 平台 contentId
-    std::string source_resource_type;     // 平台来源资源类型
-    std::string audio_resource_type;      // 音质行资源类型，缺失时使用 source_resource_type
+    std::uint64_t resource_id = 0;          // song_resources.id
+    std::uint64_t song_source_ref_id = 0;   // song_source_refs.id
+    std::string source = "migu";            // 音乐平台标识
+    std::string source_song_id;             // 平台歌曲 ID
+    std::string source_content_id;          // 平台 contentId
+    std::string source_resource_type;       // 平台来源资源类型
+    std::string audio_resource_type;        // 音质行资源类型，缺失时使用 source_resource_type
     std::string resource_fetch_format_type; // 非音频资源补链时使用的音质档位
-    std::string copyright_id;             // 平台版权 ID
-    std::string title;                    // 歌曲标题，仅用于诊断
-    std::string artist;                   // 主歌手，仅用于诊断
-    std::string album;                    // 专辑名，仅用于诊断
-    int source_album_kind = 0;            // 平台专辑类型：0 未知，1 普通专辑，2 数字专辑
-    std::string resource_kind;            // 资源类型
-    std::string format_type;              // 音质档位
-    std::string remote_url;               // 当前远程 URL
-    std::string local_path;               // 当前本地路径
-    int status = 0;                       // 当前状态
-    int retry_count = 0;                  // 重试次数
+    std::string copyright_id;               // 平台版权 ID
+    std::string title;                      // 歌曲标题，仅用于诊断
+    std::string artist;                     // 主歌手，仅用于诊断
+    std::string album;                      // 专辑名，仅用于诊断
+    int source_album_kind = 0;              // 平台专辑类型：0 未知，1 普通专辑，2 数字专辑
+    std::string resource_kind;              // 资源类型
+    std::string format_type;                // 音质档位
+    std::string remote_url;                 // 当前远程 URL
+    std::string local_path;                 // 当前本地路径
+    int status = 0;                         // 当前状态
+    int retry_count = 0;                    // 重试次数
+    std::uint64_t claim_generation = 0;     // 认领代次，拒绝过期 worker 的回写
 };
 
 // 关联资源认领请求，用于 audio 响应带出的 cover/lrc/mrc/trc URL。
@@ -78,15 +79,15 @@ struct SongResourceRelatedClaimRequest {
 
 // 歌曲资源成功回写请求。
 struct SongResourceSuccessUpdate {
-    std::uint64_t resource_id = 0;  // song_resources.id
-    std::string remote_url;         // 本次实际下载使用的 URL
-    std::string local_path;         // 保存后的相对路径
-    std::string cloud_backend;      // 云端上传后端；未启用云端上传时为空
-    std::string cloud_path;         // 云端保存路径；未启用云端上传时为空
-    std::uint64_t size_bytes = 0;   // 保存文件大小
-    std::string checksum;           // 存储校验值
-    std::string result_code = "ok"; // 结果编码
-    std::string batch_id;           // 当前处理批次 ID
+    std::uint64_t resource_id = 0;      // song_resources.id
+    std::string local_path;             // 保存后的相对路径
+    std::string cloud_backend;          // 云端上传后端；未启用云端上传时为空
+    std::string cloud_path;             // 云端保存路径；未启用云端上传时为空
+    std::uint64_t size_bytes = 0;       // 保存文件大小
+    std::string checksum;               // 存储校验值
+    std::string result_code = "ok";     // 结果编码
+    std::string batch_id;               // 当前处理批次 ID
+    std::uint64_t claim_generation = 0; // 认领代次，拒绝过期 worker 的回写
 };
 
 // 歌曲资源失败回写请求。
@@ -96,6 +97,7 @@ struct SongResourceFailureUpdate {
     std::string result_code = "failed";     // 结果编码
     std::string message;                    // 脱敏错误说明
     std::string batch_id;                   // 当前处理批次 ID
+    std::uint64_t claim_generation = 0;     // 认领代次，拒绝过期 worker 的回写
 };
 
 // 歌曲资源跳过回写请求，用于版权、数字专辑等无需继续重试的永久限制。
@@ -108,6 +110,7 @@ struct SongResourceSkipUpdate {
     std::string result_code = "skipped";     // 结果编码
     std::string message;                     // 脱敏跳过原因
     std::string batch_id;                    // 当前处理批次 ID
+    std::uint64_t claim_generation = 0;      // 认领代次，拒绝过期 worker 的回写
 };
 
 // 单条资源处理结果。

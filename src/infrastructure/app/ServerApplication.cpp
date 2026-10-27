@@ -19,6 +19,7 @@
 #include "crawler/infrastructure/http/client/HttpSongResourceContentFetcher.h"
 #include "crawler/infrastructure/http/server/DrogonHttpServer.h"
 #include "crawler/infrastructure/music/migu/parser/MiguParser.h"
+#include "crawler/infrastructure/music/persistence/mysql/MySqlSongResourceQueue.h"
 #include "crawler/infrastructure/music/migu/parser/MiguSongResourceParser.h"
 #include "crawler/infrastructure/music/migu/provider/MiguPacmtokenClient.h"
 #include "crawler/infrastructure/music/migu/provider/MiguAsyncSongResourceProvider.h"
@@ -175,6 +176,12 @@ bool ServerApplication::initialize()
         impl_->batch_task_repository_ = std::move(persistence_components->batch_task_repository);
         impl_->catalog_query_repository_ = std::move(persistence_components->catalog_query_repository);
         impl_->song_resource_queue_ = std::move(persistence_components->song_resource_queue);
+        if (auto queue = std::dynamic_pointer_cast<music::persistence::mysql::MySqlSongResourceQueue>(impl_->song_resource_queue_)) {
+            const auto recovered = impl_->file_storage_->recoverResourceWrites([queue](std::uint64_t resource, std::uint64_t generation, const std::string &path) {
+                return queue->inspectResourceWrite(resource, generation, path);
+            });
+            if (recovered > 0) logApp(logging::LogLevel::L_INFO, "Recovered resource file journals: " + std::to_string(recovered));
+        }
         auto blocking_storage_executor = impl_->persistence_worker_pool_ ? std::static_pointer_cast<application::ports::TaskExecutor>(impl_->persistence_worker_pool_) : std::static_pointer_cast<application::ports::TaskExecutor>(impl_->resource_worker_pool_);
         impl_->async_execution_context_ = std::make_shared<execution::asio::AsioExecutionContext>(static_cast<std::size_t>((std::max)(1, impl_->config_.outbound_http_io_threads)));
         impl_->async_runtime_ = std::make_shared<execution::asio::AsioAsyncRuntime>(impl_->async_execution_context_->executor(), blocking_storage_executor);

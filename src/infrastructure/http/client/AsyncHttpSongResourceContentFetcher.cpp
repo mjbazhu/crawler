@@ -100,7 +100,7 @@ application::model::SongResourceContentStreamResult toResourceStreamResult(HttpS
             result.error_category = "timeout";
         } else if (response.result_code == "stream_consumer_failed") {
             result.error_category = "persistence";
-        } else if (response.result_code == "body_too_large" || response.result_code == "unsupported_content_encoding") {
+        } else if (response.result_code == "body_too_large" || response.result_code == "unsupported_content_encoding" || response.result_code == "invalid_content_encoding") {
             result.error_category = "resource";
         } else {
             result.error_category = "network";

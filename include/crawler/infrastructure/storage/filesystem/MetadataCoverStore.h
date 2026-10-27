@@ -7,6 +7,8 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <map>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -21,6 +23,10 @@ public:
     // 限制单个封面为 8 MiB、15 秒，并校验响应确实为支持的图片。
     application::model::MetadataResourceFile save(std::string_view source, std::string_view owner_kind, std::string_view source_id, std::string_view url) override;
 
+    // 成功事务解除会话补偿；不确定事务保留本地日志。
+    void accept(std::string_view local_path) override;
+    void defer(std::string_view local_path) override;
+
     // 只删除本 adapter 返回的模块内相对路径。
     bool discard(std::string_view local_path) override;
 
@@ -28,7 +34,11 @@ private:
     std::shared_ptr<http::client::HttpClient> client_; // 线程安全 HTTP 客户端
     std::shared_ptr<FileStorage> files_;               // 原子文件保存器
     std::vector<std::string> headers_;                 // 不可变请求头策略
-    std::atomic<std::uint64_t> sequence_ {0};          // 隔离并发采集文件名
+    // 取出会话时只在短临界区修改映射，文件 I/O 在锁外执行。
+    std::unique_ptr<application::ports::SongResourceBlobWriteSession> takeSession(std::string_view local_path);
+    std::mutex sessions_mutex_;                                                                         // 保护未确认的独占文件会话
+    std::map<std::string, std::unique_ptr<application::ports::SongResourceBlobWriteSession>> sessions_; // 事务提交前的封面文件
+    std::atomic<std::uint64_t> sequence_ {0};                                                           // 隔离并发采集文件名
 };
 
 } // namespace orchestrator::modules::crawler::infrastructure::storage::filesystem

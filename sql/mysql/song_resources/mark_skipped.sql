@@ -11,3 +11,9 @@ WHERE ((? > 0 AND song_source_ref_id = ?) OR (? = 0 AND id = ?))
   AND (? = '' OR resource_kind = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci)
   AND (? = '' OR format_type = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci)
   AND status IN (0, 1, 3)
+  AND EXISTS (
+      SELECT 1 FROM (
+          SELECT status, claim_generation FROM song_resources WHERE id = ? LIMIT 1
+      ) AS active_claim
+      WHERE active_claim.status = 1 AND active_claim.claim_generation = ?
+  )

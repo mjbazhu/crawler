@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS `song_resources` (
   `result_code` varchar(64) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '资源结果编码：ok、network_failed、parse_failed、persist_failed、invalid_target、timeout、partial_completed、failed',
   `last_batch_id` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '最近处理该资源任务的批次 ID',
   `running_batch_id` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '正在处理该资源任务的批次 ID',
+  `claim_generation` bigint unsigned NOT NULL DEFAULT '0' COMMENT '资源认领代次，回写必须匹配',
   `last_processed_at` bigint unsigned NOT NULL DEFAULT '0' COMMENT '最近治理或处理时间，Unix 秒时间戳',
   `fetched_at` bigint unsigned NOT NULL DEFAULT '0' COMMENT '资源最近一次成功获取时间，Unix 秒时间戳',
   `cloud_uploaded_at` bigint unsigned NOT NULL DEFAULT '0' COMMENT '资源最近一次成功上传到云端的时间，Unix 秒时间戳',

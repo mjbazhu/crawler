@@ -3,6 +3,8 @@
 #include "crawler/infrastructure/music/persistence/mysql/MySqlMigrationRunner.h"
 
 #include <boost/asio/co_spawn.hpp>
+#include <boost/asio/cancel_after.hpp>
+#include <boost/asio/strand.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/executor_work_guard.hpp>
 #include <boost/asio/io_context.hpp>
@@ -40,6 +42,12 @@ boost::mysql::pool_params makePoolParams(const MySqlConfig &config)
     params.ping_timeout = config.ping_timeout;
     params.thread_safe = config.thread_safe;
     return params;
+}
+
+// 定时器和连接获取共用调用协程的 strand，避免 thread_safe 池与 cancel_after 竞态。
+boost::asio::awaitable<boost::mysql::pooled_connection> acquireWithDeadline(boost::mysql::connection_pool *pool, std::chrono::seconds timeout)
+{
+    co_return co_await pool->async_get_connection(boost::asio::cancel_after(timeout, boost::asio::use_awaitable));
 }
 
 } // namespace
@@ -86,8 +94,7 @@ public:
     // 异步获取一个独占连接。
     boost::asio::awaitable<boost::mysql::pooled_connection> coAcquire()
     {
-        auto connection = co_await pool_->async_get_connection(boost::asio::use_awaitable);
-        co_return std::move(connection);
+        co_return co_await boost::asio::co_spawn(boost::asio::make_strand(io_context_), acquireWithDeadline(pool_.get(), (std::max)(std::chrono::seconds(1), config_.connect_timeout)), boost::asio::use_awaitable);
     }
 
     // 执行 MySQL migration，避免建表和索引 SQL 散落在 C++ 内部。

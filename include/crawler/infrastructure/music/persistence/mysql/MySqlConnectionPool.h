@@ -34,7 +34,7 @@ public:
     // 返回内部执行器，供上层 co_spawn MySQL 协程任务。
     boost::asio::any_io_executor executor();
 
-    // 异步获取独占连接，连接析构后自动归还连接池。
+    // 异步获取独占连接，最多等待 connect_timeout；连接析构后自动归还连接池。
     boost::asio::awaitable<boost::mysql::pooled_connection> coAcquire();
 
     // 按配置执行外置 schema SQL；多条语句会拆分后顺序异步执行。

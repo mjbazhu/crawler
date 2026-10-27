@@ -4,6 +4,10 @@
 #include "crawler/application/ports/storage/SongResourceBlobStore.h"
 
 #include <filesystem>
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <optional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -32,6 +36,9 @@ public:
 
     // 打开歌曲资源流式写入会话，提交前只写入临时文件。
     std::unique_ptr<application::ports::SongResourceBlobWriteSession> beginSongResourceBlobWrite(application::model::SongResourceBlobStreamSaveRequest request) override;
+
+    // 启动时只核对本 adapter 的待确认日志；无法查询或仍被认领的文件保留。
+    std::size_t recoverResourceWrites(const std::function<std::optional<application::model::ResourceWriteDisposition>(std::uint64_t, std::uint64_t, const std::string &)> &inspect);
 
     // 获取完整路径
     std::filesystem::path getFullPath(std::string_view relative_path) const;

@@ -21,7 +21,17 @@ public:
     // 提交完整对象，成功时返回可回写数据库的路径、大小和校验值。
     virtual application::model::SongResourceBlobSaveResult commit() = 0;
 
-    // 放弃写入并清理临时对象；析构也应尽力清理未提交内容。
+    // 数据库已确认本次文件，解除补偿；普通独立保存可使用默认实现。
+    virtual void accept()
+    {}
+
+    // 数据库暂时不可用时保留文件待核对，禁止误删可能已提交的对象。
+    virtual void defer()
+    {
+        accept();
+    }
+
+    // 放弃写入并清理临时对象；需要数据库确认的会话还须清理未确认文件。
     virtual void abort() = 0;
 };
 

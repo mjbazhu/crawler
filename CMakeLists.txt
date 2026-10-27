@@ -24,6 +24,7 @@ find_package(Drogon REQUIRED)
 find_package(boost_asio CONFIG REQUIRED)
 find_package(boost_mysql CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
+find_package(ZLIB REQUIRED)
 
 file(GLOB_RECURSE SRC_FILES
     CONFIGURE_DEPENDS
@@ -54,6 +55,7 @@ target_link_libraries(crawler_core
     Boost::mysql
     OpenSSL::SSL
     OpenSSL::Crypto
+    ZLIB::ZLIB
     nlohmann_json::nlohmann_json
     unofficial::sqlite3::sqlite3
 )

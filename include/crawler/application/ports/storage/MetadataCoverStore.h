@@ -15,6 +15,14 @@ public:
     // 下载本次响应给出的地址；owner_kind 仅允许 singers、albums。
     virtual model::MetadataResourceFile save(std::string_view source, std::string_view owner_kind, std::string_view source_id, std::string_view url) = 0;
 
+    // 数据库确认后解除本次封面文件补偿。
+    virtual void accept(std::string_view)
+    {}
+
+    // 提交结果不确定时保留文件与日志，等待启动核对。
+    virtual void defer(std::string_view)
+    {}
+
     // 数据库事务失败时清理本次新建文件，不触碰此前已提交的文件。
     virtual bool discard(std::string_view local_path) = 0;
 };

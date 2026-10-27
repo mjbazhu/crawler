@@ -72,13 +72,22 @@ application::model::MetadataResourceFile MetadataCoverStore::save(std::string_vi
         return failure("parse", "invalid_cover_content", "metadata cover response is not a supported image");
     }
     const auto stamp = std::chrono::system_clock::now().time_since_epoch().count();
-    application::model::SongResourceBlobSaveRequest request;
+    application::model::SongResourceBlobStreamSaveRequest request;
+    request.require_database_ack = true;
     request.relative_path_hint = std::string(source) + "/" + std::string(owner_kind) + "/" + std::string(source_id) + "/cover/" + std::to_string(stamp) + "-" + std::to_string(sequence_.fetch_add(1)) + "." + extension;
-    request.data = std::move(response->body);
     request.content_type = std::move(response->content_type);
-    auto saved = files_->saveSongResourceBlob(std::move(request));
+    auto session = files_->beginSongResourceBlobWrite(std::move(request));
+    std::string error;
+    if (!session || !session->write(std::string_view(response->body.data(), response->body.size()), error)) {
+        return failure("persistence", "cover_save_failed", "metadata cover file could not be staged");
+    }
+    auto saved = session->commit();
     if (!saved.ok) {
         return failure("persistence", "cover_save_failed", "metadata cover file could not be committed");
+    }
+    {
+        std::lock_guard<std::mutex> lock(sessions_mutex_);
+        sessions_.emplace(saved.local_path, std::move(session));
     }
     application::model::MetadataResourceFile result;
     result.local_path = std::move(saved.local_path);
@@ -91,7 +100,31 @@ application::model::MetadataResourceFile MetadataCoverStore::save(std::string_vi
 
 bool MetadataCoverStore::discard(std::string_view local_path)
 {
+    if (auto session = takeSession(local_path)) {
+        session->abort();
+        return !files_->exists(local_path);
+    }
     return files_ && !local_path.empty() && files_->remove(local_path);
+}
+
+std::unique_ptr<application::ports::SongResourceBlobWriteSession> MetadataCoverStore::takeSession(std::string_view local_path)
+{
+    std::lock_guard<std::mutex> lock(sessions_mutex_);
+    const auto found = sessions_.find(std::string(local_path));
+    if (found == sessions_.end()) return nullptr;
+    auto session = std::move(found->second);
+    sessions_.erase(found);
+    return session;
+}
+
+void MetadataCoverStore::accept(std::string_view local_path)
+{
+    if (auto session = takeSession(local_path)) session->accept();
+}
+
+void MetadataCoverStore::defer(std::string_view local_path)
+{
+    if (auto session = takeSession(local_path)) session->defer();
 }
 
 } // namespace orchestrator::modules::crawler::infrastructure::storage::filesystem

@@ -491,6 +491,14 @@ public:
         diagnostics_(std::move(diagnostics))
     {}
 
+    // 资源批次不使用普通目标队列，取消标志从其持久化批次读取。
+    bool isCancellationRequested() override
+    {
+        if (!repository_ || query_.batch_id.empty()) return false;
+        const auto batch = repository_->findBatch(query_.batch_id);
+        return batch && batch->cancel_requested;
+    }
+
     // 写入 Running 批次主记录。
     void begin()
     {
@@ -566,7 +574,7 @@ public:
         const bool failed = !item.ok && !item.skipped;
         const ItemSlot slot = ensureItemSlot(item);
         const std::uint64_t now = nowSeconds();
-        application::model::CrawlBatchItemRecord record = makeItemRecord(item, slot, failed ? "Failed" : "Completed", now);
+        application::model::CrawlBatchItemRecord record = makeItemRecord(item, slot, item.result_code == "cancelled" ? "Cancelled" : (failed ? "Failed" : "Completed"), now);
         record.finished_at = now;
         record.last_error = failed ? item.message : "";
         if (repository_) {
@@ -646,7 +654,8 @@ public:
         const std::uint64_t finished = nowSeconds();
         application::model::CrawlBatchRecord batch;
         batch.batch_id = batch_id;
-        batch.state = failure_count == 0 ? "Completed" : "Failed";
+        batch.cancel_requested = isCancellationRequested();
+        batch.state = batch.cancel_requested ? "Cancelled" : (failure_count == 0 ? "Completed" : "Failed");
         batch.target_count = static_cast<int>(result.items.size());
         batch.processed_count = static_cast<int>(result.items.size());
         batch.success_count = success_count;
@@ -1986,7 +1995,15 @@ std::string CrawlerService::startBatchItemsAsync(
 
 bool CrawlerService::cancelBatch(const std::string &batch_id)
 {
-    return batch_task_manager_ ? batch_task_manager_->cancel(batch_id) : false;
+    if (batch_task_manager_ && batch_task_manager_->cancel(batch_id)) return true;
+    if (!batch_task_repository_) return false;
+    auto batch = batch_task_repository_->findBatch(batch_id);
+    if (!batch || batch->task_type != "resourceProcess" || (batch->state != "Running" && batch->state != "Pending")) return false;
+    batch->cancel_requested = true;
+    batch->state = "Cancelled";
+    batch->updated_at = nowSeconds();
+    batch->last_error = "Resource cancellation requested";
+    return batch_task_repository_->updateBatchProgress(*batch);
 }
 
 std::optional<application::model::BatchProgressSnapshot> CrawlerService::getBatchProgress(const std::string &batch_id)

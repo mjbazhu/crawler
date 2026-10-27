@@ -51,7 +51,8 @@ FROM (
     SELECT 2026062701, _utf8mb4'migu_resource_queue_query_indexes' COLLATE utf8mb4_unicode_ci, _utf8mb4'6cb2b369c0880891cb54a8a8446d6b2d' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102501, _utf8mb4'normalize_music_table_ownership' COLLATE utf8mb4_unicode_ci, _utf8mb4'7852e56e1bffd18dbd6785882018cf39' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102502, _utf8mb4'optimize_normalized_catalog_queries' COLLATE utf8mb4_unicode_ci, _utf8mb4'55b4ebb3fd1a1787ed75a0e4ec8e912b' COLLATE utf8mb4_unicode_ci UNION ALL
-    SELECT 2026102601, _utf8mb4'source_identity_and_album_count_semantics' COLLATE utf8mb4_unicode_ci, _utf8mb4'247abb66a7e3c100b1c6c56ed0d9b5c4' COLLATE utf8mb4_unicode_ci
+    SELECT 2026102601, _utf8mb4'source_identity_and_album_count_semantics' COLLATE utf8mb4_unicode_ci, _utf8mb4'247abb66a7e3c100b1c6c56ed0d9b5c4' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT 2026102602, _utf8mb4'resource_claim_generation' COLLATE utf8mb4_unicode_ci, _utf8mb4'b633fca210d1b102062ef69f292f9c66' COLLATE utf8mb4_unicode_ci
 ) expected
 LEFT JOIN schema_migrations m ON m.version = expected.version
 UNION ALL
@@ -85,7 +86,8 @@ FROM (
     SELECT 2026062701, _utf8mb4'6cb2b369c0880891cb54a8a8446d6b2d' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102501, _utf8mb4'7852e56e1bffd18dbd6785882018cf39' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102502, _utf8mb4'55b4ebb3fd1a1787ed75a0e4ec8e912b' COLLATE utf8mb4_unicode_ci UNION ALL
-    SELECT 2026102601, _utf8mb4'247abb66a7e3c100b1c6c56ed0d9b5c4' COLLATE utf8mb4_unicode_ci
+    SELECT 2026102601, _utf8mb4'247abb66a7e3c100b1c6c56ed0d9b5c4' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT 2026102602, _utf8mb4'b633fca210d1b102062ef69f292f9c66' COLLATE utf8mb4_unicode_ci
 ) expected
 LEFT JOIN schema_migrations m ON m.version = expected.version
 UNION ALL
@@ -149,6 +151,7 @@ FROM (
     SELECT _utf8mb4'song_resources' COLLATE utf8mb4_unicode_ci, _utf8mb4'resource_kind' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT _utf8mb4'song_resources' COLLATE utf8mb4_unicode_ci, _utf8mb4'format_type' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT _utf8mb4'song_resources' COLLATE utf8mb4_unicode_ci, _utf8mb4'error_category' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT _utf8mb4'song_resources' COLLATE utf8mb4_unicode_ci, _utf8mb4'claim_generation' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT _utf8mb4'song_resources' COLLATE utf8mb4_unicode_ci, _utf8mb4'last_batch_id' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT _utf8mb4'song_resources' COLLATE utf8mb4_unicode_ci, _utf8mb4'cloud_backend' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT _utf8mb4'song_resources' COLLATE utf8mb4_unicode_ci, _utf8mb4'cloud_path' COLLATE utf8mb4_unicode_ci UNION ALL

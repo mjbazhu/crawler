@@ -1,5 +1,7 @@
 #pragma once
 
+#include "crawler/infrastructure/http/client/HttpContentDecoder.h"
+
 #include "crawler/infrastructure/http/client/AsioHttpClient.h"
 #include "crawler/infrastructure/http/client/AsioHttpConnectionHelpers.h"
 #include "crawler/infrastructure/http/client/AsioHttpRequestBuilder.h"
@@ -464,13 +466,12 @@ private:
         content_length_ = headers->content_length;
         chunked_ = headers->chunked;
 
-        const std::string content_encoding = streamingToLower(headers->content_encoding);
-        if (!content_encoding.empty() && content_encoding != "identity") {
-            fail("unsupported_content_encoding", "[AsioHttpClient] Unsupported content encoding: " + content_encoding);
-            return false;
-        }
         if (result_.status_code < 200 || result_.status_code >= 300) {
             completeOk();
+            return false;
+        }
+        if (!decoder_.configure(headers->content_encoding, options_.max_response_bytes)) {
+            fail(decoder_.errorCode(), "[AsioHttpClient] Response content encoding rejected");
             return false;
         }
         if (content_length_ && *content_length_ > options_.max_response_bytes) {
@@ -516,18 +517,18 @@ private:
 
         std::size_t deliver_size = data.size();
         if (content_length_) {
-            if (result_.bytes_received >= *content_length_) {
+            if (decoder_.wireBytes() >= *content_length_) {
                 completeOk();
                 return false;
             }
-            const std::uint64_t remaining = *content_length_ - result_.bytes_received;
+            const std::uint64_t remaining = *content_length_ - decoder_.wireBytes();
             deliver_size = static_cast<std::size_t>((std::min<std::uint64_t>)(remaining, data.size()));
         }
 
         if (!deliverChunk(data.substr(0, deliver_size))) {
             return false;
         }
-        if (content_length_ && result_.bytes_received >= *content_length_) {
+        if (content_length_ && decoder_.wireBytes() >= *content_length_) {
             completeOk();
             return false;
         }
@@ -594,15 +595,16 @@ private:
         if (chunk.empty()) {
             return true;
         }
-        if (result_.bytes_received + chunk.size() > options_.max_response_bytes) {
-            fail("body_too_large", "[AsioHttpClient] Response body is too large");
+        std::string decoded;
+        if (!decoder_.decode(chunk, decoded)) {
+            fail(decoder_.errorCode(), "[AsioHttpClient] Response content decoding failed");
             return false;
         }
-        if (callbacks_.on_chunk && !callbacks_.on_chunk(chunk)) {
+        if (!decoded.empty() && callbacks_.on_chunk && !callbacks_.on_chunk(decoded)) {
             fail("stream_consumer_failed", "[AsioHttpClient] Stream chunk rejected by consumer");
             return false;
         }
-        result_.bytes_received += static_cast<std::uint64_t>(chunk.size());
+        result_.bytes_received += static_cast<std::uint64_t>(decoded.size());
         return true;
     }
 
@@ -612,7 +614,7 @@ private:
             fail("network_failed", "[AsioHttpClient] Chunked response ended before final chunk");
             return;
         }
-        if (content_length_ && result_.bytes_received != *content_length_) {
+        if (content_length_ && decoder_.wireBytes() != *content_length_) {
             fail("network_failed", "[AsioHttpClient] Response ended before Content-Length was satisfied");
             return;
         }
@@ -632,6 +634,10 @@ private:
 
     void completeOk()
     {
+        if (!decoder_.finish()) {
+            fail(decoder_.errorCode(), "[AsioHttpClient] Response content is incomplete or invalid");
+            return;
+        }
         result_.ok = true;
         result_.result_code = "ok";
         complete();
@@ -667,6 +673,7 @@ private:
     std::string chunk_buffer_;                                // chunked 编码暂存区
     std::optional<std::uint64_t> content_length_;             // Content-Length
     std::uint64_t chunk_remaining_ = 0;                       // 当前 chunk 剩余字节
+    HttpContentDecoder decoder_;                              // 当前请求独占的限长内容解码器
     HttpStreamResult result_;                                 // 当前流式请求结果
     bool headers_parsed_ = false;                             // 是否已解析响应头
     bool chunked_ = false;                                    // 是否使用 chunked 解码

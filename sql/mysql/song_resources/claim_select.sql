@@ -37,7 +37,8 @@ SELECT
             LIMIT 1
         ),
         ''
-    )
+    ) ,
+    sr.claim_generation
 FROM song_resources sr
 JOIN song_source_refs r ON r.id = sr.song_source_ref_id
 JOIN songs s ON s.id = r.song_db_id

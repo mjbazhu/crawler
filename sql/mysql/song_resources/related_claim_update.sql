@@ -1,5 +1,6 @@
 INSERT INTO song_resources (
     song_source_ref_id,
+    claim_generation,
     resource_kind,
     format_type,
     local_path,
@@ -18,6 +19,7 @@ INSERT INTO song_resources (
 )
 SELECT
     ?,
+    1,
     CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci,
     '',
     NULL,
@@ -35,6 +37,7 @@ SELECT
     UNIX_TIMESTAMP()
 WHERE EXISTS (SELECT 1 FROM song_source_refs WHERE id = ?)
 ON DUPLICATE KEY UPDATE
+    claim_generation = IF(status IN (0, 3), claim_generation + 1, claim_generation),
     last_error = IF(status IN (0, 3), NULL, last_error),
     error_category = IF(status IN (0, 3), NULL, error_category),
     result_code = IF(status IN (0, 3), NULL, result_code),

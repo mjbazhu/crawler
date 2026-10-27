@@ -1,5 +1,7 @@
 #include "crawler/infrastructure/http/client/AsioHttpResponseParser.h"
 
+#include "crawler/infrastructure/http/client/HttpContentDecoder.h"
+
 #include <algorithm>
 #include <charconv>
 #include <cctype>
@@ -174,11 +176,6 @@ std::optional<HttpResponse> parseHttpResponse(const std::string &raw_response, s
         }
     }
 
-    if (auto encoding = headers.find("content-encoding"); encoding != headers.end() && !encoding->second.empty() && toLower(encoding->second) != "identity") {
-        std::cerr << "[AsioHttpClient] Unsupported content encoding: " << encoding->second << std::endl;
-        return std::nullopt;
-    }
-
     std::vector<char> body;
     if (auto transfer_encoding = headers.find("transfer-encoding"); transfer_encoding != headers.end() && containsCaseInsensitive(transfer_encoding->second, "chunked")) {
         auto decoded = decodeChunkedBody(body_part, max_response_bytes);
@@ -192,6 +189,11 @@ std::optional<HttpResponse> parseHttpResponse(const std::string &raw_response, s
         }
         body.assign(body_part.begin(), body_part.end());
     }
+
+    HttpContentDecoder decoder;
+    std::string decoded;
+    if (!decoder.configure(headers["content-encoding"], max_response_bytes) || !decoder.decode(std::string_view(body.data(), body.size()), decoded) || !decoder.finish()) return std::nullopt;
+    body.assign(decoded.begin(), decoded.end());
 
     HttpResponse response;
     response.status_code = status_code;

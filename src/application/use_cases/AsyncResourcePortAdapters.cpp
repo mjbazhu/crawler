@@ -9,7 +9,7 @@
 namespace orchestrator::modules::crawler::application::use_cases {
 
 BlockingAsyncSongResourceQueue::BlockingAsyncSongResourceQueue(std::shared_ptr<application::ports::SongResourceQueue> queue, std::shared_ptr<application::ports::AsyncRuntime> runtime) : queue_(std::move(queue)),
-                                                                                                                                               runtime_(std::move(runtime))
+                                                                                                                                                                                          runtime_(std::move(runtime))
 {}
 
 application::async::Task<std::vector<application::model::SongResourceQueueTarget>> BlockingAsyncSongResourceQueue::claimPending(application::model::SongResourceClaimQuery query)
@@ -42,6 +42,13 @@ application::async::Task<bool> BlockingAsyncSongResourceQueue::markSucceeded(app
     });
 }
 
+application::async::Task<application::result::ServiceResult<bool>> BlockingAsyncSongResourceQueue::confirmSucceeded(application::model::SongResourceSuccessUpdate update)
+{
+    co_return co_await runtime_->postBlocking<application::result::ServiceResult<bool>>([queue = queue_, update = std::move(update)]() mutable {
+        return queue->confirmSucceeded(std::move(update));
+    });
+}
+
 application::async::Task<bool> BlockingAsyncSongResourceQueue::markFailed(application::model::SongResourceFailureUpdate update)
 {
     if (!queue_ || !runtime_) {
@@ -63,7 +70,7 @@ application::async::Task<bool> BlockingAsyncSongResourceQueue::markSkipped(appli
 }
 
 BlockingAsyncSongResourceProvider::BlockingAsyncSongResourceProvider(std::shared_ptr<application::ports::SongResourceProvider> provider, std::shared_ptr<application::ports::AsyncRuntime> runtime) : provider_(std::move(provider)),
-                                                                                                                                                                                                 runtime_(std::move(runtime))
+                                                                                                                                                                                                      runtime_(std::move(runtime))
 {}
 
 application::async::Task<std::optional<BlockingAsyncSongResourceProvider::Response>> BlockingAsyncSongResourceProvider::fetchSongResource(application::model::SongResourceFetchRequest request)
@@ -77,7 +84,7 @@ application::async::Task<std::optional<BlockingAsyncSongResourceProvider::Respon
 }
 
 BlockingAsyncSongResourceContentFetcher::BlockingAsyncSongResourceContentFetcher(std::shared_ptr<application::ports::SongResourceContentFetcher> fetcher, std::shared_ptr<application::ports::AsyncRuntime> runtime) : fetcher_(std::move(fetcher)),
-                                                                                                                                                                                                             runtime_(std::move(runtime))
+                                                                                                                                                                                                                       runtime_(std::move(runtime))
 {}
 
 application::async::Task<application::model::SongResourceContentStreamResult> BlockingAsyncSongResourceContentFetcher::streamSongResourceContent(
@@ -141,7 +148,7 @@ public:
     };
 
     Session(std::unique_ptr<application::ports::SongResourceBlobWriteSession> session, std::shared_ptr<application::ports::AsyncRuntime> runtime) : shared_(std::make_shared<SharedSession>(std::move(session))),
-                                                                                                                                                     runtime_(std::move(runtime))
+                                                                                                                                                    runtime_(std::move(runtime))
     {}
 
     application::async::Task<application::ports::AsyncBlobWriteResult> write(std::span<const char> chunk) override
@@ -184,6 +191,23 @@ public:
         });
     }
 
+    // 解除同步文件会话的补偿责任，数据库确认后才调用。
+    application::async::Task<void> accept() override
+    {
+        co_await runtime_->postBlocking<void>([shared = shared_]() {
+            std::lock_guard<std::mutex> lock(shared->mutex_);
+            if (shared->session_) shared->session_->accept();
+        });
+    }
+
+    // 保留无法确认提交的对象，等待重启核对。
+    application::async::Task<void> defer() override
+    {
+        std::lock_guard<std::mutex> lock(shared_->mutex_);
+        if (shared_->session_) shared_->session_->defer();
+        co_return;
+    }
+
     application::async::Task<void> abort() override
     {
         if (!shared_ || !runtime_) {
@@ -203,7 +227,7 @@ private:
 };
 
 BlockingAsyncSongResourceBlobStore::BlockingAsyncSongResourceBlobStore(std::shared_ptr<application::ports::SongResourceBlobStore> store, std::shared_ptr<application::ports::AsyncRuntime> runtime) : store_(std::move(store)),
-                                                                                                                                   runtime_(std::move(runtime))
+                                                                                                                                                                                                      runtime_(std::move(runtime))
 {}
 
 application::async::Task<std::unique_ptr<application::ports::AsyncBlobWriteSession>> BlockingAsyncSongResourceBlobStore::open(application::model::SongResourceBlobStreamSaveRequest request)
@@ -221,7 +245,7 @@ application::async::Task<std::unique_ptr<application::ports::AsyncBlobWriteSessi
 }
 
 BlockingAsyncSongResourceCloudUploader::BlockingAsyncSongResourceCloudUploader(std::shared_ptr<application::ports::SongResourceCloudUploader> uploader, std::shared_ptr<application::ports::AsyncRuntime> runtime) : uploader_(std::move(uploader)),
-                                                                                                                                                                                                         runtime_(std::move(runtime))
+                                                                                                                                                                                                                     runtime_(std::move(runtime))
 {}
 
 application::async::Task<application::model::SongResourceCloudUploadResult> BlockingAsyncSongResourceCloudUploader::upload(application::model::SongResourceCloudUploadRequest request)
@@ -239,7 +263,7 @@ application::async::Task<application::model::SongResourceCloudUploadResult> Bloc
 }
 
 BlockingAsyncSongResourceBatchCloudUploader::BlockingAsyncSongResourceBatchCloudUploader(std::shared_ptr<application::ports::SongResourceBatchCloudUploader> uploader, std::shared_ptr<application::ports::AsyncRuntime> runtime) : uploader_(std::move(uploader)),
-                                                                                                                                                                                                                         runtime_(std::move(runtime))
+                                                                                                                                                                                                                                    runtime_(std::move(runtime))
 {}
 
 application::async::Task<application::model::SongResourceBatchCloudUploadResult> BlockingAsyncSongResourceBatchCloudUploader::uploadBatch(application::model::SongResourceBatchCloudUploadRequest request)

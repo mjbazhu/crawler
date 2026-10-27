@@ -9,3 +9,5 @@ SET status = 3,
     last_processed_at = UNIX_TIMESTAMP(),
     updated_at = UNIX_TIMESTAMP()
 WHERE id = ?
+  AND status = 1
+  AND claim_generation = ?
