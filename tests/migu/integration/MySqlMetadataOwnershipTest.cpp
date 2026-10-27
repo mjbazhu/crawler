@@ -1,10 +1,17 @@
 #include "crawler/application/use_cases/MetadataBatchBuilder.h"
 #include "crawler/application/use_cases/MetadataPersistenceService.h"
 #include "crawler/infrastructure/music/persistence/mysql/MySqlMetadataBatchWriter.h"
+#include "crawler/infrastructure/music/persistence/mysql/MySqlMusicCatalogQueryRepository.h"
 #include "crawler/infrastructure/music/persistence/mysql/MySqlSongResourceQueue.h"
-#include "crawler/infrastructure/storage/filesystem/MetadataCoverStore.h"
+#include "crawler/infrastructure/storage/filesystem/FileStorage.h"
 #include "migu/support/MySqlTestSupport.h"
+#include "migu/support/MetadataTestDiagnostics.h"
 #include "mocks/MockHttpClient.h"
+#include "mocks/MockMusicProvider.h"
+#include "crawler/application/use_cases/SongResourceDownloadWorkflow.h"
+#include "crawler/infrastructure/music/migu/parser/MiguSongResourceParser.h"
+#include "crawler/infrastructure/music/migu/parser/MiguParser.h"
+#include "crawler/infrastructure/http/client/HttpSongResourceContentFetcher.h"
 
 #include <filesystem>
 #include <iostream>
@@ -45,8 +52,10 @@ boost::asio::awaitable<bool> repeatMigration(const std::shared_ptr<mysql::MySqlC
 {
     auto connection = co_await pool->coAcquire();
     boost::mysql::results result;
-    for (const auto &statement : sql::SqlFileLoader::splitStatements(sql::SqlFileLoader::loadOrThrow("sql/mysql/migrations/V2026102601__source_identity_and_album_count_semantics.sql"))) {
-        co_await connection->async_execute(statement, result, boost::asio::use_awaitable);
+    for (const auto *path : {"sql/mysql/migrations/V2026102601__source_identity_and_album_count_semantics.sql", "sql/mysql/migrations/V2026102602__resource_claim_generation.sql", "sql/mysql/migrations/V2026102703__metadata_cover_remote_urls.sql"}) {
+        for (const auto &statement : sql::SqlFileLoader::splitStatements(sql::SqlFileLoader::loadOrThrow(path))) {
+            co_await connection->async_execute(statement, result, boost::asio::use_awaitable);
+        }
     }
     co_return true;
 }
@@ -139,8 +148,27 @@ int main(int argc, char *argv[])
         client->mock_responses.emplace("https://example.test/cover.png", image);
         const auto directory = std::filesystem::temp_directory_path() / config.database;
         auto files = std::make_shared<storage::FileStorage>(directory.string());
-        auto covers = std::make_shared<storage::MetadataCoverStore>(client, files, std::vector<std::string> {});
-        cases::MetadataPersistenceService service(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, {writer, covers, {}});
+        auto resource_queue = std::make_shared<mysql::MySqlSongResourceQueue>(pool);
+        auto content_fetcher = std::make_shared<http::HttpSongResourceContentFetcher>(client);
+        auto provider = std::make_shared<crawler::tests::MockMusicProvider>();
+        http::HttpResponse audio;
+        audio.status_code = 200;
+        audio.content_type = "audio/flac";
+        audio.body = {'f', 'L', 'a', 'C', 'f', 'i', 'x', 't', 'u', 'r', 'e'};
+        client->mock_responses.emplace("https://example.test/audio.flac", audio);
+        http::HttpResponse text;
+        text.status_code = 200;
+        text.content_type = "text/plain";
+        text.body = {'f', 'i', 'x', 't', 'u', 'r', 'e'};
+        for (const auto *kind : {"lyric", "mrc", "trc"}) client->mock_responses.emplace(std::string("https://example.test/") + kind, text);
+        model::ProviderResponse listen;
+        listen.status_code = 200;
+        const std::string payload = R"({"code":"000000","data":{"url":"https://example.test/audio.flac","coverUrl":"https://example.test/cover.png","lrcUrl":"https://example.test/lyric","mrcUrl":"https://example.test/mrc","trcUrl":"https://example.test/trc"}})";
+        listen.body.assign(payload.begin(), payload.end());
+        provider->mock_song_resource_response = listen;
+        auto resource_parser = std::make_shared<crawler::infrastructure::music::migu::parser::MiguSongResourceParser>();
+        auto resources = std::make_shared<cases::SongResourceDownloadWorkflow>(resource_queue, provider, resource_parser, content_fetcher, files);
+        cases::MetadataPersistenceService service(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, {writer, std::make_shared<support::MetadataTestDiagnostics>()});
         model::SongSourceMetadata song;
         song.source = "migu";
         song.source_song_id = "ownership-song";
@@ -151,18 +179,19 @@ int main(int argc, char *argv[])
         song.source_album_name = "首次专辑";
         song.source_album_pinyin = "shoucizhuanji";
         song.cover_url = "https://example.test/cover.png";
+        song.copyright_id = "fixture-copyright";
+        song.lyric_url = "https://example.test/lyric";
+        song.mrc_url = "https://example.test/mrc";
+        song.trc_url = "https://example.test/trc";
         song.artist_refs = {{"ownership-singer", "首次歌手", "shoucigeshou", "artist", 1, true, true}};
         song.audio_formats = {{"SQ", "E", "011003", "011002", 40561011, 39768162}};
         require(service.saveSongSources({song}, 1), "first song ingestion failed");
         require(scalar(pool, "SELECT COUNT(*) FROM album_song_refs r JOIN album_source_refs a ON a.id=r.album_source_ref_id JOIN song_source_refs s ON s.id=r.song_source_ref_id WHERE a.source_album_id='ownership-album' AND s.source_content_id='ownership-content'") == 1, "first write lacks album relationship");
         require(scalar(pool, "SELECT COUNT(*) FROM song_artist_refs r JOIN singer_source_refs s ON s.id=r.singer_source_ref_id WHERE s.source_singer_id='ownership-singer' AND s.source_name_pinyin='shoucigeshou' AND r.is_seed=1") == 1, "first write lacks singer or pinyin");
-        auto resource = execute(pool, "SELECT local_path,size_bytes,checksum FROM album_resources WHERE status=2");
-        require(resource.rows().size() == 1, "album cover was not saved");
-        const auto local_path = mysql::MySqlValueReader::stringAt(resource.rows().front(), 0);
-        require(files->exists(local_path), "completed cover file is missing");
-        require(mysql::MySqlValueReader::uint64At(resource.rows().front(), 1) == bytes.size(), "cover size differs from complete file");
-        require(!mysql::MySqlValueReader::stringAt(resource.rows().front(), 2).empty(), "cover checksum is empty");
-        mysql::MySqlSongResourceQueue queue(pool);
+        require(client->last_request_url.empty(), "metadata ingestion unexpectedly downloaded a binary resource");
+        require(scalar(pool, "SELECT COUNT(*) FROM album_resources r JOIN album_source_refs a ON a.id=r.album_source_ref_id WHERE a.source_album_id='ownership-album' AND r.status=0 AND r.remote_url='https://example.test/cover.png' AND r.local_path IS NULL") == 1, "album URL was not queued without downloading");
+        require(scalar(pool, "SELECT COUNT(*) FROM song_resources sr JOIN song_source_refs r ON r.id=sr.song_source_ref_id WHERE r.source_content_id='ownership-content' AND sr.resource_kind IN('cover','lyric','mrc','trc') AND sr.status=0") == 4, "song resources were downloaded during metadata ingestion or task inputs were removed");
+        auto &queue = *resource_queue;
         model::SongResourceClaimQuery claim;
         claim.source_content_id = "ownership-content";
         claim.resource_kind = "audio";
@@ -172,25 +201,89 @@ int main(int argc, char *argv[])
         require(pending.size() == 1 && pending[0].remote_url.empty(), "queue depended on a persisted remote URL");
         model::SongResourceFailureUpdate failed;
         failed.resource_id = pending[0].resource_id;
+        failed.claim_generation = pending[0].claim_generation;
         failed.error_category = "network";
         failed.result_code = "http_status_404";
         failed.message = "fixture failure";
+        // 元数据重采不能解除 worker 的认领或重置错误/永久跳过。
+        require(service.saveSongSources({song}, 1), "recollect during resource run failed");
+        require(scalar(pool, "SELECT status FROM song_resources WHERE id=" + std::to_string(failed.resource_id)) == 1, "metadata recollection reset a running resource");
         require(queue.markFailed(failed), "URL-free failure update failed");
+        auto reclaimed = queue.claimPending(claim);
+        require(reclaimed.size() == 1 && reclaimed[0].claim_generation > failed.claim_generation, "reclaim did not advance generation");
+        require(!queue.markFailed(failed), "expired worker overwrote a new claim");
+        model::SongResourceSuccessUpdate expired;
+        expired.resource_id = failed.resource_id;
+        expired.claim_generation = failed.claim_generation;
+        expired.local_path = "expired-worker.flac";
+        require(!queue.markSucceeded(expired), "expired success overwrote a new claim");
+        model::SongResourceSkipUpdate expired_skip;
+        expired_skip.resource_id = failed.resource_id;
+        expired_skip.song_source_ref_id = pending[0].song_source_ref_id;
+        expired_skip.claim_generation = failed.claim_generation;
+        require(!queue.markSkipped(expired_skip), "expired skip changed a new claim");
+        failed.claim_generation = reclaimed[0].claim_generation;
+        require(queue.markFailed(failed), "current owner could not finish a failure");
+
+        auto related_song = song;
+        related_song.source_content_id = "ownership-related-content";
+        related_song.source_song_id = "ownership-related-song";
+        related_song.title = "关联任务 fixture";
+        related_song.cover_url.clear();
+        related_song.lyric_url.clear();
+        related_song.mrc_url.clear();
+        related_song.trc_url.clear();
+        require(service.saveSongSources({related_song}, 1), "related owner fixture failed");
         model::SongResourceRelatedClaimRequest related;
-        related.song_source_ref_id = pending[0].song_source_ref_id;
+        related.song_source_ref_id = scalar(pool, "SELECT id FROM song_source_refs WHERE source_content_id='ownership-related-content'");
         related.resource_kind = "cover";
         related.remote_url = "https://example.test/fresh-cover";
         auto related_target = queue.claimRelated(related);
         require(related_target && related_target->remote_url == related.remote_url, "related claim lost the current call URL");
         model::SongResourceSuccessUpdate succeeded;
         succeeded.resource_id = related_target->resource_id;
-        succeeded.local_path = "migu/songs/ownership-content/cover.png";
+        succeeded.claim_generation = related_target->claim_generation;
+        succeeded.local_path = "migu/songs/ownership-related-content/cover/manual.png";
         succeeded.size_bytes = bytes.size();
         require(files->save(succeeded.local_path, image.body), "song cover fixture could not be saved");
-        succeeded.checksum = mysql::MySqlValueReader::stringAt(resource.rows().front(), 2);
+        succeeded.checksum = "fixture-checksum";
         require(queue.markSucceeded(succeeded), "URL-free success update failed");
+        claim.options.auto_refresh_pacmtoken = false;
+        const auto audio_result = resources->processPending(claim);
+        require(audio_result.succeeded_count == 1 && files->exists(audio_result.items.back().local_path), "audio did not complete the provider-to-database/file pipeline");
+        require(scalar(pool, "SELECT COUNT(*) FROM song_resources sr JOIN song_source_refs r ON r.id=sr.song_source_ref_id WHERE r.source_content_id='ownership-content' AND sr.resource_kind<>'audio' AND sr.claim_generation=1 AND sr.status=2") == 4, "audio redownloaded previously saved related resources");
+        song.audio_formats.push_back({"HQ", "2", "020010", "020010", 100, 100});
+        require(service.saveSongSources({song}, 1), "new quality metadata failed");
+        claim.format_type = "HQ";
+        require(resources->processPending(claim).succeeded_count == 1, "second audio quality failed");
+        require(scalar(pool, "SELECT COUNT(*) FROM song_resources sr JOIN song_source_refs r ON r.id=sr.song_source_ref_id WHERE r.source_content_id='ownership-content' AND sr.resource_kind<>'audio' AND sr.claim_generation=1 AND sr.status=2") == 4, "second quality redownloaded related resources");
+        require(resources->processPending(claim).claimed_count == 0, "successful resource was claimed again");
+        // 多音质并发限制共享整首歌的永久跳过语义，第二个 worker 不能误报失败。
+        auto skipped_song = related_song;
+        skipped_song.source_content_id = "ownership-skip-content";
+        skipped_song.source_song_id = "ownership-skip-song";
+        skipped_song.audio_formats.push_back({"HQ", "2", "020010", "020010", 100, 100});
+        require(service.saveSongSources({skipped_song}, 1), "skip owner fixture failed");
+        model::SongResourceClaimQuery skip_claim;
+        skip_claim.source_content_id = skipped_song.source_content_id;
+        skip_claim.resource_kind = "audio";
+        skip_claim.limit = 2;
+        const auto skip_targets = queue.claimPending(skip_claim);
+        require(!skip_targets.empty(), "skip resources not claimable");
+        for (const auto &target : skip_targets) {
+            model::SongResourceSkipUpdate update;
+            update.resource_id = target.resource_id;
+            update.song_source_ref_id = target.song_source_ref_id;
+            update.claim_generation = target.claim_generation;
+            update.result_code = "440000";
+            update.error_category = "copyright";
+            require(queue.markSkipped(update), "same permanent skip was rejected by a concurrent worker");
+        }
+        require(service.saveSongSources({skipped_song}, 1), "skip recollection failed");
+        require(queue.claimPending(skip_claim).empty(), "metadata refresh reset a permanent skip");
+
         require(service.saveSongSources({song}, 1), "idempotent ingestion failed");
-        require(!files->exists(local_path), "successful recollection left the replaced album cover");
+        require(scalar(pool, "SELECT COUNT(*) FROM album_resources r JOIN album_source_refs a ON a.id=r.album_source_ref_id WHERE a.source_album_id='ownership-album' AND r.remote_url='https://example.test/cover.png' AND r.status=0 AND r.local_path IS NULL") == 1, "metadata recollection unexpectedly downloaded an album cover");
         require(scalar(pool, "SELECT COUNT(*) FROM song_source_refs WHERE source_content_id='ownership-content'") == 1, "song ingestion duplicated source");
         require(scalar(pool, "SELECT COUNT(*) FROM album_source_refs WHERE source_album_id='ownership-album'") == 1, "song ingestion duplicated album");
         model::AlbumSourceMetadata album;
@@ -200,7 +293,24 @@ int main(int argc, char *argv[])
         album.title = "名称修正";
         album.artist_refs = song.artist_refs;
         album.detail_sync_status = 2;
+        album.source_title_pinyin = "xiangxizhuanji";
+        album.source_resource_type = "5";
+        album.source_album_kind = 2;
         require(service.saveAlbumDetails({album}, {song}), "album detail ingestion failed");
+        mysql::MySqlMusicCatalogQueryRepository catalog(pool);
+        model::MiguBackfillTargetQuery reset;
+        reset.source_ids = {album.source_album_id};
+        reset.statuses = {2};
+        require(catalog.resetAlbumDetails(reset) == 1, "detail task reset failed");
+        require(scalar(pool, "SELECT detail_synced_at FROM album_source_refs WHERE source_album_id='ownership-album'") > 0, "task reset erased previous successful metadata provenance");
+        auto sparse_album = album;
+        sparse_album.detail_sync_status = 0;
+        sparse_album.source_title_pinyin = "liebiaopinyin";
+        sparse_album.source_resource_type = "2003";
+        sparse_album.source_album_kind = 1;
+        require(service.saveAlbumSources({sparse_album}, 1) && service.saveSongSources({song}, 1), "sparse recollection failed");
+        require(scalar(pool, "SELECT COUNT(*) FROM album_source_refs WHERE source_album_id='ownership-album' AND source_title_pinyin='xiangxizhuanji' AND source_resource_type='5' AND source_album_kind=2") == 1, "sparse recollection downgraded authoritative album metadata");
+
         require(scalar(pool, "SELECT COUNT(*) FROM albums WHERE identity_hash=SHA2('migu|ownership-album',256)") == 1, "detail altered stable identity");
         require(scalar(pool, "SELECT COUNT(*) FROM album_artist_refs r JOIN album_source_refs a ON a.id=r.album_source_ref_id WHERE a.source_album_id='ownership-album'") == 1, "album artists missing");
         model::SingerSourceMetadata singer;
@@ -212,7 +322,7 @@ int main(int argc, char *argv[])
         auto singer2 = singer;
         singer2.source_index_tab = "b";
         require(service.saveSingerSources({singer, singer2}, 2), "singer ingestion failed");
-        require(scalar(pool, "SELECT COUNT(*) FROM singer_resources WHERE status=2") == 1, "singer cover missing");
+        require(scalar(pool, "SELECT COUNT(*) FROM singer_resources WHERE status=0 AND remote_url='https://example.test/cover.png' AND local_path IS NULL") == 1, "singer URL missing or downloaded inline");
         require(scalar(pool, "SELECT COUNT(*) FROM singer_index_memberships") == 2, "multiple index memberships were lost");
         auto broken = song;
         broken.source_content_id = "ownership-rollback";
@@ -243,10 +353,26 @@ int main(int argc, char *argv[])
             }
             require(rejected, "database accepted an empty song identity");
         }
-        require(scalar(pool, "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND ((table_name IN('song_source_refs','song_resources','album_resources','singer_resources') AND column_name IN('remote_url','cover_url','lyric_url','mrc_url','trc_url')) OR (table_name='song_source_refs' AND column_name LIKE 'source_album%') OR (table_name='album_song_refs' AND column_name IN('source','source_song_id','source_album_id','source_content_id')))") == 0, "removed columns remain");
+        require(scalar(pool, "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND ((table_name IN('song_source_refs','song_resources') AND column_name IN('remote_url','cover_url','lyric_url','mrc_url','trc_url')) OR (table_name='song_source_refs' AND column_name LIKE 'source_album%') OR (table_name='album_song_refs' AND column_name IN('source','source_song_id','source_album_id','source_content_id')))") == 0, "removed columns remain");
+        // 歌曲先入库再采集专辑目录时，数字身份、拼音、物料映射和两类关系必须汇合。
+        crawler::infrastructure::music::migu::parser::MiguParser metadata_parser;
+        const std::string digital_song_raw = R"({"data":{"contents":[{"contents":[{"songItem":{"contentId":"ownership-digital-song","songName":"数字身份歌曲","album":"数字身份专辑","albumPinyin":"shuzizhuanji","albumId":"ownership-material-id","dalbumId":"ownership-digital-id"}}]}]}})";
+        const auto digital_songs = metadata_parser.parseSongSources({digital_song_raw.begin(), digital_song_raw.end()});
+        require(digital_songs.size() == 1 && service.saveSongSources(digital_songs, 1), "digital song ingestion failed");
+        const std::string digital_album_raw = R"({"data":{"contents":[{"view":"ZJ-Album-Item","resId":"ownership-digital-id","resType":"1","txt":"数字身份专辑"}]}})";
+        auto digital_albums = metadata_parser.parseAlbumSources({digital_album_raw.begin(), digital_album_raw.end()});
+        require(digital_albums.size() == 1, "digital album list fixture did not parse");
+        digital_albums[0].source_artist_id = "ownership-singer";
+        digital_albums[0].source_artist_name = "首次歌手";
+        require(service.saveAlbumSources(digital_albums, 1) && service.saveSongSources(digital_songs, 1), "digital album recollection failed");
+        require(scalar(pool, "SELECT COUNT(*) FROM album_source_refs WHERE source_album_id IN('ownership-digital-id','ownership-material-id')") == 1, "digital album was duplicated by material identity");
+        require(scalar(pool, "SELECT COUNT(*) FROM album_source_refs WHERE source_album_id='ownership-digital-id' AND source_title_pinyin='shuzizhuanji' AND source_album_kind=2 AND source_resource_type='5'") == 1, "digital album fields did not merge into the canonical source");
+        require(scalar(pool, "SELECT COUNT(*) FROM migu_dalbum_details d JOIN album_source_refs a ON a.id=d.album_source_ref_id WHERE a.source_album_id='ownership-digital-id' AND d.source_material_id='ownership-material-id'") == 1, "digital album material mapping was lost");
+        require(scalar(pool, "SELECT COUNT(*) FROM album_song_refs r JOIN album_source_refs a ON a.id=r.album_source_ref_id JOIN song_source_refs s ON s.id=r.song_source_ref_id WHERE a.source_album_id='ownership-digital-id' AND s.source_content_id='ownership-digital-song'") == 1, "digital song relation did not use the canonical album");
+        require(scalar(pool, "SELECT COUNT(*) FROM album_artist_refs r JOIN album_source_refs a ON a.id=r.album_source_ref_id WHERE a.source_album_id='ownership-digital-id'") == 1, "digital album artist relation was lost");
         const auto prepared = support::runOnExecutor(pool->executor(), prepareRuntimeSql(pool), "prepare runtime SQL");
         pool->cancel();
-        std::cout << "PASS: ownership migration, restart, atomic ingest, local covers, idempotency, rollback; prepared " << prepared << " SQL templates\n";
+        std::cout << "PASS: ownership migration, restart, atomic ingest, stored cover URLs, explicit song downloads, idempotency, rollback; prepared " << prepared << " SQL templates\n";
         return 0;
     } catch (const std::exception &error) {
         std::cerr << "FAIL: " << error.what() << '\n';

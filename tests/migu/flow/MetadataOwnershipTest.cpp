@@ -1,20 +1,16 @@
 #include "crawler/application/use_cases/MetadataBatchBuilder.h"
 #include "crawler/application/use_cases/MetadataPersistenceService.h"
 #include "crawler/infrastructure/music/migu/parser/MiguParser.h"
-#include "crawler/infrastructure/storage/filesystem/MetadataCoverStore.h"
-#include "mocks/MockHttpClient.h"
 
-#include <chrono>
-#include <filesystem>
 #include <iostream>
+#include <optional>
+#include <vector>
 #include <stdexcept>
 #include <string>
 
 namespace crawler = orchestrator::modules::crawler;
 namespace model = crawler::application::model;
 namespace cases = crawler::application::use_cases;
-namespace storage = crawler::infrastructure::storage::filesystem;
-namespace http = crawler::infrastructure::http::client;
 
 // 断言不受构建配置影响。
 void require(bool value, const char *message)
@@ -25,15 +21,16 @@ void require(bool value, const char *message)
 // 顺序测试替身，记录事务输入并模拟数据库失败。
 class RecordingWriter final : public crawler::application::ports::MetadataBatchWriter {
 public:
-    model::MetadataWriteBatch last; // 最近一次事务输入
-    bool fail = false;              // 是否模拟整批回滚
+    model::MetadataWriteBatch last;                         // 最近一次事务输入
+    std::vector<model::PersistedSongSource> bound_identity; // 数据库已绑定的实际身份
+    bool fail = false;                                      // 是否模拟整批回滚
 
-    // 保留分离后的实体及本地封面结果供断言检查。
+    // 保留分离后的实体及图片地址供断言检查。
     crawler::application::result::ServiceResult<model::MetadataWriteResult> saveBatch(const model::MetadataWriteBatch &batch) override
     {
         last = batch;
         using Result = crawler::application::result::ServiceResult<model::MetadataWriteResult>;
-        return fail ? Result::failure(crawler::application::result::ServiceErrorType::InternalError, "fixture rollback") : Result::success({});
+        return fail ? Result::failure(crawler::application::result::ServiceErrorType::InternalError, "fixture rollback") : Result::success({{}, bound_identity});
     }
 };
 
@@ -66,43 +63,38 @@ int main()
         const auto list_songs = parser.parseSongSources({list.begin(), list.end()});
         require(list_songs.size() == 1 && list_songs[0].album_track_no == 0 && list_songs[0].album_song_order == 0, "list position became an album track");
 
-        auto client = std::make_shared<http::MockHttpClient>();
-        http::HttpResponse image;
-        image.status_code = 200;
-        image.content_type = "image/png";
-        const std::string bytes = "\x89PNG\r\n\x1a\nfixture-cover";
-        image.body.assign(bytes.begin(), bytes.end());
-        client->mock_responses.emplace("https://example.test/cover.png", image);
-        auto html = image;
-        html.body = {'<', 'h', 't', 'm', 'l', '>'};
-        client->mock_responses.emplace("https://example.test/error", html);
-        const auto directory = std::filesystem::temp_directory_path() / ("crawler_cover_ownership_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-        auto files = std::make_shared<storage::FileStorage>(directory.string());
-        auto covers = std::make_shared<storage::MetadataCoverStore>(client, files, std::vector<std::string> {});
         auto writer = std::make_shared<RecordingWriter>();
-        cases::MetadataPersistenceService service(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, {writer, covers, {}});
+        cases::MetadataPersistenceService service(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, {writer, {}});
         model::SingerSourceMetadata singer;
         singer.source = "migu";
         singer.source_singer_id = "artist";
         singer.name = "歌手";
-        singer.avatar_url = "https://example.test/cover.png";
+        singer.avatar_url = "https://example.test/singer.png";
         singer.source_index_tab = "a";
         auto second = singer;
         second.source_index_tab = "b";
-        require(service.saveSingerSources({singer, second}, 2), "cover ingestion failed");
+        require(service.saveSingerSources({singer, second}, 2), "singer metadata ingestion failed");
         require(writer->last.singers.size() == 1 && writer->last.memberships.size() == 2, "multi-tab singer was duplicated or membership lost");
-        auto saved = writer->last.singers[0].cover_resource.value();
-        require(saved.status == 2 && files->exists(saved.local_path) && saved.size_bytes == bytes.size() && !saved.checksum.empty(), "cover was marked complete without a committed file");
+        require(writer->last.singers.front().avatar_url == singer.avatar_url && !writer->last.singers.front().cover_resource, "singer URL was lost or turned into an inline download result");
+        model::AlbumSourceMetadata album;
+        album.source = "migu";
+        album.source_album_id = "album";
+        album.title = "元数据专辑";
+        album.cover_url = "https://example.test/album.png";
+        require(service.saveAlbumSources({album}, 0), "album metadata ingestion failed");
+        require(writer->last.albums.front().cover_url == album.cover_url && !writer->last.albums.front().cover_resource, "album URL was lost or turned into an inline download result");
+        auto song = songs.front();
+        song.cover_url = "https://example.test/song.png";
+        song.lyric_url = "https://example.test/song.lrc";
+        song.mrc_url = "https://example.test/song.mrc";
+        song.trc_url = "https://example.test/song.trc";
+        writer->bound_identity = {{77, "migu", song.source_song_id, song.source_content_id}};
+        require(service.saveSongSources({song}, 0), "song metadata ingestion failed");
+        const auto &saved = writer->last.songs.front();
+        require(saved.lyric_url == song.lyric_url && saved.mrc_url == song.mrc_url && saved.trc_url == song.trc_url && saved.cover_url == song.cover_url, "song resource task inputs were removed");
         writer->fail = true;
         require(!service.saveSingerSources({singer}, 1), "database failure was hidden");
-        require(!files->exists(writer->last.singers[0].cover_resource->local_path), "failed database batch left a new cover file");
-        require(files->exists(saved.local_path), "rollback deleted a previous successful cover");
-        writer->fail = false;
-        singer.avatar_url = "https://example.test/error";
-        require(service.saveSingerSources({singer}, 1), "cover error prevented metadata persistence");
-        require(writer->last.singers[0].cover_resource->status == 3, "HTML response was treated as a saved image");
-        require(covers->discard(saved.local_path), "cover cleanup failed");
-        std::cout << "PASS: detail aliases, table ownership, multi-tab, cover commit and rollback\n";
+        std::cout << "PASS: detail aliases, table ownership, metadata URLs and download-free ingestion\n";
         return 0;
     } catch (const std::exception &error) {
         std::cerr << "FAIL: " << error.what() << '\n';

@@ -3,6 +3,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cassert>
+#include <cstdlib>
 #include <iostream>
 #include <string>
 
@@ -22,7 +23,7 @@ void requireDumpContains(const nlohmann::json &value, const std::string &needle)
 {
     if (value.dump().find(needle) == std::string::npos) {
         std::cerr << "OpenAPI document is missing expected text: " << needle << std::endl;
-        assert(false);
+        std::exit(EXIT_FAILURE);
     }
 }
 
@@ -50,7 +51,6 @@ int main()
     requirePath(doc, "/api/migu/dictionaries");
     requirePath(doc, "/api/migu/singer-songs/crawl-from-db/preview");
     requirePath(doc, "/api/migu/singer-albums/crawl-from-db/preview");
-    requirePath(doc, "/api/migu/singers/profile/refresh-from-db");
     requirePath(doc, "/api/migu/backfill/{type}/preview");
     requirePath(doc, "/api/migu/backfill/singer-songs/retry");
     requirePath(doc, "/api/migu/backfill/album-songs/reset");
@@ -67,6 +67,10 @@ int main()
     requirePath(doc, "/api/migu/pacmtoken/state");
     requirePath(doc, "/api/migu/pacmtoken/current");
 
+    for (const auto *path : {"/api/migu/singer-songs/crawl", "/api/migu/singer-albums/crawl", "/api/migu/singers/profile/refresh-from-db", "/api/migu/album-details/crawl", "/api/migu/album-songs/crawl"}) {
+        assert(!doc["paths"].contains(path));
+    }
+
     const auto &item_properties = doc["components"]["schemas"]["BatchTaskItem"]["properties"];
     assert(item_properties.contains("error_category"));
     assert(item_properties.contains("result_code"));
@@ -75,6 +79,8 @@ int main()
     const auto &schemas = doc["components"]["schemas"];
     assert(schemas.contains("SingerRecord"));
     assert(schemas.contains("AlbumRecord"));
+    assert(schemas["SingerRecord"]["properties"].contains("avatar_url"));
+    assert(schemas["AlbumRecord"]["properties"].contains("cover_url"));
     assert(schemas.contains("SongRecord"));
     assert(schemas.contains("ResourceQueueRecord"));
     assert(schemas.contains("ResourceActionRequest"));
@@ -89,14 +95,16 @@ int main()
     assert(schemas.contains("ResourceProcessResponse"));
     assert(schemas.contains("SingerFromDbPreviewItem"));
     assert(schemas.contains("SingerFromDbPreviewResponse"));
-    assert(schemas.contains("SingerProfileRefreshRequest"));
-    const auto &profile_refresh_properties = schemas["SingerProfileRefreshRequest"]["properties"];
-    assert(profile_refresh_properties.contains("source_ids"));
-    assert(profile_refresh_properties.contains("run_all"));
-    assert(profile_refresh_properties.contains("runAll"));
-    assert(profile_refresh_properties["max_targets"]["minimum"] == 0);
-    requireDumpContains(profile_refresh_properties["max_targets"], "0 means refresh all matching local singers");
-    requireDumpContains(profile_refresh_properties["run_all"], "every matching local singer");
+    for (const auto *name : {"SingerIdsCrawlRequest", "SingerProfileRefreshRequest", "AlbumBackfillRequest"}) {
+        assert(!schemas.contains(name));
+    }
+    for (const auto *name : {"SingerFromDbCrawlRequest", "BackfillActionRequest"}) {
+        const auto &force = schemas[name]["properties"]["force"];
+        assert(force["type"] == "boolean");
+        assert(force["default"] == false);
+        requireDumpContains(force, "without taking active claims");
+        requireDumpContains(force, "refreshes the full singer profile once");
+    }
     assert(schemas.contains("IntegritySummary"));
     assert(schemas.contains("BackfillActionItem"));
     assert(schemas.contains("BackfillQueueTarget"));
@@ -132,11 +140,11 @@ int main()
     assert(!singer_index_limit.contains("maximum"));
     requireDumpContains(singer_index_limit, "all singers");
 
-    const auto &singer_ids_limit = schemas["SingerIdsCrawlRequest"]["properties"]["limit"];
+    const auto &singer_ids_limit = schemas["SingerFromDbCrawlRequest"]["properties"]["limit_per_singer"];
     assert(singer_ids_limit["minimum"] == 0);
     assert(singer_ids_limit["maximum"] == 500);
     assert(singer_ids_limit["default"] == 0);
-    requireDumpContains(singer_ids_limit, "all items");
+    requireDumpContains(singer_ids_limit, "all pages");
 
     const auto &integrity_properties = schemas["IntegritySummary"]["properties"];
     assert(integrity_properties.contains("singers_songs_running_stale"));
@@ -309,8 +317,6 @@ int main()
     requireDumpContains(doc["paths"]["/api/migu/backfill/singer-songs/queue"]["get"], "not returned by the default missing-song queue");
     requireDumpContains(doc["paths"]["/api/migu/backfill/singer-albums/queue"]["get"], "real album_source_refs.source_artist_id summary");
     requireDumpContains(doc["paths"]["/api/migu/backfill/singer-albums/queue"]["get"], "not returned by the default missing-album queue");
-    requireDumpContains(doc["paths"]["/api/migu/singers/profile/refresh-from-db"]["post"], "only default flow that requests singer/info");
-    requireDumpContains(doc["paths"]["/api/migu/singers/profile/refresh-from-db"]["post"], "max_targets=0");
 
     const auto &error_properties = schemas["ErrorResponse"]["properties"];
     assert(error_properties.contains("error_code"));

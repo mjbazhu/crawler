@@ -3,7 +3,9 @@
 #include "crawler/api/controllers/CrawlerController.h"
 #include "crawler/application/model/MusicCatalog.h"
 #include "crawler/application/use_cases/CrawlerServiceDependencies.h"
+#include "crawler/application/use_cases/CatalogMetadataCompletion.h"
 #include "crawler/infrastructure/music/persistence/mysql/MySqlMusicCatalogQueryRepository.h"
+#include "crawler/infrastructure/music/persistence/mysql/MySqlMetadataBatchWriter.h"
 #include "crawler/infrastructure/music/persistence/mysql/MySqlSongResourceQueue.h"
 #include "crawler/infrastructure/music/persistence/mysql/MySqlSongSourceRepository.h"
 #include "crawler/infrastructure/music/persistence/mysql/MySqlValueReader.h"
@@ -126,7 +128,7 @@ boost::asio::awaitable<CatalogFixture> seedCatalogFixture(const std::shared_ptr<
     const auto singer_db_id = mysql::MySqlValueReader::uint64At(result.rows().front(), 0);
 
     co_await connection->async_execute(
-        "INSERT INTO singer_source_refs (singer_db_id, source, source_singer_id, source_name_pinyin, source_country, source_song_total, source_album_total, songs_sync_status, songs_sync_error, albums_sync_status, albums_sync_error, created_at, updated_at) VALUES (" + std::to_string(singer_db_id) + ", 'migu', '" + fixture.singer_source_id + "', 'codex', 'huayu', 2, 1, 3, 'fixture songs failed', 4, 'fixture albums partial', " + std::to_string(now) + ", " + std::to_string(now) + ")",
+        "INSERT INTO singer_source_refs (singer_db_id, source, source_singer_id, source_gender, source_name_pinyin, source_country, source_song_total, source_album_total, songs_sync_status, songs_sync_error, albums_sync_status, albums_sync_error, created_at, updated_at) VALUES (" + std::to_string(singer_db_id) + ", 'migu', '" + fixture.singer_source_id + "', 1, 'codex', 'huayu', 2, 1, 3, 'fixture songs failed', 4, 'fixture albums partial', " + std::to_string(now) + ", " + std::to_string(now) + ")",
         result,
         boost::asio::use_awaitable
     );
@@ -142,7 +144,7 @@ boost::asio::awaitable<CatalogFixture> seedCatalogFixture(const std::shared_ptr<
     const auto summarized_singer_db_id = mysql::MySqlValueReader::uint64At(result.rows().front(), 0);
 
     co_await connection->async_execute(
-        "INSERT INTO singer_source_refs (singer_db_id, source, source_singer_id, source_name_pinyin, source_country, source_song_total, source_album_total, songs_sync_status, albums_sync_status, created_at, updated_at) VALUES (" + std::to_string(summarized_singer_db_id) + ", 'migu', '" + fixture.summarized_singer_source_id + "', 'codex', 'huayu', 1, 1, 0, 0, " + std::to_string(now) + ", " + std::to_string(now) + ")",
+        "INSERT INTO singer_source_refs (singer_db_id, source, source_singer_id, source_gender, source_name_pinyin, source_country, source_song_total, source_album_total, songs_sync_status, albums_sync_status, created_at, updated_at) VALUES (" + std::to_string(summarized_singer_db_id) + ", 'migu', '" + fixture.summarized_singer_source_id + "', 1, 'codex', 'huayu', 1, 1, 0, 0, " + std::to_string(now) + ", " + std::to_string(now) + ")",
         result,
         boost::asio::use_awaitable
     );
@@ -158,7 +160,7 @@ boost::asio::awaitable<CatalogFixture> seedCatalogFixture(const std::shared_ptr<
     const auto prefix_singer_db_id = mysql::MySqlValueReader::uint64At(result.rows().front(), 0);
 
     co_await connection->async_execute(
-        "INSERT INTO singer_source_refs (singer_db_id, source, source_singer_id, source_name_pinyin, source_country, songs_sync_status, albums_sync_status, created_at, updated_at) VALUES (" + std::to_string(prefix_singer_db_id) + ", 'migu', '" + fixture.singer_source_id + "99', 'codex', 'huayu', 0, 0, " + std::to_string(now + 1) + ", " + std::to_string(now + 1) + ")",
+        "INSERT INTO singer_source_refs (singer_db_id, source, source_singer_id, source_gender, source_name_pinyin, source_country, songs_sync_status, albums_sync_status, created_at, updated_at) VALUES (" + std::to_string(prefix_singer_db_id) + ", 'migu', '" + fixture.singer_source_id + "99', 1, 'codex', 'huayu', 0, 0, " + std::to_string(now + 1) + ", " + std::to_string(now + 1) + ")",
         result,
         boost::asio::use_awaitable
     );
@@ -174,12 +176,13 @@ boost::asio::awaitable<CatalogFixture> seedCatalogFixture(const std::shared_ptr<
     const auto album_db_id = mysql::MySqlValueReader::uint64At(result.rows().front(), 0);
 
     co_await connection->async_execute(
-        "INSERT INTO album_source_refs (album_db_id, source, source_album_id, source_resource_type, source_album_kind, detail_sync_status, detail_sync_error, songs_sync_status, songs_sync_count, songs_sync_error, created_at, updated_at, source_song_total) VALUES (" + std::to_string(album_db_id) + ", 'migu', '" + fixture.album_source_id + "', '5', 2, 3, 'fixture detail failed', 4, 1, 'fixture songs partial', " + std::to_string(now) + ", " + std::to_string(now) + ", '2')",
+        "INSERT INTO album_source_refs (album_db_id, source, source_album_id, source_resource_type, source_album_kind, detail_sync_status, detail_sync_error, songs_sync_status, songs_sync_count, songs_sync_error, created_at, updated_at, source_song_total, source_title_pinyin, summary) VALUES (" + std::to_string(album_db_id) + ", 'migu', '" + fixture.album_source_id + "', '5', 2, 3, 'fixture detail failed', 4, 1, 'fixture songs partial', " + std::to_string(now) + ", " + std::to_string(now) + ", '2', 'catalog-pinyin', 'catalog-summary')",
         result,
         boost::asio::use_awaitable
     );
     co_await pool->coExecute("INSERT INTO album_artist_refs(album_source_ref_id,singer_source_ref_id,artist_role,artist_order,is_primary) SELECT a.id,s.id,'artist',1,1 FROM album_catalog_sources a JOIN singer_catalog_sources s ON s.source=a.source AND s.source_singer_id='" + fixture.singer_source_id + "' WHERE a.source='migu' AND a.source_album_id='" + fixture.album_source_id + "' ON DUPLICATE KEY UPDATE is_primary=1");
 
+    co_await pool->coExecute("INSERT INTO migu_dalbum_details(album_source_ref_id,source_material_id) SELECT id,'" + fixture.album_source_id + "_material' FROM album_source_refs WHERE source='migu' AND source_album_id='" + fixture.album_source_id + "'");
     const std::string summarized_album_title = "Codex Catalog Summary Album " + fixture.suffix;
     co_await connection->async_execute(
         "INSERT INTO albums (title, normalized_title, release_date, identity_hash, created_at, updated_at) VALUES ('" + summarized_album_title + "', 'codex_catalog_summary_album_" + fixture.suffix + "', '2026-01-01', '" + identityHash(+"summary_" + fixture.suffix) + "', " + std::to_string(now) + ", " + std::to_string(now) + ")",
@@ -329,6 +332,40 @@ void assertCatalogQueries(mysql::MySqlMusicCatalogQueryRepository &repository, c
     require(albums.items.front().source_item_key == "album:" + fixture.album_source_id, "album source key must be derived from its identity");
     auto album_detail = repository.findAlbum("migu", fixture.album_source_id);
     require(album_detail.has_value(), "findAlbum should find fixture");
+    require(album_detail->source_title_pinyin == "catalog-pinyin" && album_detail->summary == "catalog-summary", "album metadata fields must be returned by the catalog query");
+    // 不同来源复用名称池时，重复采集不能因大小写及并发顺序改变显示名称。
+    model::SingerSourceMetadata upper;
+    upper.source = "migu";
+    upper.source_singer_id = fixture.singer_source_id + "_case_a";
+    upper.name = "RAY";
+    upper.normalized_name = "codex_catalog_stable_" + fixture.suffix;
+    auto lower = upper;
+    lower.source_singer_id = fixture.singer_source_id + "_case_b";
+    lower.name = "Ray";
+    model::MetadataWriteBatch names;
+    names.singers = {upper, lower};
+    mysql::MySqlMetadataBatchWriter name_writer(pool);
+    require(name_writer.saveBatch(names).isSuccess(), "name pool seed failed");
+    names.singers = {lower, upper};
+    require(name_writer.saveBatch(names).isSuccess(), "name pool replay failed");
+    const auto stable_name = repository.findSinger("migu", lower.source_singer_id);
+    require(stable_name && stable_name->name == "RAY", "same-name display changed on replay");
+    support::runOnExecutor(pool->executor(), pool->coExecute("DELETE FROM singers WHERE normalized_name='" + upper.normalized_name + "'"), "cleanup name pool fixture");
+    const auto material_alias = repository.findAlbum("migu", fixture.album_source_id + "_material");
+    require(material_alias && material_alias->source_ref_id == album_detail->source_ref_id, "material alias must reuse the existing album instead of refetching detail");
+    // 缓存为空时也复用已存详情；列表资料不能降级字段或冒充一次新同步。
+    support::runOnExecutor(pool->executor(), pool->coExecute("UPDATE album_source_refs SET detail_sync_status=2 WHERE source='migu' AND source_album_id='" + fixture.album_source_id + "'"), "complete album fixture");
+    crawler::application::use_cases::CatalogMetadataCompletion completion({nullptr, nullptr, std::make_shared<mysql::MySqlMusicCatalogQueryRepository>(pool), nullptr});
+    model::MetadataWriteBatch sparse;
+    model::AlbumSourceMetadata sparse_album;
+    sparse_album.source = "migu";
+    sparse_album.source_album_id = fixture.album_source_id + "_material";
+    sparse_album.title = "sparse list title";
+    sparse.albums = {sparse_album};
+    const auto reused = completion.completeAlbums(sparse);
+    require(reused.isSuccess() && reused.data()->albums.size() == 1, "cold completion should reuse the canonical album");
+    require(reused.data()->albums.front().summary == "catalog-summary" && reused.data()->albums.front().detail_sync_status == 0, "reused metadata must retain detail fields without advancing sync time");
+    support::runOnExecutor(pool->executor(), pool->coExecute("UPDATE album_source_refs SET detail_sync_status=3 WHERE source='migu' AND source_album_id='" + fixture.album_source_id + "'"), "restore album fixture");
     require(album_detail->album_songs_count == 2, "album detail relation count should use album_song_refs");
     require(album_detail->songs_sync_count == 1, "album detail must preserve the latest sync count");
 

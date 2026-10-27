@@ -2,6 +2,7 @@
 
 #include "crawler/application/model/MusicCatalog.h"
 #include "crawler/infrastructure/music/persistence/mysql/MySqlMusicCatalogQueryRepository.h"
+#include "crawler/infrastructure/music/persistence/mysql/MySqlSingerSourceSyncQueue.h"
 #include "crawler/infrastructure/music/persistence/mysql/MySqlValueReader.h"
 
 #include <boost/asio/use_awaitable.hpp>
@@ -118,7 +119,7 @@ boost::asio::awaitable<void> seedSinger(
     co_await connection->async_execute("SELECT LAST_INSERT_ID()", result, boost::asio::use_awaitable);
     const auto singer_db_id = mysql::MySqlValueReader::uint64At(result.rows().front(), 0);
     co_await connection->async_execute(
-        "INSERT INTO singer_source_refs (singer_db_id, source, source_singer_id, source_name_pinyin, source_country, songs_sync_status, songs_sync_error, albums_sync_status, albums_sync_error, created_at, updated_at) VALUES (" + std::to_string(singer_db_id) + ", 'migu', '" + source_singer_id + "', 'codex', 'huayu', " + std::to_string(songs_status) + ", 'seed songs error', " + std::to_string(albums_status) + ", 'seed albums error', " + std::to_string(now) + ", " + std::to_string(now) + ")",
+        "INSERT INTO singer_source_refs (singer_db_id, source, source_singer_id, source_gender, source_name_pinyin, source_country, songs_sync_status, songs_sync_error, albums_sync_status, albums_sync_error, created_at, updated_at) VALUES (" + std::to_string(singer_db_id) + ", 'migu', '" + source_singer_id + "', 1, 'codex', 'huayu', " + std::to_string(songs_status) + ", 'seed songs error', " + std::to_string(albums_status) + ", 'seed albums error', " + std::to_string(now) + ", " + std::to_string(now) + ")",
         result,
         boost::asio::use_awaitable
     );
@@ -143,7 +144,7 @@ boost::asio::awaitable<void> seedSingerWithContent(
     co_await connection->async_execute("SELECT LAST_INSERT_ID()", result, boost::asio::use_awaitable);
     const auto singer_db_id = mysql::MySqlValueReader::uint64At(result.rows().front(), 0);
     co_await connection->async_execute(
-        "INSERT INTO singer_source_refs (singer_db_id, source, source_singer_id, source_name_pinyin, source_country, source_song_total, songs_sync_status, albums_sync_status, created_at, updated_at) VALUES (" + std::to_string(singer_db_id) + ", 'migu', '" + source_singer_id + "', 'codex', 'huayu', 1, 0, 0, " + std::to_string(now) + ", " + std::to_string(now) + ")",
+        "INSERT INTO singer_source_refs (singer_db_id, source, source_singer_id, source_gender, source_name_pinyin, source_country, source_song_total, songs_sync_status, albums_sync_status, created_at, updated_at) VALUES (" + std::to_string(singer_db_id) + ", 'migu', '" + source_singer_id + "', 1, 'codex', 'huayu', 1, 0, 0, " + std::to_string(now) + ", " + std::to_string(now) + ")",
         result,
         boost::asio::use_awaitable
     );
@@ -285,6 +286,49 @@ void assertAlbumClaims(mysql::MySqlMusicCatalogQueryRepository &repository, cons
     require(duplicate.claimed_count == 0, "second album songs claim must not reclaim running target");
 }
 
+// 验证主入口与补池强制重采的资格一致，且不会抢占运行中的任务。
+void assertForcedClaims(mysql::MySqlMusicCatalogQueryRepository &repository, const ClaimFixture &fixture, const std::shared_ptr<mysql::MySqlConnectionPool> &pool)
+{
+    mysql::MySqlSingerSourceSyncQueue queue(pool);
+    model::SingerSourceSyncQuery query;
+    query.keyword = fixture.singer_completed;
+    require(queue.previewPendingSongs(query).eligible_count == 0, "normal preview must exclude completed singer");
+    query.force = true;
+    require(queue.previewPendingSongs(query).eligible_count == 1, "forced preview must include completed singer");
+    require(queue.claimPendingSongs(query).size() == 1, "forced main queue must claim completed singer");
+    require(queue.previewPendingSongs(query).eligible_count == 0, "forced preview must exclude active singer");
+    require(queue.claimPendingSongs(query).empty(), "forced main queue must not reclaim active singer");
+
+    query.keyword = fixture.singer_has_content;
+    query.force = false;
+    require(queue.previewPendingSongs(query).eligible_count == 0, "normal queue must honor real-count completion");
+    query.force = true;
+    require(queue.previewPendingSongs(query).eligible_count == 1, "forced queue must include real-count completion");
+    require(queue.claimPendingSongs(query).size() == 1, "forced queue must bypass real-count completion guard");
+    support::runOnExecutor(pool->executor(), executeSql(pool, "UPDATE singer_source_refs SET source_song_total=2 WHERE source='migu' AND source_singer_id='" + fixture.singer_has_content + "'"), "make running singer incomplete");
+    require(queue.previewPendingSongs(query).eligible_count == 0 && queue.claimPendingSongs(query).empty(), "incomplete count must not bypass active claim protection");
+
+    model::MiguBackfillTargetQuery retry;
+    retry.force = true;
+    retry.source_ids = {fixture.singer_has_content};
+    require(repository.claimSingerSongs(retry).claimed_count == 0, "forced backfill must not steal incomplete active singer");
+    retry.source_ids = {fixture.singer_completed};
+    require(repository.claimSingerAlbums(retry).claimed_count == 1, "forced backfill must claim completed singer albums");
+    require(repository.claimSingerAlbums(retry).claimed_count == 0, "forced backfill must not reclaim active singer albums");
+    query.keyword = fixture.singer_completed;
+    require(queue.previewPendingAlbums(query).eligible_count == 0 && queue.claimPendingAlbums(query).empty(), "main queue must respect backfill album claims");
+
+    retry.source_ids = {fixture.album_detail_done};
+    require(repository.claimAlbumDetails(retry).claimed_count == 1, "forced backfill must claim completed album details");
+    require(repository.claimAlbumDetails(retry).claimed_count == 0, "forced backfill must not reclaim active album details");
+    retry.source_ids = {fixture.album_songs_blocked};
+    require(repository.claimAlbumSongs(retry).claimed_count == 0, "force must preserve album detail prerequisite");
+    support::runOnExecutor(pool->executor(), executeSql(pool, "UPDATE album_source_refs SET detail_sync_status=2,songs_sync_status=2 WHERE source='migu' AND source_album_id='" + fixture.album_detail_done + "'"), "prepare completed album tracks");
+    retry.source_ids = {fixture.album_detail_done};
+    require(repository.claimAlbumSongs(retry).claimed_count == 1, "forced backfill must claim completed album tracks");
+    require(repository.claimAlbumSongs(retry).claimed_count == 0, "forced backfill must not reclaim active album tracks");
+}
+
 } // namespace
 
 int main()
@@ -299,6 +343,7 @@ int main()
 
         assertSingerClaims(repository, fixture);
         assertAlbumClaims(repository, fixture);
+        assertForcedClaims(repository, fixture, pool);
 
         std::cout << "MiguBackfillClaimIntegrationTest passed" << std::endl;
         return 0;

@@ -136,7 +136,7 @@ boost::asio::awaitable<void> seedSingerSource(const std::shared_ptr<mysql::MySql
     const auto singer_db_id = mysql::MySqlValueReader::uint64At(result.rows().front(), 0);
 
     co_await connection->async_execute(
-        "INSERT INTO singer_source_refs (singer_db_id, source, source_singer_id, source_name_pinyin, source_country, songs_sync_status, albums_sync_status, created_at, updated_at) VALUES (" + std::to_string(singer_db_id) + ", 'migu', '" + artist_id + "', 'codex', 'huayu', 2, 2, " + std::to_string(now) + ", " + std::to_string(now) + ")",
+        "INSERT INTO singer_source_refs (singer_db_id, source, source_singer_id, source_gender, source_name_pinyin, source_country, songs_sync_status, albums_sync_status, created_at, updated_at) VALUES (" + std::to_string(singer_db_id) + ", 'migu', '" + artist_id + "', 1, 'codex', 'huayu', 2, 2, " + std::to_string(now) + ", " + std::to_string(now) + ")",
         result,
         boost::asio::use_awaitable
     );
@@ -152,7 +152,7 @@ boost::asio::awaitable<void> seedSingerSource(const std::shared_ptr<mysql::MySql
     co_await connection->async_execute("SELECT LAST_INSERT_ID()", result, boost::asio::use_awaitable);
     const auto guest_db_id = mysql::MySqlValueReader::uint64At(result.rows().front(), 0);
     co_await connection->async_execute(
-        "INSERT INTO singer_source_refs (singer_db_id, source, source_singer_id, source_name_pinyin, source_country, songs_sync_status, albums_sync_status, created_at, updated_at) VALUES (" + std::to_string(guest_db_id) + ", 'migu', '" + guest_id + "', 'codex', 'huayu', 2, 2, " + std::to_string(now) + ", " + std::to_string(now) + ")",
+        "INSERT INTO singer_source_refs (singer_db_id, source, source_singer_id, source_gender, source_name_pinyin, source_country, songs_sync_status, albums_sync_status, created_at, updated_at) VALUES (" + std::to_string(guest_db_id) + ", 'migu', '" + guest_id + "', 1, 'codex', 'huayu', 2, 2, " + std::to_string(now) + ", " + std::to_string(now) + ")",
         result,
         boost::asio::use_awaitable
     );

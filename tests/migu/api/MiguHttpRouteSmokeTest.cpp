@@ -275,6 +275,12 @@ std::shared_ptr<controllers::CrawlerController> makeController(std::shared_ptr<S
 // 捕获项目内路由注册结果，用于验证 CORS OPTIONS handler。
 class CapturingRouteSink : public routing::RouteSink {
 public:
+    // 检查接口已彻底移除，不遗留 OPTIONS 入口。
+    bool contains(const std::string &method, const std::string &path) const
+    {
+        return handlers_.contains(method + " " + path);
+    }
+
     // 保存路由处理函数。
     void route(const std::string &method, const std::string &path, routing::RequestHandler handler) override
     {
@@ -304,6 +310,9 @@ void assertCorsOptions()
     CapturingRouteSink sink;
     routing::CrawlerRoutes routes(makeController());
     routes.registerRoutes(sink);
+    for (const auto *path : {"/api/migu/singer-songs/crawl", "/api/migu/singer-albums/crawl", "/api/migu/singers/profile/refresh-from-db", "/api/migu/album-details/crawl", "/api/migu/album-songs/crawl"}) {
+        require(!sink.contains("POST", path) && !sink.contains("OPTIONS", path), std::string("removed route still registered: ") + path);
+    }
     const auto response = sink.invoke("OPTIONS", "/api/migu/backfill/{1}/queue");
     require(response.status_code == 204, "OPTIONS route should return 204");
     const auto it = response.headers.find("Access-Control-Allow-Origin");
@@ -385,6 +394,9 @@ int main()
 
         http_client::AsioHttpClient client;
         const std::string base_url = "http://127.0.0.1:" + std::to_string(kPort);
+        for (const auto *path : {"/api/migu/singer-songs/crawl", "/api/migu/singer-albums/crawl", "/api/migu/singers/profile/refresh-from-db", "/api/migu/album-details/crawl", "/api/migu/album-songs/crawl"}) {
+            requireStatus(client.post(base_url + path, "{}", {"Content-Type: application/json"}), 404, std::string("POST removed route ") + path);
+        }
 
         auto singer_songs = client.get(base_url + "/api/migu/singers/112/songs?page=1&page_size=20");
         requireStatus(singer_songs, 200, "GET singer songs route");

@@ -151,6 +151,9 @@ void testSingerAlbumIngestionFlow()
     require(album_source_repository->saved_albums.size() == 2, "unlimited singer albums should save all parsed albums");
     require(album_source_repository->saved_albums.back().detail_sync_status == 0, "album list detail_sync_status == 0");
     require(album_source_repository->saved_albums.back().source_artist_id == "112", "album list source artist id");
+    require(album_source_repository->saved_albums.back().artist_refs.size() == 1, "album list seed relation missing");
+    require(album_source_repository->saved_albums.back().artist_refs.front().artist_order == 0, "seed membership must not invent album artist order");
+    require(!album_source_repository->saved_albums.back().artist_refs.front().is_primary, "seed membership must not invent primary credit");
 }
 
 void testPendingAlbumDetailIngestionFlow()
@@ -160,6 +163,7 @@ void testPendingAlbumDetailIngestionFlow()
 
     auto parser = std::make_shared<crawler::tests::MockMetadataParser>();
     auto detail = makeAlbum("600927015009001083", 2);
+    detail.total_count = "1";
     detail.source_material_id = "1142521343";
     detail.summary = "专辑简介";
     parser->mock_album_sources_by_body["album-detail"] = {detail};
@@ -197,11 +201,11 @@ void testPendingAlbumDetailIngestionFlow()
     require(saved, "saved pending album details");
     require(provider->last_album_detail_id == "600927015009001083", "album detail id");
     require(provider->last_album_detail_source_res_type == "1", "album detail source res type");
-    require(album_source_repository->update_detail_calls == 1, "album_source_repository->update_detail_calls == 1");
-    require(album_source_repository->last_detail_status == 1, "album detail marked in progress");
-    require(album_source_repository->update_songs_calls == 2, "album_source_repository->update_songs_calls == 2");
-    require(album_source_repository->last_songs_status == 2, "album songs sync complete");
-    require(album_source_repository->last_songs_count == 1, "album songs sync count");
+    require(album_source_repository->update_detail_calls == 2, "detail task should record start and completion");
+    require(album_source_repository->last_detail_status == 2, "detail task should finish its own state");
+    require(album_source_repository->update_songs_calls == 1, "complete detail response should also record its actual song result");
+    require(album_source_repository->last_songs_status == 2, "declared complete detail response should complete song sync");
+    require(album_source_repository->last_songs_count == 1, "song sync count should use this response");
     require(album_source_repository->save_calls == 1, "album detail save calls");
     require(album_source_repository->saved_albums.size() == 1, "album detail saved albums size");
     require(album_source_repository->saved_albums.back().detail_sync_status == 2, "album detail sync status complete");
@@ -215,9 +219,14 @@ void testPendingAlbumDetailIngestionFlow()
 
 int main()
 {
-    testSingerSongUnlimitedIngestionFlow();
-    testSingerAlbumIngestionFlow();
-    testPendingAlbumDetailIngestionFlow();
-    std::cout << "MiguSingerAlbumIngestionFlowTest passed." << std::endl;
-    return 0;
+    try {
+        testSingerSongUnlimitedIngestionFlow();
+        testSingerAlbumIngestionFlow();
+        testPendingAlbumDetailIngestionFlow();
+        std::cout << "MiguSingerAlbumIngestionFlowTest passed." << std::endl;
+        return 0;
+    } catch (const std::exception &error) {
+        std::cerr << "MiguSingerAlbumIngestionFlowTest failed: " << error.what() << std::endl;
+        return 1;
+    }
 }
