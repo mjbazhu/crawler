@@ -48,7 +48,7 @@ FROM (
         s.name,
         s.normalized_name,
         COALESCE(r.source_name_pinyin, '') AS source_name_pinyin,
-        s.gender,
+        r.source_gender AS gender,
         s.status,
         r.id AS source_ref_id,
         r.source,
@@ -58,7 +58,7 @@ FROM (
         COALESCE((SELECT m.source_tag FROM singer_index_memberships m WHERE m.singer_source_ref_id=r.id AND NULLIF(m.source_tag,'') IS NOT NULL ORDER BY m.id LIMIT 1), '') AS source_tag,
         r.source_song_total,
         r.source_album_total,
-        '' AS avatar_url,
+        COALESCE((SELECT resource.remote_url FROM singer_resources resource WHERE resource.singer_source_ref_id=r.id AND resource.resource_kind='cover'), '') AS avatar_url,
         r.songs_sync_status AS raw_songs_sync_status,
         r.songs_synced_at AS raw_songs_synced_at,
         (

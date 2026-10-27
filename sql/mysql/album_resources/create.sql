@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS `album_resources` (
   `id` bigint unsigned NOT NULL AUTO_INCREMENT COMMENT '封面资源主键',
   `album_source_ref_id` bigint unsigned NOT NULL COMMENT '资源所属来源主键',
   `resource_kind` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'cover' COMMENT '资源类型，当前为封面',
+  `remote_url` text COLLATE utf8mb4_unicode_ci COMMENT '采集响应中的图片地址，供后续独立下载',
   `local_path` text COLLATE utf8mb4_unicode_ci COMMENT '模块内相对存储路径',
   `size_bytes` bigint unsigned NOT NULL DEFAULT '0' COMMENT '实际保存字节数',
   `checksum` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '完整文件校验值',
@@ -16,4 +17,4 @@ CREATE TABLE IF NOT EXISTS `album_resources` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_album_resources_owner` (`album_source_ref_id`,`resource_kind`),
   CONSTRAINT `fk_album_resources_owner` FOREIGN KEY (`album_source_ref_id`) REFERENCES `album_source_refs` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='本地封面资源，不持久化远端地址';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='封面地址与本地保存结果，采集阶段只登记地址';

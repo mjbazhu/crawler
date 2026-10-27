@@ -29,7 +29,7 @@ MySqlMetadataBatchWriter::MySqlMetadataBatchWriter(std::shared_ptr<MySqlConnecti
 {
     if (!pool_) throw std::invalid_argument("metadata writer requires a connection pool");
     for (const auto *path : {
-             "songs/upsert_metadata", "singers/upsert_metadata", "albums/upsert_metadata", "song_source_refs/upsert", "singer_source_refs/upsert", "album_source_refs/upsert", "singer_index_memberships/upsert", "song_artist_refs/upsert", "album_artist_refs/upsert", "album_song_refs/upsert", "song_source_audio_formats/upsert", "song_resources/upsert", "song_resources/upsert_missing_audio", "singer_resources/upsert", "album_resources/upsert", "migu_dalbum_details/upsert", "singer_resources/find_current", "album_resources/find_current", "singer_source_refs/find_source_id", "album_source_refs/find_source_id"
+             "songs/upsert_metadata", "singers/upsert_metadata", "albums/upsert_metadata", "song_source_refs/upsert", "song_source_refs/select_metadata_identity", "singer_source_refs/upsert", "album_source_refs/upsert", "singer_index_memberships/upsert", "song_artist_refs/upsert", "album_artist_refs/upsert", "album_song_refs/upsert", "song_source_audio_formats/upsert", "song_resources/upsert", "song_resources/upsert_missing_audio", "song_resources/delete_missing_audio", "singer_resources/upsert", "album_resources/upsert", "singer_resources/upsert_remote_url", "album_resources/upsert_remote_url", "migu_dalbum_details/upsert", "singer_resources/find_current", "album_resources/find_current", "singer_source_refs/find_source_id", "singer_source_refs/update_migu_singer_source_profile_counts", "album_source_refs/find_source_id", "migu_dalbum_details/select_identity_mappings", "album_source_refs/lock_identity_pair", "albums/merge_alias_metadata", "album_source_refs/merge_alias_metadata", "album_artist_refs/merge_album_alias", "album_song_refs/merge_album_alias", "album_resources/merge_album_alias", "album_source_refs/delete_alias", "albums/delete_unreferenced"
          }) {
         scripts_.emplace(path, sql::SqlFileLoader::loadOrThrow(std::string("sql/mysql/") + path + ".sql"));
     }
@@ -49,30 +49,36 @@ application::result::ServiceResult<application::model::MetadataWriteResult> MySq
 boost::asio::awaitable<application::result::ServiceResult<application::model::MetadataWriteResult>> MySqlMetadataBatchWriter::coSaveBatch(application::model::MetadataWriteBatch batch)
 {
     using Result = application::result::ServiceResult<application::model::MetadataWriteResult>;
-    if (batch.singers.empty() && batch.albums.empty() && batch.songs.empty()) {
+    if (batch.singers.empty() && batch.albums.empty() && batch.songs.empty() && batch.profiles.empty()) {
         co_return Result::failure(application::result::ServiceErrorType::InvalidParam, "metadata batch is empty");
     }
     for (int attempt = 0; attempt < 5; ++attempt) {
         auto connection = co_await pool_->coAcquire();
         bool started = false;
+        bool committing = false;
         std::string error;
         try {
             boost::mysql::results result;
             co_await connection->async_execute("START TRANSACTION", result, boost::asio::use_awaitable);
             started = true;
             detail::MetadataWriteSession session(connection, scripts_);
+            co_await session.normalizeAlbumIdentities(batch);
             for (const auto &singer : batch.singers) co_await session.saveSinger(singer);
+            for (const auto &profile : batch.profiles) co_await session.saveSingerProfile(profile);
             for (const auto &album : batch.albums) co_await session.saveAlbum(album);
             for (const auto &song : batch.songs) co_await session.saveSong(song);
+            co_await session.mergeAlbumAliases();
             for (const auto &membership : batch.memberships) co_await session.saveMembership(membership);
             for (const auto &singer : batch.singers) co_await session.saveSingerResource(singer);
             for (const auto &album : batch.albums) co_await session.saveAlbumRelations(album);
             for (const auto &song : batch.songs) co_await session.saveSongRelations(song);
+            committing = true;
             co_await connection->async_execute("COMMIT", result, boost::asio::use_awaitable);
-            co_return Result::success({session.replacedCoverPaths()});
+            co_return Result::success({session.replacedCoverPaths(), session.savedSongs()});
         } catch (const std::exception &failure) {
             error = failure.what();
         }
+        if (committing) co_return Result::failure(application::result::ServiceErrorType::CommitUncertain, "metadata commit needs reconciliation");
         if (started) {
             try {
                 boost::mysql::results result;

@@ -45,6 +45,12 @@ public:
     bool crawlAlbumSongsAndSave(application::model::AlbumSourceMetadata source_metadata);
 
 private:
+    // 详情及必要曲目页合并保存，两个入口只决定失败归属。
+    bool collectAlbumResponse(application::model::AlbumSourceMetadata source_metadata, bool songs_only);
+
+    // 兼容待处理入口复用单项目录采集，详情与歌曲只更新各自任务状态。
+    bool collectPending(std::string source, int limit, int max_page_concurrency, bool songs_only);
+
     std::shared_ptr<application::ports::AlbumDetailProvider> album_detail_provider_;    // 专辑详情 port
     std::shared_ptr<application::ports::AlbumSourceSyncQueue> album_source_sync_queue_; // 专辑同步队列 port
     std::shared_ptr<ParserDispatch> parser_;                                            // 解析调度器

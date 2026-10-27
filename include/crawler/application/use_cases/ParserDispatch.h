@@ -1,6 +1,7 @@
 #pragma once
 
 #include "crawler/application/model/AlbumSourceMetadata.h"
+#include "crawler/application/model/AlbumSongPage.h"
 #include "crawler/application/model/SingerSourceMetadata.h"
 #include "crawler/application/model/SongSourceMetadata.h"
 #include "crawler/application/ports/diagnostics/DiagnosticsSink.h"
@@ -13,6 +14,8 @@
 #include "crawler/application/ports/parsing/SongSourceParser.h"
 #include "crawler/application/use_cases/TaskRunner.h"
 #include "crawler/domain/music/model/ParseResult.h"
+
+#include "crawler/application/ports/parsing/MetadataBatchParser.h"
 
 #include <memory>
 #include <string>
@@ -35,11 +38,17 @@ public:
         std::shared_ptr<application::ports::DiagnosticsSink> diagnostics
     );
 
+    // 同一响应分流各实体；旧 parser 无批次能力时使用兼容委托。
+    application::model::MetadataWriteBatch parseSources(std::vector<char> body);
+
     // 解析领域结果。
     std::vector<domain::ParseResult> parse(std::vector<char> body);
 
     // 解析歌曲来源。
     std::vector<application::model::SongSourceMetadata> parseSongSources(std::vector<char> body);
+
+    // 通过歌曲解析 port 调度专辑曲目分页，不重复解析领域结果。
+    application::model::AlbumSongPage parseAlbumSongPage(std::vector<char> body);
 
     // 解析歌手来源。
     std::vector<application::model::SingerSourceMetadata> parseSingerSources(std::vector<char> body, std::string tab);
@@ -57,13 +66,14 @@ public:
     application::ports::SingerAlbumPageInfo inspectSingerAlbumPage(std::vector<char> body);
 
 private:
-    std::shared_ptr<application::ports::ParseResultParser> parse_result_parser_;   // 领域解析 port
-    std::shared_ptr<application::ports::SongSourceParser> song_source_parser_;     // 歌曲来源解析 port
-    std::shared_ptr<application::ports::SingerSourceParser> singer_source_parser_; // 歌手来源解析 port
-    std::shared_ptr<application::ports::AlbumSourceParser> album_source_parser_;   // 专辑来源解析 port
+    std::shared_ptr<application::ports::ParseResultParser> parse_result_parser_;     // 领域解析 port
+    std::shared_ptr<application::ports::SongSourceParser> song_source_parser_;       // 歌曲来源解析 port
+    std::shared_ptr<application::ports::SingerSourceParser> singer_source_parser_;   // 歌手来源解析 port
+    std::shared_ptr<application::ports::AlbumSourceParser> album_source_parser_;     // 专辑来源解析 port
     std::shared_ptr<application::ports::SingerProfileParser> singer_profile_parser_; // 歌手概览解析 port
-    std::shared_ptr<application::ports::PageInspector> page_inspector_;            // 分页摘要 port
-    TaskRunner parse_runner_;                                                      // 解析执行器
+    std::shared_ptr<application::ports::PageInspector> page_inspector_;              // 分页摘要 port
+    std::shared_ptr<application::ports::MetadataBatchParser> batch_parser_;          // 单响应解析 port
+    TaskRunner parse_runner_;                                                        // 解析执行器
 };
 
 } // namespace orchestrator::modules::crawler::application::use_cases

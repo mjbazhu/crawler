@@ -10,6 +10,13 @@
 
 namespace orchestrator::modules::crawler::application::model {
 
+// 当前响应的曲目采集结果；由用例计算，不能由已有关系数量推断。
+struct AlbumSongSyncResult {
+    int status = 4;         // 2 数量已核实，4 部分完成或完整性未知
+    int received_count = 0; // 本次响应的唯一曲目数量
+    std::string error;      // 数量不足或声明总数未知的原因
+};
+
 // 专辑平台来源解析元数据，承载 albums、album_source_refs 和平台扩展表入库参数。
 struct AlbumSourceMetadata {
     std::string source = "migu";                        // 音乐平台标识，例如 migu
@@ -26,8 +33,8 @@ struct AlbumSourceMetadata {
     std::vector<SongSourceArtistRef> artist_refs;       // 专辑关联歌手，只用于建立关系
     std::string source_artist_id;                       // 平台歌手 ID
     std::string source_artist_name;                     // 平台返回的原始歌手名
-    std::string cover_url;                              // 本次采集的封面地址，仅用于立即下载，不持久化
-    std::optional<MetadataResourceFile> cover_resource; // 本次封面保存结果
+    std::string cover_url;                              // 本次采集的封面地址，保存到 album_resources.remote_url
+    std::optional<MetadataResourceFile> cover_resource; // 兼容显式传入的本地结果，元数据采集不生成
     std::string summary;                                // 专辑简介或详情文案
     std::string price;                                  // 平台价格原始值
     std::string total_count;                            // 曲目总数原始值
@@ -66,6 +73,7 @@ struct AlbumSourceMetadata {
     std::uint64_t play_num = 0;                         // 平台播放数
     std::string play_num_desc;                          // 平台播放数展示文本
     int detail_sync_status = 0;                         // 详情同步状态：0 未同步，1 同步中，2 已完成，3 失败，4 部分完成
+    std::optional<AlbumSongSyncResult> songs_sync;      // 本次响应的曲目结果，与元数据一起提交
 };
 
 } // namespace orchestrator::modules::crawler::application::model

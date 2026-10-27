@@ -1,5 +1,7 @@
 #pragma once
 
+#include "crawler/application/model/AlbumSongPage.h"
+
 #include "crawler/application/ports/parsing/SongSourceParser.h"
 
 namespace orchestrator::modules::crawler::infrastructure::music::migu::parser {
@@ -9,6 +11,9 @@ class MiguSongSourceParser : public application::ports::SongSourceParser {
 public:
     // 解析可直接入库的歌曲平台来源元数据。
     std::vector<application::model::SongSourceMetadata> parseSongSources(const std::vector<char> &raw_data) const override;
+
+    // 解析曲目分页接口的 data.songList 和严格声明总数。
+    application::model::AlbumSongPage parseAlbumSongPage(const std::vector<char> &raw_data) const override;
 };
 
 } // namespace orchestrator::modules::crawler::infrastructure::music::migu::parser

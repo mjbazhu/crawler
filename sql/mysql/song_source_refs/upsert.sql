@@ -24,12 +24,12 @@ INSERT INTO song_source_refs (
     UNIX_TIMESTAMP()
 ) ON DUPLICATE KEY UPDATE
     id = LAST_INSERT_ID(id),
-    song_db_id = VALUES(song_db_id),
-    source_song_id = COALESCE(VALUES(source_song_id), source_song_id),
-    source_content_id = COALESCE(VALUES(source_content_id), source_content_id),
-    source_resource_type = COALESCE(VALUES(source_resource_type), source_resource_type),
-    source_title_pinyin = COALESCE(VALUES(source_title_pinyin), source_title_pinyin),
-    source_duration_seconds = IF(VALUES(source_duration_seconds) = 0, source_duration_seconds, VALUES(source_duration_seconds)),
-    copyright_id = COALESCE(VALUES(copyright_id), copyright_id),
+    song_db_id = IF(((source_content_id IS NOT NULL AND VALUES(source_content_id) IS NOT NULL AND source_content_id <> VALUES(source_content_id)) OR (source_song_id IS NOT NULL AND VALUES(source_song_id) IS NOT NULL AND source_song_id <> VALUES(source_song_id))), song_db_id, VALUES(song_db_id)),
+    source_resource_type = IF(((source_content_id IS NOT NULL AND VALUES(source_content_id) IS NOT NULL AND source_content_id <> VALUES(source_content_id)) OR (source_song_id IS NOT NULL AND VALUES(source_song_id) IS NOT NULL AND source_song_id <> VALUES(source_song_id))), source_resource_type, COALESCE(VALUES(source_resource_type), source_resource_type)),
+    source_title_pinyin = IF(((source_content_id IS NOT NULL AND VALUES(source_content_id) IS NOT NULL AND source_content_id <> VALUES(source_content_id)) OR (source_song_id IS NOT NULL AND VALUES(source_song_id) IS NOT NULL AND source_song_id <> VALUES(source_song_id))), source_title_pinyin, COALESCE(VALUES(source_title_pinyin), source_title_pinyin)),
+    source_duration_seconds = IF(((source_content_id IS NOT NULL AND VALUES(source_content_id) IS NOT NULL AND source_content_id <> VALUES(source_content_id)) OR (source_song_id IS NOT NULL AND VALUES(source_song_id) IS NOT NULL AND source_song_id <> VALUES(source_song_id))), source_duration_seconds, IF(VALUES(source_duration_seconds) = 0, source_duration_seconds, VALUES(source_duration_seconds))),
+    copyright_id = IF(((source_content_id IS NOT NULL AND VALUES(source_content_id) IS NOT NULL AND source_content_id <> VALUES(source_content_id)) OR (source_song_id IS NOT NULL AND VALUES(source_song_id) IS NOT NULL AND source_song_id <> VALUES(source_song_id))), copyright_id, COALESCE(VALUES(copyright_id), copyright_id)),
+    source_song_id = COALESCE(source_song_id, VALUES(source_song_id)),
+    source_content_id = COALESCE(source_content_id, VALUES(source_content_id)),
     metadata_status = 1,
     updated_at = VALUES(updated_at);

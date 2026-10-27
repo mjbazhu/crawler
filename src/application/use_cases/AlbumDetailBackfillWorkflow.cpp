@@ -2,31 +2,13 @@
 
 #include "crawler/application/use_cases/WorkflowPaging.h"
 #include "AlbumCollectionCompletion.h"
+#include "AlbumTrackCollection.h"
 
 #include <future>
+#include <algorithm>
 #include <utility>
 
 namespace orchestrator::modules::crawler::application::use_cases {
-
-namespace {
-
-// 专辑详情采集结果。
-struct AlbumDetailResult {
-    application::model::AlbumSourceMetadata source;                      // 请求来源
-    std::vector<application::model::AlbumSourceMetadata> detail_sources; // 详情解析结果
-    std::vector<application::model::SongSourceMetadata> song_sources;    // 歌曲来源解析结果
-    bool fetched = false;                                                // 是否成功获取详情
-};
-
-// 专辑歌曲采集结果。
-struct AlbumSongResult {
-    application::model::AlbumSourceMetadata source;                      // 请求来源
-    std::vector<application::model::SongSourceMetadata> song_sources;    // 歌曲来源解析结果
-    bool fetched = false;                                                // 是否成功获取响应
-    std::vector<application::model::AlbumSourceMetadata> detail_sources; // 同响应专辑实体
-};
-
-} // namespace
 
 AlbumDetailBackfillWorkflow::AlbumDetailBackfillWorkflow(
     std::shared_ptr<application::ports::AlbumDetailProvider> album_detail_provider,
@@ -44,146 +26,33 @@ AlbumDetailBackfillWorkflow::AlbumDetailBackfillWorkflow(
 
 bool AlbumDetailBackfillWorkflow::crawlPendingAlbumDetailsAndSave(std::string source, int limit, int max_page_concurrency)
 {
-    if (!album_detail_provider_ || !album_source_sync_queue_ || !parser_ || !persistence_ || source.empty()) {
-        return false;
-    }
-
-    auto pending_sources = pendingAlbumDetails(std::move(source), limit);
-    if (pending_sources.empty()) {
-        return false;
-    }
-
-    bool saved_any = false;
-    const int detail_window = workflowPageWindow(max_page_concurrency);
-    for (std::size_t first = 0; first < pending_sources.size(); first += static_cast<std::size_t>(detail_window)) {
-        const std::size_t last = (std::min)(pending_sources.size(), first + static_cast<std::size_t>(detail_window));
-        std::vector<std::future<AlbumDetailResult>> futures;
-        futures.reserve(last - first);
-
-        for (std::size_t index = first; index < last; ++index) {
-            application::model::AlbumSourceMetadata source_metadata = pending_sources[index];
-            (void)album_source_sync_queue_->updateDetailSyncStatus(source_metadata.source, source_metadata.source_album_id, 1, {});
-            (void)album_source_sync_queue_->updateSongsSyncStatus(source_metadata.source, source_metadata.source_album_id, 1, 0, {});
-            AlbumDetailResult fallback;
-            fallback.source = source_metadata;
-
-            futures.push_back(page_runner_.submit<AlbumDetailResult>(
-                [this, source_metadata]() {
-                    AlbumDetailResult result;
-                    result.source = source_metadata;
-                    auto response = album_detail_provider_->fetchAlbumDetail(source_metadata.source_album_id, source_metadata.source_res_type);
-                    if (!response) {
-                        return result;
-                    }
-                    std::vector<char> body = std::move(response->body);
-                    result.fetched = true;
-                    result.detail_sources = parser_->parseAlbumSources(body);
-                    result.song_sources = parser_->parseSongSources(std::move(body));
-                    return result;
-                },
-                std::move(fallback),
-                "collect album detail"
-            ));
-        }
-
-        for (auto &future : futures) {
-            auto result = future.get();
-            if (!result.fetched || result.detail_sources.empty()) {
-                (void)album_source_sync_queue_->updateDetailSyncStatus(result.source.source, result.source.source_album_id, 3, "album detail fetch or parse failed");
-                (void)album_source_sync_queue_->updateSongsSyncStatus(result.source.source, result.source.source_album_id, 3, 0, "album detail fetch or parse failed");
-            } else {
-                const bool saved = persistence_->saveAlbumDetails(result.detail_sources, result.song_sources);
-                saved_any = saved || saved_any;
-                if (!saved) {
-                    (void)album_source_sync_queue_->updateDetailSyncStatus(result.source.source, result.source.source_album_id, 3, "album detail save failed");
-                    (void)album_source_sync_queue_->updateSongsSyncStatus(result.source.source, result.source.source_album_id, 3, 0, "album detail save failed");
-                } else {
-                    const int song_count = static_cast<int>(result.song_sources.size());
-                    if (song_count == 0) {
-                        (void)album_source_sync_queue_->updateSongsSyncStatus(result.source.source, result.source.source_album_id, albumSongSyncStatus(result.detail_sources, 0), 0, {});
-                    } else {
-                        const bool songs_saved = saved;
-                        saved_any = songs_saved || saved_any;
-                        if (songs_saved) {
-                            (void)album_source_sync_queue_->updateSongsSyncStatus(result.source.source, result.source.source_album_id, albumSongSyncStatus(result.detail_sources, song_count), song_count, {});
-                        } else {
-                            (void)album_source_sync_queue_->updateSongsSyncStatus(result.source.source, result.source.source_album_id, 3, 0, "album detail songs save failed");
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    return saved_any;
+    return collectPending(std::move(source), limit, max_page_concurrency, false);
 }
 
 bool AlbumDetailBackfillWorkflow::crawlPendingAlbumSongsAndSave(std::string source, int limit, int max_page_concurrency)
 {
-    if (!album_detail_provider_ || !album_source_sync_queue_ || !parser_ || !persistence_ || source.empty()) {
-        return false;
-    }
+    return collectPending(std::move(source), limit, max_page_concurrency, true);
+}
 
-    auto pending_sources = pendingAlbumSongs(std::move(source), limit);
-    if (pending_sources.empty()) {
-        return false;
-    }
-
-    bool saved_any = false;
-    const int detail_window = workflowPageWindow(max_page_concurrency);
-    for (std::size_t first = 0; first < pending_sources.size(); first += static_cast<std::size_t>(detail_window)) {
-        const std::size_t last = (std::min)(pending_sources.size(), first + static_cast<std::size_t>(detail_window));
-        std::vector<std::future<AlbumSongResult>> futures;
-        futures.reserve(last - first);
-
-        for (std::size_t index = first; index < last; ++index) {
-            application::model::AlbumSourceMetadata source_metadata = pending_sources[index];
-            (void)album_source_sync_queue_->updateSongsSyncStatus(source_metadata.source, source_metadata.source_album_id, 1, 0, {});
-            AlbumSongResult fallback;
-            fallback.source = source_metadata;
-
-            futures.push_back(page_runner_.submit<AlbumSongResult>(
-                [this, source_metadata]() {
-                    AlbumSongResult result;
-                    result.source = source_metadata;
-                    auto response = album_detail_provider_->fetchAlbumDetail(source_metadata.source_album_id, source_metadata.source_res_type);
-                    if (!response) {
-                        return result;
-                    }
-                    result.fetched = true;
-                    result.detail_sources = parser_->parseAlbumSources(response->body);
-                    result.song_sources = parser_->parseSongSources(std::move(response->body));
-                    return result;
-                },
-                std::move(fallback),
-                "collect album songs"
-            ));
+bool AlbumDetailBackfillWorkflow::collectPending(std::string source, int limit, int max_page_concurrency, bool songs_only)
+{
+    if (!album_detail_provider_ || !album_source_sync_queue_ || !parser_ || !persistence_ || source.empty()) return false;
+    const auto pending = songs_only ? pendingAlbumSongs(source, limit) : pendingAlbumDetails(source, limit);
+    if (pending.empty()) return true;
+    const auto window = static_cast<std::size_t>(workflowPageWindow(max_page_concurrency));
+    bool saved = false;
+    for (std::size_t first = 0; first < pending.size(); first += window) {
+        std::vector<std::future<bool>> tasks;
+        for (std::size_t i = first; i < (std::min)(pending.size(), first + window); ++i) {
+            tasks.push_back(page_runner_.submit<bool>([this, item = pending[i], songs_only] {
+                return songs_only ? crawlAlbumSongsAndSave(item) : crawlAlbumDetailAndSave(item);
+            },
+                                                      false,
+                                                      "collect pending album"));
         }
-
-        for (auto &future : futures) {
-            auto result = future.get();
-            if (!result.fetched) {
-                (void)album_source_sync_queue_->updateSongsSyncStatus(result.source.source, result.source.source_album_id, 3, 0, "album songs fetch failed");
-            } else {
-                const int song_count = static_cast<int>(result.song_sources.size());
-                if (song_count == 0) {
-                    const bool saved = !result.detail_sources.empty() && persistence_->saveAlbumDetails(result.detail_sources, {});
-                    saved_any = saved || saved_any;
-                    (void)album_source_sync_queue_->updateSongsSyncStatus(result.source.source, result.source.source_album_id, saved ? albumSongSyncStatus(result.detail_sources, 0) : 3, 0, {});
-                } else {
-                    const bool songs_saved = persistence_->saveAlbumDetails(result.detail_sources, result.song_sources);
-                    saved_any = songs_saved || saved_any;
-                    if (songs_saved) {
-                        (void)album_source_sync_queue_->updateSongsSyncStatus(result.source.source, result.source.source_album_id, albumSongSyncStatus(result.detail_sources, song_count), song_count, {});
-                    } else {
-                        (void)album_source_sync_queue_->updateSongsSyncStatus(result.source.source, result.source.source_album_id, 3, 0, "album songs save failed");
-                    }
-                }
-            }
-        }
+        for (auto &task : tasks) saved = task.get() || saved;
     }
-
-    return saved_any;
+    return saved;
 }
 
 std::vector<application::model::AlbumSourceMetadata> AlbumDetailBackfillWorkflow::pendingAlbumDetails(std::string source, int limit)
@@ -206,71 +75,55 @@ std::vector<application::model::AlbumSourceMetadata> AlbumDetailBackfillWorkflow
 
 bool AlbumDetailBackfillWorkflow::crawlAlbumDetailAndSave(application::model::AlbumSourceMetadata source_metadata)
 {
-    if (!album_detail_provider_ || !album_source_sync_queue_ || !parser_ || !persistence_ || source_metadata.source_album_id.empty()) {
-        return false;
-    }
-
-    (void)album_source_sync_queue_->updateDetailSyncStatus(source_metadata.source, source_metadata.source_album_id, 1, {});
-    (void)album_source_sync_queue_->updateSongsSyncStatus(source_metadata.source, source_metadata.source_album_id, 1, 0, {});
-    auto response = album_detail_provider_->fetchAlbumDetail(source_metadata.source_album_id, source_metadata.source_res_type);
-    if (!response) {
-        (void)album_source_sync_queue_->updateDetailSyncStatus(source_metadata.source, source_metadata.source_album_id, 3, "album detail fetch failed");
-        (void)album_source_sync_queue_->updateSongsSyncStatus(source_metadata.source, source_metadata.source_album_id, 3, 0, "album detail fetch failed");
-        return false;
-    }
-
-    std::vector<char> body = std::move(response->body);
-    auto detail_sources = parser_->parseAlbumSources(body);
-    auto song_sources = parser_->parseSongSources(std::move(body));
-    if (detail_sources.empty()) {
-        (void)album_source_sync_queue_->updateDetailSyncStatus(source_metadata.source, source_metadata.source_album_id, 3, "album detail parse failed");
-        (void)album_source_sync_queue_->updateSongsSyncStatus(source_metadata.source, source_metadata.source_album_id, 3, 0, "album detail parse failed");
-        return false;
-    }
-
-    const bool saved = persistence_->saveAlbumDetails(detail_sources, song_sources);
-    if (!saved) {
-        (void)album_source_sync_queue_->updateDetailSyncStatus(source_metadata.source, source_metadata.source_album_id, 3, "album detail save failed");
-        (void)album_source_sync_queue_->updateSongsSyncStatus(source_metadata.source, source_metadata.source_album_id, 3, 0, "album detail save failed");
-        return false;
-    }
-
-    const int song_count = static_cast<int>(song_sources.size());
-    if (song_count == 0) {
-        (void)album_source_sync_queue_->updateSongsSyncStatus(source_metadata.source, source_metadata.source_album_id, albumSongSyncStatus(detail_sources, 0), 0, {});
-        return true;
-    }
-
-    const bool songs_saved = saved;
-    (void)album_source_sync_queue_->updateSongsSyncStatus(source_metadata.source, source_metadata.source_album_id, songs_saved ? albumSongSyncStatus(detail_sources, song_count) : 3, songs_saved ? song_count : 0, songs_saved ? "" : "album detail songs save failed");
-    return songs_saved;
+    return collectAlbumResponse(std::move(source_metadata), false);
 }
 
 bool AlbumDetailBackfillWorkflow::crawlAlbumSongsAndSave(application::model::AlbumSourceMetadata source_metadata)
+{
+    return collectAlbumResponse(std::move(source_metadata), true);
+}
+
+bool AlbumDetailBackfillWorkflow::collectAlbumResponse(application::model::AlbumSourceMetadata source_metadata, bool songs_only)
 {
     if (!album_detail_provider_ || !album_source_sync_queue_ || !parser_ || !persistence_ || source_metadata.source_album_id.empty()) {
         return false;
     }
 
-    (void)album_source_sync_queue_->updateSongsSyncStatus(source_metadata.source, source_metadata.source_album_id, 1, 0, {});
-    auto response = album_detail_provider_->fetchAlbumDetail(source_metadata.source_album_id, source_metadata.source_res_type);
-    if (!response) {
-        (void)album_source_sync_queue_->updateSongsSyncStatus(source_metadata.source, source_metadata.source_album_id, 3, 0, "album songs fetch failed");
+    const auto fail = [&](const std::string &message) {
+        if (songs_only)
+            (void)album_source_sync_queue_->updateSongsSyncStatus(source_metadata.source, source_metadata.source_album_id, 3, 0, message);
+        else
+            (void)album_source_sync_queue_->updateDetailSyncStatus(source_metadata.source, source_metadata.source_album_id, 3, message);
         return false;
-    }
+    };
+    if (songs_only)
+        (void)album_source_sync_queue_->updateSongsSyncStatus(source_metadata.source, source_metadata.source_album_id, 1, 0, {});
+    else
+        (void)album_source_sync_queue_->updateDetailSyncStatus(source_metadata.source, source_metadata.source_album_id, 1, {});
+    auto response = album_detail_provider_->fetchAlbumDetail(source_metadata.source_album_id, source_metadata.source_res_type);
+    if (!response || response->status_code < 200 || response->status_code >= 300) return fail("album response fetch failed");
 
-    auto detail_sources = parser_->parseAlbumSources(response->body);
-    auto song_sources = parser_->parseSongSources(std::move(response->body));
-    const int song_count = static_cast<int>(song_sources.size());
-    if (song_count == 0) {
-        const bool saved = !detail_sources.empty() && persistence_->saveAlbumDetails(detail_sources, {});
-        (void)album_source_sync_queue_->updateSongsSyncStatus(source_metadata.source, source_metadata.source_album_id, saved ? albumSongSyncStatus(detail_sources, 0) : 3, 0, {});
-        return saved;
+    auto batch = parser_->parseSources(std::move(response->body));
+    auto target = std::find_if(batch.albums.begin(), batch.albums.end(), [&](const auto &album) {
+        return album.detail_sync_status == 2 && album.source == source_metadata.source && (album.source_album_id == source_metadata.source_album_id || album.source_material_id == source_metadata.source_album_id);
+    });
+    if (target == batch.albums.end()) return fail("album response identity or metadata missing");
+    const auto pagination_error = collectRemainingAlbumTracks(*target, batch, *album_detail_provider_, *parser_);
+    for (auto &album : batch.albums) {
+        // 响应中的推荐专辑卡片仍是摘要，不能被本次详情任务误标为已采集。
+        if (album.detail_sync_status == 2) album.songs_sync = albumSongSyncResult(album, batch.songs);
     }
-
-    const bool songs_saved = persistence_->saveAlbumDetails(detail_sources, song_sources);
-    (void)album_source_sync_queue_->updateSongsSyncStatus(source_metadata.source, source_metadata.source_album_id, songs_saved ? albumSongSyncStatus(detail_sources, song_count) : 3, songs_saved ? song_count : 0, songs_saved ? "" : "album songs save failed");
-    return songs_saved;
+    if (!pagination_error.empty()) {
+        target->songs_sync->status = 4;
+        target->songs_sync->error = pagination_error;
+    }
+    const auto result = *target->songs_sync;
+    if (!persistence_->saveAlbumDetails(std::move(batch))) return fail("album response save failed");
+    // 原子 writer 已提交两个独立结果，不能再次以 UPDATE 的变更行数推断事务成功。
+    if (persistence_->hasAtomicWriter()) return true;
+    const bool detail_saved = album_source_sync_queue_->updateDetailSyncStatus(source_metadata.source, source_metadata.source_album_id, 2, {});
+    const bool songs_saved = album_source_sync_queue_->updateSongsSyncStatus(source_metadata.source, source_metadata.source_album_id, result.status, result.received_count, result.error);
+    return detail_saved && songs_saved;
 }
 
 } // namespace orchestrator::modules::crawler::application::use_cases

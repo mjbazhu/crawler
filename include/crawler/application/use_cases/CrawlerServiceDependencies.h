@@ -12,7 +12,6 @@
 #include "crawler/application/ports/parsing/SongSourceParser.h"
 #include "crawler/application/ports/persistence/AlbumRepository.h"
 #include "crawler/application/ports/persistence/MetadataBatchWriter.h"
-#include "crawler/application/ports/storage/MetadataCoverStore.h"
 #include "crawler/application/ports/persistence/AlbumSourceSyncQueue.h"
 #include "crawler/application/ports/persistence/AlbumSourceWriter.h"
 #include "crawler/application/ports/persistence/BatchTaskRepository.h"
@@ -79,7 +78,6 @@ struct CrawlerParserPorts {
 // Crawler 持久化依赖组，专辑来源写入和同步队列保持拆分。
 struct CrawlerPersistencePorts {
     std::shared_ptr<application::ports::MetadataBatchWriter> metadata_batch_writer;                                    // 实体及关系原子写入 port
-    std::shared_ptr<application::ports::MetadataCoverStore> metadata_cover_store;                                      // 采集阶段本地封面 port
     std::shared_ptr<application::ports::FileStore> file_store;                                                         // 文件存储 port
     std::shared_ptr<application::ports::SongRepository> song_repository;                                               // 歌曲仓储 port
     std::shared_ptr<application::ports::AlbumRepository> album_repository;                                             // 专辑仓储 port

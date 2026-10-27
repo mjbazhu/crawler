@@ -52,7 +52,10 @@ FROM (
     SELECT 2026102501, _utf8mb4'normalize_music_table_ownership' COLLATE utf8mb4_unicode_ci, _utf8mb4'7852e56e1bffd18dbd6785882018cf39' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102502, _utf8mb4'optimize_normalized_catalog_queries' COLLATE utf8mb4_unicode_ci, _utf8mb4'55b4ebb3fd1a1787ed75a0e4ec8e912b' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102601, _utf8mb4'source_identity_and_album_count_semantics' COLLATE utf8mb4_unicode_ci, _utf8mb4'247abb66a7e3c100b1c6c56ed0d9b5c4' COLLATE utf8mb4_unicode_ci UNION ALL
-    SELECT 2026102602, _utf8mb4'resource_claim_generation' COLLATE utf8mb4_unicode_ci, _utf8mb4'b633fca210d1b102062ef69f292f9c66' COLLATE utf8mb4_unicode_ci
+    SELECT 2026102602, _utf8mb4'resource_claim_generation' COLLATE utf8mb4_unicode_ci, _utf8mb4'b633fca210d1b102062ef69f292f9c66' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT 2026102701, _utf8mb4'migu_album_material_lookup' COLLATE utf8mb4_unicode_ci, _utf8mb4'b830cb1af262e73ec4669f5f39ae4312' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT 2026102702, _utf8mb4'singer_source_gender_ownership' COLLATE utf8mb4_unicode_ci, _utf8mb4'c920c30b5f4fd81c1c9dff0fb7167f00' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT 2026102703, _utf8mb4'metadata_cover_remote_urls' COLLATE utf8mb4_unicode_ci, _utf8mb4'75da4ef101026533d80bf7e8830b391f' COLLATE utf8mb4_unicode_ci
 ) expected
 LEFT JOIN schema_migrations m ON m.version = expected.version
 UNION ALL
@@ -87,7 +90,10 @@ FROM (
     SELECT 2026102501, _utf8mb4'7852e56e1bffd18dbd6785882018cf39' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102502, _utf8mb4'55b4ebb3fd1a1787ed75a0e4ec8e912b' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102601, _utf8mb4'247abb66a7e3c100b1c6c56ed0d9b5c4' COLLATE utf8mb4_unicode_ci UNION ALL
-    SELECT 2026102602, _utf8mb4'b633fca210d1b102062ef69f292f9c66' COLLATE utf8mb4_unicode_ci
+    SELECT 2026102602, _utf8mb4'b633fca210d1b102062ef69f292f9c66' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT 2026102701, _utf8mb4'b830cb1af262e73ec4669f5f39ae4312' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT 2026102702, _utf8mb4'c920c30b5f4fd81c1c9dff0fb7167f00' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT 2026102703, _utf8mb4'75da4ef101026533d80bf7e8830b391f' COLLATE utf8mb4_unicode_ci
 ) expected
 LEFT JOIN schema_migrations m ON m.version = expected.version
 UNION ALL
@@ -130,6 +136,8 @@ SELECT
     IF(c.column_name IS NULL, 0, 1) AS present
 FROM (
     SELECT _utf8mb4'song_source_refs' COLLATE utf8mb4_unicode_ci AS table_name, _utf8mb4'source_duration_seconds' COLLATE utf8mb4_unicode_ci AS column_name UNION ALL
+    SELECT _utf8mb4'singer_resources' COLLATE utf8mb4_unicode_ci, _utf8mb4'remote_url' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT _utf8mb4'album_resources' COLLATE utf8mb4_unicode_ci, _utf8mb4'remote_url' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT _utf8mb4'album_source_refs' COLLATE utf8mb4_unicode_ci, _utf8mb4'source_title_pinyin' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT _utf8mb4'song_artist_refs' COLLATE utf8mb4_unicode_ci, _utf8mb4'artist_order' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT _utf8mb4'song_artist_refs' COLLATE utf8mb4_unicode_ci, _utf8mb4'is_primary' COLLATE utf8mb4_unicode_ci UNION ALL
@@ -142,6 +150,7 @@ FROM (
     SELECT _utf8mb4'song_source_audio_formats' COLLATE utf8mb4_unicode_ci, _utf8mb4'aformat' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT _utf8mb4'song_artist_refs' COLLATE utf8mb4_unicode_ci, _utf8mb4'singer_source_ref_id' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT _utf8mb4'song_artist_refs' COLLATE utf8mb4_unicode_ci, _utf8mb4'is_seed' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT _utf8mb4'singer_source_refs' COLLATE utf8mb4_unicode_ci, _utf8mb4'source_gender' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT _utf8mb4'singer_source_refs' COLLATE utf8mb4_unicode_ci, _utf8mb4'source_name_pinyin' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT _utf8mb4'singer_source_refs' COLLATE utf8mb4_unicode_ci, _utf8mb4'source_song_total' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT _utf8mb4'singer_source_refs' COLLATE utf8mb4_unicode_ci, _utf8mb4'source_album_total' COLLATE utf8mb4_unicode_ci UNION ALL

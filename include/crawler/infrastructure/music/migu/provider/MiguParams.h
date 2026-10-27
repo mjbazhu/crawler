@@ -14,6 +14,7 @@ struct Params {
     std::optional<std::string> searchSwitch;
     std::optional<std::string> needSimple;
     std::optional<uint64_t> resourceId;
+    std::optional<uint64_t> albumId; // 专辑曲目分页使用的普通专辑或已核实物料身份
     std::optional<int> resourceType;
     std::optional<uint64_t> singerId;            // 歌手 ID，用于歌手歌曲分页接口
     std::optional<int> type;                     // Migu 歌手歌曲接口类型，当前 type=1 表示歌曲列表

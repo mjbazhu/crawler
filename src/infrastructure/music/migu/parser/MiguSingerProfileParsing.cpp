@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <limits>
+#include <utility>
 
 namespace orchestrator::modules::crawler::infrastructure::music::migu::parser::detail {
 
@@ -44,6 +45,17 @@ void collectSingerProfileIdentity(const nlohmann::json &item, application::model
         extractActionId(JsonUtils::getString(item, "action")),
         extractViewIdSuffix(JsonUtils::getString(item, "viewId")),
     });
+    const auto name = JsonUtils::getString(item, "txt");
+    if (!profile.source_singer_id.empty() && !name.empty()) {
+        application::model::SingerSourceMetadata singer;
+        singer.source = profile.source;
+        singer.source_singer_id = profile.source_singer_id;
+        singer.name = name;
+        singer.normalized_name = name;
+        singer.source_name_pinyin = firstNonEmpty({JsonUtils::getString(item, "nameSpelling"), JsonUtils::getString(item, "namePinyin")});
+        singer.avatar_url = normalizeMiguResourceUrl(JsonUtils::getString(item, "img"));
+        profile.metadata = std::move(singer);
+    }
 }
 
 // 从 tab 项里提取歌曲和专辑平台声明总数。
@@ -105,9 +117,15 @@ application::model::SingerSourceProfile parseSingerSourceProfileRaw(const std::v
         return profile;
     }
 
+    return parseSingerSourceProfileObject(*root_opt, true);
+}
+
+application::model::SingerSourceProfile parseSingerSourceProfileObject(const nlohmann::json &root, bool complete_profile)
+{
+    application::model::SingerSourceProfile profile;
     SingerProfileParseState state;
-    collectSingerProfile(*root_opt, profile, state);
-    if (state.saw_tab_scroll) {
+    collectSingerProfile(root, profile, state);
+    if ((complete_profile || profile.metadata) && state.saw_tab_scroll) {
         if (!state.saw_song_tab && !profile.source_song_total) {
             profile.source_song_total = 0;
         }

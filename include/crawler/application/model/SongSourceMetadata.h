@@ -25,6 +25,7 @@ struct SongSourceArtistRef {
     std::uint32_t artist_order = 0;        // 歌手在平台返回列表中的顺序，从 1 开始
     bool is_primary = false;               // 是否主歌手
     bool is_seed = false;                  // 是否本次采集入口歌手
+    std::string source_artist_image;       // 当前响应已有头像，仅分流到歌手资源保存
 };
 
 // 歌曲平台来源元数据，承载公共歌曲信息、平台 ID、平台时长、资源入口和音质参数。

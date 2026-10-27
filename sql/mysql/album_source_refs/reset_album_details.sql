@@ -1,6 +1,5 @@
 UPDATE album_source_refs
 SET detail_sync_status = 0,
-    detail_synced_at = 0,
     detail_sync_error = NULL,
     detail_claim_token = '',
     detail_claimed_at = 0,

@@ -46,6 +46,9 @@ public:
     // 获取专辑详情原始响应；Migu resourceinfo.do 按 source_res_type 映射 resourceType。
     std::optional<Response> fetchAlbumDetail(std::string album_id, std::string source_res_type) override;
 
+    // 只请求指定曲目页，页号和页大小有固定上限；不获取详情或写入存储。
+    std::optional<Response> fetchAlbumSongPage(std::string album_id, int page, int page_size) override;
+
     // 获取歌手歌曲单页原始响应；Migu 当前 type=1 表示歌曲列表。
     std::optional<Response> fetchSingerSongsPage(std::uint64_t singer_id, int page) override;
 

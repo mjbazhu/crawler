@@ -3,7 +3,7 @@ SELECT
     s.name,
     s.normalized_name,
     COALESCE(r.source_name_pinyin, ''),
-    s.gender,
+    r.source_gender AS gender,
     s.status,
     r.id,
     r.source,

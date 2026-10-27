@@ -4,7 +4,6 @@
 #include "crawler/infrastructure/music/migu/parser/MiguParserSupport.h"
 #include "crawler/infrastructure/music/migu/parser/MiguSingerProfileParser.h"
 #include "crawler/infrastructure/music/migu/parser/MiguSingerSourceParser.h"
-#include "crawler/infrastructure/music/migu/parser/MiguSongSourceParser.h"
 #include "crawler/infrastructure/music/migu/parser/strategy/MiguStrategies.h"
 
 namespace orchestrator::modules::crawler::infrastructure::music::migu::parser {
@@ -23,11 +22,6 @@ MiguParseResultParser::MiguParseResultParser()
 std::vector<domain::ParseResult> MiguParseResultParser::parse(const std::vector<char> &raw_data) const
 {
     return detail::parseResultsWithStrategies(raw_data, strategies_);
-}
-
-std::vector<application::model::SongSourceMetadata> MiguSongSourceParser::parseSongSources(const std::vector<char> &raw_data) const
-{
-    return detail::parseSongSourcesRaw(raw_data);
 }
 
 std::vector<application::model::SingerSourceMetadata> MiguSingerSourceParser::parseSingerSources(const std::vector<char> &raw_data, std::string_view tab) const

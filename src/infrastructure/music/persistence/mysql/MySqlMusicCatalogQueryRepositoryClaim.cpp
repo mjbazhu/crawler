@@ -20,20 +20,19 @@ namespace {
 
 constexpr std::string_view kClaimOwner = "crawler-migu";
 
-// 补池 retry 只允许认领未同步、失败和部分完成，已完成目标即使显式传入也跳过。
-std::array<int, 5> claimStatusSlots(const std::vector<int> &statuses)
+// 普通重试选择未同步、失败和部分完成；force 额外纳入已完成，始终排除运行态。
+std::array<int, 5> claimStatusSlots(const std::vector<int> &statuses, bool force)
 {
     std::array<int, 5> slots {-999, -999, -999, -999, -999};
     std::vector<int> values;
     values.reserve(statuses.empty() ? 3 : statuses.size());
     for (int status : statuses) {
-        if ((status == 0 || status == 3 || status == 4) && std::find(values.begin(), values.end(), status) == values.end()) {
+        if ((status == 0 || status == 3 || status == 4 || (force && status == 2)) && std::find(values.begin(), values.end(), status) == values.end()) {
             values.push_back(status);
         }
     }
-    if (values.empty()) {
-        values = {0, 3, 4};
-    }
+    if (statuses.empty()) values = {0, 3, 4};
+    if (force && std::find(values.begin(), values.end(), 2) == values.end()) values.push_back(2);
 
     for (std::size_t index = 0; index < values.size() && index < slots.size(); ++index) {
         slots[index] = values[index];
@@ -86,7 +85,7 @@ boost::asio::awaitable<application::model::MiguBackfillClaimResult> MySqlMusicCa
     auto connection = co_await pool_->coAcquire();
     auto update_statement = co_await connection->async_prepare_statement(claim_singer_songs_update_sql_, boost::asio::use_awaitable);
     auto select_statement = co_await connection->async_prepare_statement(claim_singer_songs_select_sql_, boost::asio::use_awaitable);
-    const auto statuses = claimStatusSlots(query.statuses);
+    const auto statuses = claimStatusSlots(query.statuses, query.force);
     const int gender = optionalOrMinusOne(query.gender);
     const std::string claim_token = makeClaimToken("singer-songs");
     application::model::MiguBackfillClaimResult claim;
@@ -94,7 +93,7 @@ boost::asio::awaitable<application::model::MiguBackfillClaimResult> MySqlMusicCa
     const auto claim_targets = [&](const std::string &source_id, int limit) -> boost::asio::awaitable<int> {
         boost::mysql::results result;
         co_await connection->async_execute(
-            update_statement.bind(claim_token, std::string(kClaimOwner), query.source, source_id, source_id, statuses[0], statuses[1], statuses[2], statuses[3], statuses[4], query.keyword, query.keyword, query.keyword, query.country, query.country, gender, gender, static_cast<std::uint64_t>(limit)),
+            update_statement.bind(claim_token, std::string(kClaimOwner), query.source, source_id, source_id, statuses[0], statuses[1], statuses[2], statuses[3], statuses[4], query.force ? 1 : 0, query.keyword, query.keyword, query.keyword, query.country, query.country, gender, gender, static_cast<std::uint64_t>(limit)),
             result,
             boost::asio::use_awaitable
         );
@@ -126,7 +125,7 @@ boost::asio::awaitable<application::model::MiguBackfillClaimResult> MySqlMusicCa
     auto connection = co_await pool_->coAcquire();
     auto update_statement = co_await connection->async_prepare_statement(claim_singer_albums_update_sql_, boost::asio::use_awaitable);
     auto select_statement = co_await connection->async_prepare_statement(claim_singer_albums_select_sql_, boost::asio::use_awaitable);
-    const auto statuses = claimStatusSlots(query.statuses);
+    const auto statuses = claimStatusSlots(query.statuses, query.force);
     const int gender = optionalOrMinusOne(query.gender);
     const std::string claim_token = makeClaimToken("singer-albums");
     application::model::MiguBackfillClaimResult claim;
@@ -134,7 +133,7 @@ boost::asio::awaitable<application::model::MiguBackfillClaimResult> MySqlMusicCa
     const auto claim_targets = [&](const std::string &source_id, int limit) -> boost::asio::awaitable<int> {
         boost::mysql::results result;
         co_await connection->async_execute(
-            update_statement.bind(claim_token, std::string(kClaimOwner), query.source, source_id, source_id, statuses[0], statuses[1], statuses[2], statuses[3], statuses[4], query.keyword, query.keyword, query.keyword, query.country, query.country, gender, gender, static_cast<std::uint64_t>(limit)),
+            update_statement.bind(claim_token, std::string(kClaimOwner), query.source, source_id, source_id, statuses[0], statuses[1], statuses[2], statuses[3], statuses[4], query.force ? 1 : 0, query.keyword, query.keyword, query.keyword, query.country, query.country, gender, gender, static_cast<std::uint64_t>(limit)),
             result,
             boost::asio::use_awaitable
         );
@@ -166,7 +165,7 @@ boost::asio::awaitable<application::model::MiguBackfillClaimResult> MySqlMusicCa
     auto connection = co_await pool_->coAcquire();
     auto update_statement = co_await connection->async_prepare_statement(claim_album_details_update_sql_, boost::asio::use_awaitable);
     auto select_statement = co_await connection->async_prepare_statement(claim_album_details_select_sql_, boost::asio::use_awaitable);
-    const auto statuses = claimStatusSlots(query.statuses);
+    const auto statuses = claimStatusSlots(query.statuses, query.force);
     const int kind = optionalOrMinusOne(query.album_kind);
     const std::string claim_token = makeClaimToken("album-details");
     application::model::MiguBackfillClaimResult claim;
@@ -206,7 +205,7 @@ boost::asio::awaitable<application::model::MiguBackfillClaimResult> MySqlMusicCa
     auto connection = co_await pool_->coAcquire();
     auto update_statement = co_await connection->async_prepare_statement(claim_album_songs_update_sql_, boost::asio::use_awaitable);
     auto select_statement = co_await connection->async_prepare_statement(claim_album_songs_select_sql_, boost::asio::use_awaitable);
-    const auto statuses = claimStatusSlots(query.statuses);
+    const auto statuses = claimStatusSlots(query.statuses, query.force);
     const int kind = optionalOrMinusOne(query.album_kind);
     const std::string claim_token = makeClaimToken("album-songs");
     application::model::MiguBackfillClaimResult claim;

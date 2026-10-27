@@ -23,5 +23,6 @@ FROM album_catalog_sources
 WHERE source = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci
   AND detail_sync_status = 2
   AND songs_sync_status IN (0, 3, 4)
+  AND (songs_sync_status <> 4 OR source_song_total IS NOT NULL)
 ORDER BY updated_at ASC, id ASC
 LIMIT ? OFFSET ?

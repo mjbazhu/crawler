@@ -19,8 +19,31 @@ ParserDispatch::ParserDispatch(
     album_source_parser_(std::move(album_source_parser)),
     singer_profile_parser_(std::move(singer_profile_parser)),
     page_inspector_(std::move(page_inspector)),
+    batch_parser_(std::dynamic_pointer_cast<application::ports::MetadataBatchParser>(parse_result_parser_)),
     parse_runner_(std::move(parse_executor), std::move(diagnostics))
 {}
+
+application::model::MetadataWriteBatch ParserDispatch::parseSources(std::vector<char> body)
+{
+    if (batch_parser_) {
+        return parse_runner_.run<application::model::MetadataWriteBatch>([parser = batch_parser_, body = std::move(body)] {
+            return parser->parseMetadataBatch(body);
+        },
+                                                                         {},
+                                                                         "parse metadata sources");
+    }
+    application::model::MetadataWriteBatch batch;
+    batch.songs = parseSongSources(body);
+    batch.albums = parseAlbumSources(body);
+    auto profile = parseSingerSourceProfile(body);
+    if (!profile.source_singer_id.empty() && (profile.metadata || profile.source_song_total || profile.source_album_total)) {
+        if (profile.metadata) batch.singers.push_back(*profile.metadata);
+        batch.profiles.push_back(std::move(profile));
+    }
+    auto singers = parseSingerSources(std::move(body), {});
+    batch.singers.insert(batch.singers.end(), singers.begin(), singers.end());
+    return batch;
+}
 
 std::vector<domain::ParseResult> ParserDispatch::parse(std::vector<char> body)
 {
@@ -52,6 +75,16 @@ std::vector<application::model::SongSourceMetadata> ParserDispatch::parseSongSou
         {},
         "parse song sources"
     );
+}
+
+application::model::AlbumSongPage ParserDispatch::parseAlbumSongPage(std::vector<char> body)
+{
+    if (!song_source_parser_) return {};
+    return parse_runner_.run<application::model::AlbumSongPage>([parser = song_source_parser_, body = std::move(body)] {
+        return parser->parseAlbumSongPage(body);
+    },
+                                                                {},
+                                                                "parse album song page");
 }
 
 std::vector<application::model::SingerSourceMetadata> ParserDispatch::parseSingerSources(std::vector<char> body, std::string tab)

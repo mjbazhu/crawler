@@ -24,7 +24,7 @@ FROM (
         r.source_singer_id,
         s.name,
         COALESCE(r.source_country, '') AS source_country,
-        s.gender,
+        r.source_gender AS gender,
         '' AS avatar_url,
         r.source_song_total,
         r.source_album_total,
@@ -69,7 +69,7 @@ FROM (
     WHERE r.source = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci
 ) summary
 WHERE (
-      summary.sync_status IN (?, ?, ?, ?, ?)
+      (summary.sync_status <> 1 AND summary.sync_status IN (?, ?, ?, ?, ?))
       OR (? = 1 AND summary.sync_status = 1 AND summary.updated_at <= UNIX_TIMESTAMP() - ?)
   )
   AND (? = '' OR summary.source_country = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci)

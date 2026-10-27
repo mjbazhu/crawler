@@ -7,6 +7,8 @@
 #include "crawler/infrastructure/music/migu/parser/MiguSingerSourceParser.h"
 #include "crawler/infrastructure/music/migu/parser/MiguSongSourceParser.h"
 
+#include "crawler/infrastructure/music/migu/parser/MiguMetadataBatchParser.h"
+
 #include <utility>
 
 namespace orchestrator::modules::crawler::infrastructure::music::migu::parser {
@@ -21,6 +23,11 @@ MiguParser::MiguParser() : parse_result_parser_(std::make_unique<MiguParseResult
 
 MiguParser::~MiguParser() = default;
 
+application::model::MetadataWriteBatch MiguParser::parseMetadataBatch(const std::vector<char> &body) const
+{
+    return MiguMetadataBatchParser {}.parseMetadataBatch(body);
+}
+
 std::vector<domain::ParseResult> MiguParser::parse(const std::vector<char> &raw_data) const
 {
     return parse_result_parser_ ? parse_result_parser_->parse(raw_data) : std::vector<domain::ParseResult> {};
@@ -29,6 +36,11 @@ std::vector<domain::ParseResult> MiguParser::parse(const std::vector<char> &raw_
 std::vector<application::model::SongSourceMetadata> MiguParser::parseSongSources(const std::vector<char> &raw_data) const
 {
     return song_source_parser_ ? song_source_parser_->parseSongSources(raw_data) : std::vector<application::model::SongSourceMetadata> {};
+}
+
+application::model::AlbumSongPage MiguParser::parseAlbumSongPage(const std::vector<char> &raw_data) const
+{
+    return song_source_parser_ ? song_source_parser_->parseAlbumSongPage(raw_data) : application::model::AlbumSongPage {};
 }
 
 std::vector<application::model::SingerSourceMetadata> MiguParser::parseSingerSources(const std::vector<char> &raw_data, std::string_view tab) const

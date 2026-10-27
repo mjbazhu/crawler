@@ -1,6 +1,7 @@
 #include "crawler/application/use_cases/CrawlerService.h"
 
 #include "crawler/application/use_cases/AsyncResourcePortAdapters.h"
+#include "CollectionWorkflowAssembly.h"
 
 #include <algorithm>
 #include <atomic>
@@ -1313,37 +1314,6 @@ CrawlerService::CrawlerService(CrawlerServiceDependencies dependencies) : runtim
     auto migu_pacmtoken_store = dependencies.providers.migu_pacmtoken_store;
     async_runtime_ = dependencies.executors.async_runtime;
 
-    persistence_ = std::make_shared<MetadataPersistenceService>(
-        std::move(dependencies.persistence.file_store),
-        std::move(dependencies.persistence.song_repository),
-        std::move(dependencies.persistence.album_repository),
-        std::move(dependencies.persistence.singer_repository),
-        std::move(dependencies.persistence.song_source_repository),
-        std::move(dependencies.persistence.singer_source_repository),
-        std::move(dependencies.persistence.album_source_writer),
-        std::move(dependencies.executors.persistence_executor),
-        MetadataIngestionDependencies {dependencies.persistence.metadata_batch_writer, dependencies.persistence.metadata_cover_store, dependencies.diagnostics}
-    );
-
-    workflow_ = std::make_shared<MusicCollectionWorkflow>(
-        std::move(dependencies.providers.raw_page_fetcher),
-        std::move(dependencies.providers.song_search_provider),
-        std::move(dependencies.providers.album_search_provider),
-        std::move(dependencies.providers.singer_catalog_provider),
-        std::move(dependencies.providers.album_detail_provider),
-        std::move(dependencies.parsers.parse_result_parser),
-        std::move(dependencies.parsers.song_source_parser),
-        std::move(dependencies.parsers.singer_source_parser),
-        std::move(dependencies.parsers.album_source_parser),
-        std::move(dependencies.parsers.singer_profile_parser),
-        std::move(dependencies.parsers.page_inspector),
-        std::move(dependencies.persistence.album_source_sync_queue),
-        persistence_,
-        std::move(dependencies.executors.parse_executor),
-        std::move(dependencies.executors.page_executor),
-        diagnostics_
-    );
-
     if (song_resource_queue && song_resource_provider && song_resource_parser && song_resource_content_fetcher && song_resource_blob_store) {
         song_resource_workflow_ = std::make_shared<SongResourceDownloadWorkflow>(
             song_resource_queue,
@@ -1395,6 +1365,20 @@ CrawlerService::CrawlerService(CrawlerServiceDependencies dependencies) : runtim
             );
         }
     }
+
+    persistence_ = std::make_shared<MetadataPersistenceService>(
+        std::move(dependencies.persistence.file_store),
+        std::move(dependencies.persistence.song_repository),
+        std::move(dependencies.persistence.album_repository),
+        std::move(dependencies.persistence.singer_repository),
+        std::move(dependencies.persistence.song_source_repository),
+        std::move(dependencies.persistence.singer_source_repository),
+        std::move(dependencies.persistence.album_source_writer),
+        std::move(dependencies.executors.persistence_executor),
+        MetadataIngestionDependencies {dependencies.persistence.metadata_batch_writer, diagnostics_}
+    );
+
+    workflow_ = assembleCollectionWorkflows(dependencies, persistence_, diagnostics_);
 
     batch_task_repository_ = dependencies.persistence.batch_task_repository;
     resource_process_runner_ = TaskRunner(dependencies.executors.batch_executor, diagnostics_);
@@ -1723,7 +1707,9 @@ std::string CrawlerService::startAlbumDetailsBackfillItemsAsync(std::vector<appl
             } catch (...) {
                 return failureTargetResult("unknown album detail crawl error");
             }
-        }
+        },
+        {},
+        true
     );
 }
 
@@ -1780,7 +1766,9 @@ std::string CrawlerService::startAlbumSongsBackfillItemsAsync(std::vector<applic
             } catch (...) {
                 return failureTargetResult("unknown album songs crawl error");
             }
-        }
+        },
+        {},
+        true
     );
 }
 
@@ -1807,7 +1795,7 @@ std::string CrawlerService::startSingerSongsFromDbAsync(application::model::Sing
         item.item_label = target.name.empty() ? target.source_singer_id : target.name;
         item.source = target.source;
         item.source_singer_id = target.source_singer_id;
-        item.payload = "{\"source_country\":\"" + escapeJsonString(target.source_country) + "\",\"gender\":" + std::to_string(target.gender)
+        item.payload = "{\"force\":" + std::string(query.force ? "true" : "false") + ",\"source_country\":\"" + escapeJsonString(target.source_country) + "\",\"gender\":" + std::to_string(target.gender)
                        + ",\"source_song_total\":" + (target.source_song_total ? std::to_string(*target.source_song_total) : "null")
                        + ",\"source_album_total\":" + (target.source_album_total ? std::to_string(*target.source_album_total) : "null") + "}";
         items.push_back(std::move(item));
@@ -1819,7 +1807,7 @@ std::string CrawlerService::startSingerSongsFromDbAsync(application::model::Sing
         normalizeSingerIdsLimit(limit_per_singer),
         "singerSongsFromDb",
         std::move(request_params),
-        [this, queue, by_key = std::move(by_key)](std::string target, int item_limit) {
+        [this, queue, force = query.force, by_key = std::move(by_key)](std::string target, int item_limit) {
             auto it = by_key.find(target);
             if (it == by_key.end()) {
                 return BatchTaskManager::TargetResult {false, 0, "singer target not found", "invalid_target", "invalid_target"};
@@ -1834,7 +1822,7 @@ std::string CrawlerService::startSingerSongsFromDbAsync(application::model::Sing
 
             application::model::SingerCollectionResult result;
             try {
-                result = workflow_->crawlSingerSongsAndSaveResult(singer_id, item_limit, maxPageConcurrency(), source.source_song_total, source.source_album_total);
+                result = workflow_->crawlSingerSongsAndSaveResult(singer_id, item_limit, maxPageConcurrency(), source.source_song_total, source.source_album_total, force);
             } catch (const std::exception &e) {
                 result = {false, false, 0, e.what()};
             } catch (...) {
@@ -1879,7 +1867,7 @@ std::string CrawlerService::startSingerAlbumsFromDbAsync(application::model::Sin
         item.item_label = target.name.empty() ? target.source_singer_id : target.name;
         item.source = target.source;
         item.source_singer_id = target.source_singer_id;
-        item.payload = "{\"source_country\":\"" + escapeJsonString(target.source_country) + "\",\"gender\":" + std::to_string(target.gender)
+        item.payload = "{\"force\":" + std::string(query.force ? "true" : "false") + ",\"source_country\":\"" + escapeJsonString(target.source_country) + "\",\"gender\":" + std::to_string(target.gender)
                        + ",\"source_song_total\":" + (target.source_song_total ? std::to_string(*target.source_song_total) : "null")
                        + ",\"source_album_total\":" + (target.source_album_total ? std::to_string(*target.source_album_total) : "null") + "}";
         items.push_back(std::move(item));
@@ -1891,7 +1879,7 @@ std::string CrawlerService::startSingerAlbumsFromDbAsync(application::model::Sin
         normalizeSingerIdsLimit(limit_per_singer),
         "singerAlbumsFromDb",
         std::move(request_params),
-        [this, queue, by_key = std::move(by_key)](std::string target, int item_limit) {
+        [this, queue, force = query.force, by_key = std::move(by_key)](std::string target, int item_limit) {
             auto it = by_key.find(target);
             if (it == by_key.end()) {
                 return BatchTaskManager::TargetResult {false, 0, "singer target not found", "invalid_target", "invalid_target"};
@@ -1906,7 +1894,7 @@ std::string CrawlerService::startSingerAlbumsFromDbAsync(application::model::Sin
 
             application::model::SingerCollectionResult result;
             try {
-                result = workflow_->crawlSingerAlbumsAndSaveResult(singer_id, item_limit, maxPageConcurrency(), source.source_song_total, source.source_album_total);
+                result = workflow_->crawlSingerAlbumsAndSaveResult(singer_id, item_limit, maxPageConcurrency(), source.source_song_total, source.source_album_total, force);
             } catch (const std::exception &e) {
                 result = {false, false, 0, e.what()};
             } catch (...) {
@@ -1972,7 +1960,8 @@ std::string CrawlerService::startBatchItemsAsync(
     std::string task_type,
     std::string request_params,
     BatchTaskManager::TargetHandler handler,
-    std::string parent_batch_id
+    std::string parent_batch_id,
+    bool allow_empty
 )
 {
     if (!batch_task_manager_) {
@@ -1989,7 +1978,8 @@ std::string CrawlerService::startBatchItemsAsync(
         std::move(request_params),
         runtimeSettingsJson(),
         std::move(parent_batch_id),
-        std::move(handler)
+        std::move(handler),
+        allow_empty
     );
 }
 
@@ -2621,7 +2611,7 @@ application::model::MiguBackfillRetryResult CrawlerService::retryMiguBackfill(st
             item.item_label = singer.name.empty() ? singer.source_singer_id : singer.name;
             item.source = "migu";
             item.source_singer_id = singer.source_singer_id;
-            item.payload = "{\"source_country\":\"" + escapeJsonString(singer.source_country) + "\",\"gender\":" + std::to_string(singer.gender)
+            item.payload = "{\"force\":" + std::string(query.force ? "true" : "false") + ",\"source_country\":\"" + escapeJsonString(singer.source_country) + "\",\"gender\":" + std::to_string(singer.gender)
                            + ",\"source_song_total\":" + (singer.source_song_total ? std::to_string(*singer.source_song_total) : "null")
                            + ",\"source_album_total\":" + (singer.source_album_total ? std::to_string(*singer.source_album_total) : "null") + "}";
             items.push_back(std::move(item));
@@ -2634,7 +2624,7 @@ application::model::MiguBackfillRetryResult CrawlerService::retryMiguBackfill(st
             normalizeLimit(limit_per_target),
             task_type,
             std::move(request_params),
-            [this, queue, backfill_type, by_key = std::move(by_key)](std::string target, int item_limit) {
+            [this, queue, backfill_type, force = query.force, by_key = std::move(by_key)](std::string target, int item_limit) {
                 auto it = by_key.find(target);
                 if (it == by_key.end()) {
                     return BatchTaskManager::TargetResult {false, 0, "singer target not found", "invalid_target", "invalid_target"};
@@ -2647,7 +2637,7 @@ application::model::MiguBackfillRetryResult CrawlerService::retryMiguBackfill(st
 
                 application::model::SingerCollectionResult result;
                 try {
-                    result = backfill_type == "singer-songs" ? workflow_->crawlSingerSongsAndSaveResult(singer_id, item_limit, maxPageConcurrency(), source.source_song_total, source.source_album_total) : workflow_->crawlSingerAlbumsAndSaveResult(singer_id, item_limit, maxPageConcurrency(), source.source_song_total, source.source_album_total);
+                    result = backfill_type == "singer-songs" ? workflow_->crawlSingerSongsAndSaveResult(singer_id, item_limit, maxPageConcurrency(), source.source_song_total, source.source_album_total, force) : workflow_->crawlSingerAlbumsAndSaveResult(singer_id, item_limit, maxPageConcurrency(), source.source_song_total, source.source_album_total, force);
                 } catch (const std::exception &e) {
                     result = {false, false, 0, e.what()};
                 } catch (...) {

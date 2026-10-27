@@ -2,7 +2,7 @@ SELECT
     COUNT(*) AS matched_count,
     COUNT(CASE
         WHEN (
-            summary.sync_status IN (?, ?, ?, ?, ?)
+            (summary.sync_status <> 1 AND summary.sync_status IN (?, ?, ?, ?, ?))
             OR (? = 1 AND summary.sync_status = 1 AND summary.updated_at <= UNIX_TIMESTAMP() - ?)
         ) THEN 1
     END) AS eligible_count
@@ -11,7 +11,7 @@ FROM (
         r.source_singer_id,
         s.name,
         COALESCE(r.source_country, '') AS source_country,
-        s.gender,
+        r.source_gender AS gender,
         CASE
             WHEN r.source_song_total IS NOT NULL AND (
                 SELECT COUNT(DISTINCT ar.song_source_ref_id)

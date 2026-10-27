@@ -1,9 +1,10 @@
 -- 当前结构快照；正式升级由 migrations 管理。
 CREATE TABLE IF NOT EXISTS `singer_source_refs` (
   `id` bigint unsigned NOT NULL AUTO_INCREMENT COMMENT '歌手平台来源主键',
-  `singer_db_id` bigint unsigned NOT NULL COMMENT '关联 singers.id，表示该平台来源属于哪个公共歌手',
+  `singer_db_id` bigint unsigned NOT NULL COMMENT '引用公共歌手名称；真实来源身份由 source 与 source_singer_id 区分',
   `source` varchar(32) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '音乐平台标识，例如 migu、qq、netease',
   `source_singer_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '平台歌手 ID，例如 Migu resId=112',
+  `source_gender` int NOT NULL DEFAULT '0' COMMENT '来源歌手类型：0 未知，1 男，2 女，3 组合；按平台歌手 ID 隔离',
   `source_name_pinyin` varchar(512) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '平台返回的歌手拼音或排序名',
   `source_song_total` int unsigned DEFAULT NULL COMMENT '平台声明歌曲总数，NULL 表示未知',
   `source_album_total` int unsigned DEFAULT NULL COMMENT '平台声明专辑总数，NULL 表示未知',
@@ -37,5 +38,6 @@ CREATE TABLE IF NOT EXISTS `singer_source_refs` (
   KEY `idx_singer_catalog_page` (`source`,`updated_at`,`id`),
   KEY `idx_singer_catalog_country_page` (`source`,`source_country`,`updated_at`,`id`),
   KEY `idx_singer_catalog_status_page` (`source`,`source_country`,`songs_sync_status`,`albums_sync_status`,`updated_at`,`id`),
+  CONSTRAINT `chk_singer_source_gender` CHECK (`source_gender` IN (0,1,2,3)),
   CONSTRAINT `fk_singer_source_refs_singer` FOREIGN KEY (`singer_db_id`) REFERENCES `singers` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='歌手平台来源表，保存平台外部 ID、头像、标签和歌曲/专辑同步状态';

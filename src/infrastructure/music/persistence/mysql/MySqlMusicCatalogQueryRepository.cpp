@@ -770,7 +770,7 @@ boost::asio::awaitable<application::model::MiguSchemaStatus> MySqlMusicCatalogQu
 {
     application::model::MiguSchemaStatus status;
     status.checked_at = nowSeconds();
-    status.latest_available_version = 2026062701;
+    status.latest_available_version = 2026102702;
     auto connection = co_await pool_->coAcquire();
     boost::mysql::results result;
     co_await connection->async_execute(schema_status_sql_, result, boost::asio::use_awaitable);
@@ -1053,6 +1053,10 @@ application::model::MiguAlbumCatalogRecord MySqlMusicCatalogQueryRepository::map
     album.created_at = MySqlValueReader::uint64At(row, 31);
     album.updated_at = MySqlValueReader::uint64At(row, 32);
     album.album_songs_count = MySqlValueReader::intAt(row, 33);
+    if (row.size() >= 36) {
+        album.source_title_pinyin = MySqlValueReader::stringAt(row, 34);
+        album.summary = MySqlValueReader::stringAt(row, 35);
+    }
     return album;
 }
 

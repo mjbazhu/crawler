@@ -1,6 +1,5 @@
 #include "crawler/infrastructure/app/ServerApplication.h"
 
-#include "crawler/infrastructure/storage/filesystem/MetadataCoverStore.h"
 #include "crawler/infrastructure/music/migu/provider/MiguRequestFactory.h"
 #include "crawler/api/controllers/CrawlerController.h"
 #include "crawler/api/routing/CrawlerRoutes.h"
@@ -232,11 +231,6 @@ bool ServerApplication::initialize()
         crawler_dependencies.parsers.song_resource_parser = impl_->song_resource_parser_;
 
         crawler_dependencies.persistence.metadata_batch_writer = persistence_components->metadata_batch_writer;
-        if (persistence_components->metadata_batch_writer) {
-            crawler_dependencies.persistence.metadata_cover_store = std::make_shared<storage::filesystem::MetadataCoverStore>(
-                impl_->http_client_, impl_->file_storage_, music::migu::provider::MiguRequestFactory::defaultHeaders()
-            );
-        }
         crawler_dependencies.persistence.file_store = impl_->file_storage_;
         crawler_dependencies.persistence.song_repository = impl_->song_repository_;
         crawler_dependencies.persistence.album_repository = impl_->album_repository_;

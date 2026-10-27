@@ -11,7 +11,8 @@ using json::JsonUtils;
 namespace {
 
 constexpr std::size_t kSingerSongPageSize = 50;
-constexpr std::size_t kSingerAlbumPageSize = 50;
+// 歌手专辑接口默认每页 10 条，与歌曲接口的 50 条分页独立。
+constexpr std::size_t kSingerAlbumPageSize = 10;
 
 } // namespace
 

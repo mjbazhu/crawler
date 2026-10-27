@@ -59,6 +59,8 @@ std::string toQueryString(const Params &p)
         appendEncoded("searchSwitch", *p.searchSwitch);
     if (p.resourceId)
         append("resourceId", *p.resourceId);
+    if (p.albumId)
+        append("albumId", *p.albumId);
     if (p.resourceType)
         append("resourceType", *p.resourceType);
     else if (p.resourceTypeText)

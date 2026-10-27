@@ -31,6 +31,8 @@ namespace orchestrator::modules::crawler::application::use_cases {
 // 音乐采集兼容门面，只负责把旧入口委托给专门 workflow。
 class MusicCollectionWorkflow {
 public:
+    // 生产装配直接注入已有流程，兼容门面不增加采集策略或状态。
+    MusicCollectionWorkflow(std::shared_ptr<UrlIngestionWorkflow> url, std::shared_ptr<SearchCollectionWorkflow> search, std::shared_ptr<SingerCatalogWorkflow> singer, std::shared_ptr<AlbumDetailBackfillWorkflow> album);
     // 保存窄 provider/parser port 并装配专门 workflow。
     MusicCollectionWorkflow(
         std::shared_ptr<application::ports::RawPageFetcher> raw_page_fetcher,
@@ -61,7 +63,7 @@ public:
     bool crawlSingerSongsAndSave(std::uint64_t singer_id, int limit, int max_page_concurrency);
 
     // 获取指定歌手歌曲分页并返回写入数量。
-    application::model::SingerCollectionResult crawlSingerSongsAndSaveResult(std::uint64_t singer_id, int limit, int max_page_concurrency, std::optional<int> source_song_total = std::nullopt, std::optional<int> source_album_total = std::nullopt);
+    application::model::SingerCollectionResult crawlSingerSongsAndSaveResult(std::uint64_t singer_id, int limit, int max_page_concurrency, std::optional<int> source_song_total = std::nullopt, std::optional<int> source_album_total = std::nullopt, bool refresh_profile = false);
 
     // 获取歌手分类列表并保存歌手来源参数。
     bool crawlSingerIndexAndSave(std::string tab, int limit);
@@ -73,7 +75,7 @@ public:
     bool crawlSingerAlbumsAndSave(std::uint64_t singer_id, int limit, int max_page_concurrency);
 
     // 获取指定歌手专辑分页并返回写入数量。
-    application::model::SingerCollectionResult crawlSingerAlbumsAndSaveResult(std::uint64_t singer_id, int limit, int max_page_concurrency, std::optional<int> source_song_total = std::nullopt, std::optional<int> source_album_total = std::nullopt);
+    application::model::SingerCollectionResult crawlSingerAlbumsAndSaveResult(std::uint64_t singer_id, int limit, int max_page_concurrency, std::optional<int> source_song_total = std::nullopt, std::optional<int> source_album_total = std::nullopt, bool refresh_profile = false);
 
     // 刷新并保存歌手主要信息中的平台声明歌曲/专辑总数。
     application::model::SingerSourceProfile fetchAndSaveSingerSourceProfile(std::uint64_t singer_id);

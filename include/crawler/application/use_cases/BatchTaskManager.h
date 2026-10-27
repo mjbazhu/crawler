@@ -23,11 +23,11 @@ class BatchTaskManager {
 public:
     // 单个批次目标处理结果，供持久化 item 写入准确数量和错误。
     struct TargetResult {
-        bool success = false;      // 是否成功
-        int written_count = 0;     // 写入或解析数量
-        std::string error;         // 失败原因
+        bool success = false;       // 是否成功
+        int written_count = 0;      // 写入或解析数量
+        std::string error;          // 失败原因
         std::string error_category; // 失败分类，空表示无失败
-        std::string result_code;   // 结果编码，成功时默认为 ok
+        std::string result_code;    // 结果编码，成功时默认为 ok
     };
 
     using TargetHandler = std::function<TargetResult(std::string, int)>;
@@ -51,7 +51,8 @@ public:
         std::string request_params,
         std::string settings_snapshot,
         std::string parent_batch_id,
-        TargetHandler handler
+        TargetHandler handler,
+        bool allow_empty = false // 已校验的队列查询可正常完成零目标任务
     );
 
     // 请求取消批量任务；已开始的单个处理会在当前步骤结束后协作退出。
@@ -70,11 +71,11 @@ private:
     // 清理已结束超过保留期的任务。
     void cleanupFinishedTasks();
 
-    TaskRunner batch_runner_;                         // 批量任务执行器
-    std::shared_ptr<application::ports::BatchTaskRepository> batch_repository_; // 批次持久化 port
-    BatchConcurrencyReader max_batch_concurrency_;    // 批量并发读取器
-    TimeoutReader task_timeout_;                      // 任务超时读取器
-    std::mutex tasks_mutex_;                          // 任务表锁
+    TaskRunner batch_runner_;                                                               // 批量任务执行器
+    std::shared_ptr<application::ports::BatchTaskRepository> batch_repository_;             // 批次持久化 port
+    BatchConcurrencyReader max_batch_concurrency_;                                          // 批量并发读取器
+    TimeoutReader task_timeout_;                                                            // 任务超时读取器
+    std::mutex tasks_mutex_;                                                                // 任务表锁
     std::map<std::string, std::shared_ptr<application::model::BatchProgress>> batch_tasks_; // 任务表
 };
 
