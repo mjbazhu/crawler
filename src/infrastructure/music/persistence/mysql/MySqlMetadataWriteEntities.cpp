@@ -64,9 +64,8 @@ boost::asio::awaitable<void> MetadataWriteSession::saveSong(const application::m
 {
     if (song.source.empty() || song.title.empty() || (song.source_content_id.empty() && song.source_song_id.empty())) throw std::invalid_argument("song source is missing identity or title");
     const auto common = co_await write("songs/upsert_metadata", song.title, song.normalized_title.empty() ? song.title : song.normalized_title);
-    const std::string key = song.source_content_id.empty() ? "song:" + song.source_song_id : "content:" + song.source_content_id;
     const auto id = co_await write("song_source_refs/upsert", common, song.source, song.source_song_id, song.source_content_id, song.source_resource_type, song.source_title_pinyin, song.source_duration_seconds, song.copyright_id);
-    song_ids_[{song.source, key}] = id;
+    song_ids_[{song.source, song.source_song_id, song.source_content_id}] = id;
     // 同一 songId 的不同入口可能携带另一 contentId；以锁内读取的既有绑定为准。
     auto prepared = co_await statement("song_source_refs/select_metadata_identity");
     boost::mysql::results identity;

@@ -1,6 +1,7 @@
 #include "crawler/application/use_cases/SingerCatalogWorkflow.h"
 #include "crawler/infrastructure/music/migu/parser/MiguParser.h"
 #include "crawler/infrastructure/music/migu/provider/MiguProvider.h"
+#include "mocks/MockAlbumSourceRepository.h"
 #include "mocks/MockMusicProvider.h"
 
 #include <nlohmann/json.hpp>
@@ -11,6 +12,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace c = orchestrator::modules::crawler;
@@ -83,6 +85,9 @@ public:
     bool fail_next = false; // 在提交前返回可恢复的写入失败
     std::set<std::string> unique_songs;  // 已成功提交的歌曲来源集合
     std::set<std::string> unique_albums; // 已成功提交的专辑来源集合
+    std::map<std::string, std::string> song_spellings; // 重复响应补充的非空资料
+    std::set<std::pair<std::string, std::string>> song_albums; // 同一歌曲的不同专辑上下文
+    std::set<std::pair<std::string, std::string>> song_identities; // 实际提交的歌曲、内容身份组合
 
     // 入库失败路径已有独立事务测试，本测试专注分页完整度与请求上限。
     c::application::result::ServiceResult<model::MetadataWriteResult> saveBatch(const model::MetadataWriteBatch &batch) override
@@ -93,7 +98,12 @@ public:
         }
         songs += batch.songs.size();
         albums += batch.albums.size();
-        for (const auto &song : batch.songs) unique_songs.insert(song.source_content_id);
+        for (const auto &song : batch.songs) {
+            song_identities.emplace(song.source_song_id, song.source_content_id);
+            unique_songs.insert(song.source_content_id);
+            if (!song.source_title_pinyin.empty()) song_spellings[song.source_content_id] = song.source_title_pinyin;
+            if (!song.source_album_id.empty()) song_albums.emplace(song.source_content_id, song.source_album_id);
+        }
         for (const auto &album : batch.albums) unique_albums.insert(album.source_album_id);
         return c::application::result::ServiceResult<model::MetadataWriteResult>::success({});
     }
@@ -171,6 +181,101 @@ void verifyIncompleteAndLimit()
     failed.provider->failed_page = 2;
     const auto failed_result = failed.workflow->crawlSingerSongsAndSaveResult(42, 0, 1, 124);
     require(!failed_result.success && failed_result.partial && failed_result.error == "failed to fetch singer song page", "HTTP failure was mistaken for a valid short page");
+}
+
+// 重复卡片只补资料，不占用本轮唯一来源数或调用方的选取限额。
+void verifyDuplicateSources()
+{
+    for (int window : {1, 4}) {
+        Fixture songs;
+        songs.provider->songs = {{1, page(true, 1, 50)}, {2, page(true, 1, 50)}};
+        const auto partial = songs.workflow->crawlSingerSongsAndSaveResult(42, 0, window, 100);
+        require(!partial.success && partial.partial && partial.written_count == 50 && songs.writer->unique_songs.size() == 50, "duplicate song pages falsely completed the declared catalog");
+        Fixture albums;
+        albums.provider->albums = {{1, page(false, 1, 10)}, {2, page(false, 1, 10)}};
+        const auto partial_albums = albums.workflow->crawlSingerAlbumsAndSaveResult(42, 0, window, {}, 20);
+        require(!partial_albums.success && partial_albums.partial && partial_albums.written_count == 10 && albums.writer->unique_albums.size() == 10, "duplicate album pages falsely completed the declared catalog");
+
+        auto supplement = nlohmann::json::parse(page(true, 1, 50));
+        auto &card = supplement["data"]["contents"][0]["contents"][0]["songItem"];
+        card["songPinyin"] = "supplemental";
+        card["albumId"] = "second-album";
+        card["album"] = "重复响应携带的专辑";
+        songs.provider->songs = {{1, page(true, 1, 50)}, {2, supplement.dump()}, {3, page(true, 3, 50)}};
+        const auto limited = songs.workflow->crawlSingerSongsAndSaveResult(42, 75, window, 100);
+        require(limited.partial && limited.written_count == 75 && songs.writer->unique_songs.size() == 75 && songs.provider->song_requests.back() == 3, "duplicate songs consumed the unique selection limit");
+        require(songs.writer->song_spellings.at("100") == "supplemental" && songs.writer->song_albums.contains({"100", "second-album"}), "count deduplication discarded supplemental fields or album relations");
+        albums.provider->albums.emplace(3, page(false, 3, 10));
+        const auto limited_albums = albums.workflow->crawlSingerAlbumsAndSaveResult(42, 15, window, {}, 20);
+        require(limited_albums.partial && limited_albums.written_count == 15 && albums.writer->unique_albums.size() == 15 && albums.provider->album_requests.back() == 3, "duplicate albums consumed the unique selection limit");
+
+        const auto full = songs.workflow->crawlSingerSongsAndSaveResult(42, 0, window, 100);
+        const auto full_albums = albums.workflow->crawlSingerAlbumsAndSaveResult(42, 0, window, {}, 20);
+        require(full.success && full.written_count == 100 && songs.writer->unique_songs.size() == 100, "overlapping song pages hid later unique sources");
+        require(full_albums.success && full_albums.written_count == 20 && albums.writer->unique_albums.size() == 20, "overlapping album pages hid later unique sources");
+        std::cout << "UNIQUE_SOURCE_COUNTS window=" << window << " partial_songs=" << partial.written_count << "/100 partial_albums=" << partial_albums.written_count << "/20 complete_songs=" << full.written_count << " complete_albums=" << full_albums.written_count << '\n';
+    }
+
+    Fixture cards;
+    auto duplicate_songs = nlohmann::json::parse(page(true, 1, 50));
+    auto &song_cards = duplicate_songs["data"]["contents"][0]["contents"];
+    const auto repeated_song = song_cards.front();
+    for (int index = 0; index < 50; ++index) song_cards.push_back(repeated_song);
+    cards.provider->songs = {{1, duplicate_songs.dump()}};
+    require(cards.workflow->crawlSingerSongsAndSaveResult(42, 0, 1, 100).written_count == 50, "within-page duplicate song cards inflated the count");
+    auto duplicate_albums = nlohmann::json::parse(page(false, 1, 10));
+    auto &album_cards = duplicate_albums["data"]["contents"];
+    const auto repeated_album = album_cards.front();
+    for (int index = 0; index < 10; ++index) album_cards.push_back(repeated_album);
+    cards.provider->albums = {{1, duplicate_albums.dump()}};
+    require(cards.workflow->crawlSingerAlbumsAndSaveResult(42, 0, 1, {}, 20).written_count == 10, "within-page duplicate album cards inflated the count");
+
+    // 同一 songId 的替代 contentId 或缺失 contentId 不代表新的来源实体。
+    Fixture aliases;
+    auto alternative = nlohmann::json::parse(page(true, 1, 50));
+    for (auto &item : alternative["data"]["contents"][0]["contents"]) item["songItem"]["contentId"] = "alternative-" + item["songItem"]["songId"].get<std::string>();
+    aliases.provider->songs = {{1, page(true, 1, 50)}, {2, alternative.dump()}};
+    const auto alias_result = aliases.workflow->crawlSingerSongsAndSaveResult(42, 0, 1, 100);
+    require(alias_result.partial && alias_result.written_count == 50, "alternate content identity was counted as a second song source");
+    for (auto &item : alternative["data"]["contents"][0]["contents"]) item["songItem"].erase("contentId");
+    aliases.provider->songs[2] = alternative.dump();
+    require(aliases.workflow->crawlSingerSongsAndSaveResult(42, 0, 1, 100).written_count == 50, "missing content identity duplicated an already selected songId");
+
+    // 兼容仓储也必须保存选中的全部片段，不能再次按原始条数截断唯一来源。
+    auto provider = std::make_shared<Provider>();
+    provider->albums = {{1, page(false, 1, 10)}, {2, page(false, 1, 10)}, {3, page(false, 3, 10)}};
+    auto repository = std::make_shared<c::tests::MockAlbumSourceRepository>();
+    auto parser = std::make_shared<c::infrastructure::music::migu::parser::MiguParser>();
+    auto dispatch = std::make_shared<cases::ParserDispatch>(parser, parser, parser, parser, parser, parser, nullptr, nullptr);
+    auto persistence = std::make_shared<cases::MetadataPersistenceService>(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, repository, nullptr);
+    cases::SingerCatalogWorkflow legacy(provider, dispatch, persistence, nullptr, nullptr);
+    const auto legacy_result = legacy.crawlSingerAlbumsAndSaveResult(42, 15, 1, {}, 20);
+    std::set<std::string> retained;
+    for (const auto &album : repository->saved_albums) retained.insert(album.source_album_id);
+    require(legacy_result.partial && legacy_result.written_count == 15 && retained.size() == 15, "legacy album persistence reapplied a raw-card limit after unique selection");
+}
+
+// 未被稳定绑定采用的替代 ID 不能污染后续选择，两个身份方向都应遵守限额。
+void verifyConflictingIdentityLimits()
+{
+    for (bool alternate_content : {false, true}) {
+        for (int limit : {1, 2}) {
+            Fixture fixture;
+            nlohmann::json first = {{"songId", "first-song"}, {"contentId", "first-content"}, {"songName", "首个稳定来源"}};
+            auto alternative = first;
+            alternative[alternate_content ? "contentId" : "songId"] = alternate_content ? "second-content" : "second-song";
+            auto second = first;
+            second["songId"] = "second-song";
+            second["contentId"] = "second-content";
+            second["songName"] = "第二个独立来源";
+            const nlohmann::json cards = nlohmann::json::array({{{"songItem", first}}, {{"songItem", alternative}}, {{"songItem", second}}});
+            fixture.provider->songs = {{1, nlohmann::json({{"data", {{"contents", nlohmann::json::array({{{"contents", cards}}})}}}}).dump()}};
+            const auto result = fixture.workflow->crawlSingerSongsAndSaveResult(42, limit, 1, 2);
+            std::cout << "IDENTITY_SELECTION alternate_content=" << alternate_content << " limit=" << limit << " reported=" << result.written_count << " selected_second=" << fixture.writer->song_identities.contains({"second-song", "second-content"}) << '\n';
+            require(result.written_count == limit && (limit == 1 ? result.partial : result.success), "conflicting alternate identity corrupted the unique source count");
+            require(fixture.writer->song_identities.contains({"second-song", "second-content"}) == (limit == 2), "conflicting alternate identity bypassed the unique song limit");
+        }
+    }
 }
 
 // 中间页和写入失败后重新驱动同一 workflow，失败响应不能成为后续重试的完成依据。
@@ -272,6 +377,8 @@ int main()
     try {
         verifyShortPages();
         verifyIncompleteAndLimit();
+        verifyDuplicateSources();
+        verifyConflictingIdentityLimits();
         verifyFailureAndRetry();
         verifyAdaptiveWindows();
         std::cout << "PASS: short middle pages, empty termination, known incomplete counts, explicit limits and HTTP failures\n";

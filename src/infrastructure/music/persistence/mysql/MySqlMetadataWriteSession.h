@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <map>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -85,7 +86,7 @@ private:
     std::map<std::string, boost::mysql::statement> statements_;        // 本连接 prepared statements
     std::map<SourceKey, std::uint64_t> singer_ids_;                    // 已解析歌手来源主键
     std::map<SourceKey, std::uint64_t> album_ids_;                     // 已解析专辑来源主键
-    std::map<SourceKey, std::uint64_t> song_ids_;                      // 已解析歌曲来源主键
+    std::map<std::tuple<std::string, std::string, std::string>, std::uint64_t> song_ids_; // 每个输入身份组合对应的实际歌曲来源主键
     std::map<std::string, std::string> album_aliases_;                 // 本事务已核实的 Migu 物料 ID 到数字专辑 ID 映射
     std::vector<application::model::PersistedSongSource> saved_songs_; // 已保存歌曲的来源映射
     std::vector<std::string> replaced_cover_paths_;                    // 事务提交后可清理的旧文件或未采用新文件

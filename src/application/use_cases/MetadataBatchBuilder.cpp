@@ -68,7 +68,7 @@ void mergeAlbum(application::model::AlbumSourceMetadata &target, const applicati
     mergeArtists(target.artist_refs, incoming.artist_refs);
 }
 
-// 同一歌曲在同一专辑上下文只写一次，重复卡片补充真实非空字段。
+// 两组平台身份一致的重复片段补充真实非空字段，冲突身份留给 writer 核验稳定绑定。
 void mergeSong(application::model::SongSourceMetadata &target, const application::model::SongSourceMetadata &incoming)
 {
     auto text = [](std::string &value, const std::string &candidate) { if (value.empty()) value = candidate; };
@@ -116,9 +116,9 @@ application::model::MetadataWriteBatch buildMetadataWriteBatch(application::mode
 
     // 不同专辑上下文保留独立关系，不能仅按歌曲身份丢弃第二个专辑。
     std::vector<SongSourceMetadata> songs;
-    std::map<std::tuple<std::string, std::string, std::string>, std::size_t> song_positions;
+    std::map<std::tuple<std::string, std::string, std::string, std::string>, std::size_t> song_positions;
     for (auto &song : input.songs) {
-        const auto key = std::make_tuple(song.source, song.source_content_id.empty() ? "song:" + song.source_song_id : "content:" + song.source_content_id, song.source_album_id);
+        const auto key = std::make_tuple(song.source, song.source_song_id, song.source_content_id, song.source_album_id);
         auto [position, inserted] = song_positions.emplace(key, songs.size());
         if (inserted)
             songs.push_back(std::move(song));

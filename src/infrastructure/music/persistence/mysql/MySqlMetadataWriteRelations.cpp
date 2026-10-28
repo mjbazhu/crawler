@@ -57,8 +57,7 @@ boost::asio::awaitable<void> MetadataWriteSession::saveAlbumRelations(const appl
 
 boost::asio::awaitable<void> MetadataWriteSession::saveSongRelations(const application::model::SongSourceMetadata &song)
 {
-    const std::string key = song.source_content_id.empty() ? "song:" + song.source_song_id : "content:" + song.source_content_id;
-    const auto owner = song_ids_.at({song.source, key});
+    const auto owner = song_ids_.at({song.source, song.source_song_id, song.source_content_id});
     for (const auto &artist : song.artist_refs) {
         if (artist.source_artist_id.empty()) continue;
         const auto singer = co_await singerId(song.source, artist.source_artist_id);

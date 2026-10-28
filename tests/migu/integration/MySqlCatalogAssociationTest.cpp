@@ -118,6 +118,61 @@ public:
     }
 };
 
+// 以真实来源行数核对任务内去重，替代 ID 不能让后续独立来源绕过限额。
+void verifyConflictingCatalogIdentities(const std::shared_ptr<mysql::MySqlConnectionPool> &pool, const std::shared_ptr<use::MetadataPersistenceService> &saver, const std::shared_ptr<use::ParserDispatch> &dispatch, const std::string &prefix)
+{
+    for (bool alternate_content : {false, true}) {
+        for (int limit : {1, 2}) {
+            const auto key = "identity-" + prefix + std::to_string(alternate_content) + "-" + std::to_string(limit) + "-";
+            const auto first_id = key + "song-1";
+            const auto second_id = key + "song-2";
+            Json first = {{"songId", first_id}, {"contentId", key + "content-1"}, {"songName", key + "首个来源"}, {"albumId", key + "album-first"}, {"album", key + "首个专辑"}};
+            auto alternative = first;
+            alternative[alternate_content ? "contentId" : "songId"] = key + (alternate_content ? "content-2" : "song-2");
+            alternative["albumId"] = key + "album-alternative";
+            alternative["album"] = key + "替代入口专辑";
+            auto second = first;
+            second["songId"] = second_id;
+            second["contentId"] = key + "content-2";
+            second["songName"] = key + "第二来源";
+            second["albumId"] = key + "album-second";
+            second["album"] = key + "第二个专辑";
+            auto provider = std::make_shared<c::tests::MockMusicProvider>();
+            provider->mock_singer_songs_response = response(Json::array({first, alternative, second}));
+            use::SingerCatalogWorkflow workflow(provider, dispatch, saver, nullptr, nullptr);
+            for (int repeat = 0; repeat < 2; ++repeat) {
+                const auto result = workflow.crawlSingerSongsAndSaveResult(777001, limit, 1, 2, 0);
+                require(result.written_count == limit && (limit == 1 ? result.partial : result.success), "catalog result disagreed with the selected unique identities");
+                const auto predicate = "s.source='migu' AND s.source_song_id IN ('" + first_id + "','" + second_id + "')";
+                require(scalar(pool, "SELECT COUNT(*) FROM song_source_refs s WHERE " + predicate) == static_cast<std::uint64_t>(limit), "alternate identity bypassed the catalog limit in MySQL");
+                require(scalar(pool, "SELECT COUNT(*) FROM song_source_refs WHERE source='migu' AND source_song_id='" + first_id + "' AND source_content_id='" + key + "content-1'") == 1, "catalog collection changed the first stable identity binding");
+                require(scalar(pool, "SELECT COUNT(*) FROM song_artist_refs r JOIN song_source_refs s ON s.id=r.song_source_ref_id JOIN singer_source_refs a ON a.id=r.singer_source_ref_id WHERE " + predicate + " AND a.source_singer_id='777001' AND r.is_seed=1") == static_cast<std::uint64_t>(limit), "alternate identity lost or duplicated catalog singer relationships");
+                require(scalar(pool, "SELECT COUNT(*) FROM album_song_refs r JOIN song_source_refs s ON s.id=r.song_source_ref_id JOIN album_source_refs a ON a.id=r.album_source_ref_id WHERE s.source_song_id='" + first_id + "' AND a.source_album_id='" + key + "album-alternative'") == 1, "alternate album relationship was attached to another song source");
+                require(scalar(pool, "SELECT COUNT(*) FROM album_song_refs r JOIN song_source_refs s ON s.id=r.song_source_ref_id JOIN album_source_refs a ON a.id=r.album_source_ref_id WHERE s.source_song_id='" + second_id + "' AND a.source_album_id='" + key + "album-second'") == static_cast<std::uint64_t>(limit == 2), "independent song album relationship disagreed with the selection limit");
+            }
+        }
+    }
+    // 缺失一类 ID 后再补齐的三个片段仍应落到同一个来源和同一条关系。
+    for (bool song_only : {false, true}) {
+        const auto key = "identity-partial-" + prefix + std::to_string(song_only) + "-";
+        Json complete = {{"songId", key + "song"}, {"contentId", key + "content"}, {"songName", key + "身份补齐曲目"}, {"albumId", key + "album"}, {"album", key + "身份补齐专辑"}};
+        auto first = complete;
+        first.erase(song_only ? "contentId" : "songId");
+        auto last = complete;
+        last.erase(song_only ? "songId" : "contentId");
+        auto provider = std::make_shared<c::tests::MockMusicProvider>();
+        provider->mock_singer_songs_response = response(Json::array({first, complete, last}));
+        use::SingerCatalogWorkflow workflow(provider, dispatch, saver, nullptr, nullptr);
+        for (int repeat = 0; repeat < 2; ++repeat) {
+            const auto result = workflow.crawlSingerSongsAndSaveResult(777001, 1, 1, 1, 0);
+            require(result.success && result.written_count == 1, "partial song identities inflated the catalog count");
+            require(scalar(pool, "SELECT COUNT(*) FROM song_source_refs WHERE source='migu' AND source_song_id='" + key + "song' AND source_content_id='" + key + "content'") == 1, "partial identity fragments did not complete one stable source");
+            require(scalar(pool, "SELECT COUNT(*) FROM album_song_refs r JOIN album_source_refs a ON a.id=r.album_source_ref_id WHERE a.source_album_id='" + key + "album'") == 1, "partial identity fragments duplicated an album relationship");
+        }
+    }
+    std::cout << "IDENTITY_LIMIT_MYSQL cases=6 repeats=2 result_count_matches_source_rows=true\n";
+}
+
 } // namespace
 
 // 八首已存在、两首新增；复采和重启后检查来源 ID、字段、关系及请求数。
@@ -380,6 +435,7 @@ int main()
         require(scalar(pool, "SELECT COUNT(*) FROM song_artist_refs r JOIN song_source_refs s ON s.id=r.song_source_ref_id JOIN singer_source_refs a ON a.id=r.singer_source_ref_id WHERE s.source_content_id='" + prefix + "rollback-content' AND a.source_singer_id='" + prefix + "missing-artist'") == 1, "recovered artist relation was missing or duplicated");
         require(scalar(pool, "SELECT COUNT(*) FROM album_song_refs r JOIN song_source_refs s ON s.id=r.song_source_ref_id JOIN album_source_refs a ON a.id=r.album_source_ref_id WHERE s.source_content_id='" + prefix + "rollback-content' AND a.source_album_id='" + prefix + "rollback-album'") == 1, "recovered album relation was missing or duplicated");
         require(scalar(pool, "SELECT id FROM song_source_refs WHERE source_content_id='" + prefix + "0'") == first_id, "recovery replaced the existing source identity");
+        verifyConflictingCatalogIdentities(pool, saver, dispatch, prefix);
         std::cout << "PASS: catalog identity/relations, metadata rollback, corrected replay and idempotent recovery\n";
         return 0;
     } catch (const std::exception &error) {

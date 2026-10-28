@@ -1,6 +1,9 @@
 #include "crawler/application/use_cases/SingerCatalogWorkflow.h"
 #include "SingerCatalogPagingSupport.h"
 
+#include <set>
+#include <utility>
+
 namespace orchestrator::modules::crawler::application::use_cases {
 using namespace singer_detail; // 歌手目录入口共享的分页与完成度规则
 
@@ -33,12 +36,13 @@ application::model::SingerCollectionResult SingerCatalogWorkflow::crawlSingerAlb
     const std::string source_artist_id = std::to_string(singer_id);
     application::model::MetadataWriteBatch batch;
     auto &collected = batch.albums;
+    std::set<std::pair<std::string, std::string>> collected_sources; // 本轮选中的唯一专辑来源
     collected.reserve(static_cast<std::size_t>(normalized_limit));
     bool stop_paging = false;
     bool fetch_failed = false;
 
-    for (int first_page = 1; first_page <= kWorkflowMaxPages && !stop_paging && !reachedWorkflowLimit(collected.size(), normalized_limit);) {
-        const int window = singerPageWindow(max_page_concurrency, collected.size(), normalized_limit, source_album_total, page_size);
+    for (int first_page = 1; first_page <= kWorkflowMaxPages && !stop_paging && !reachedWorkflowLimit(collected_sources.size(), normalized_limit);) {
+        const int window = singerPageWindow(max_page_concurrency, collected_sources.size(), normalized_limit, source_album_total, page_size);
         const int last_page = (std::min)(kWorkflowMaxPages, first_page + window - 1);
         auto pages = collectOrderedPageWindow<SingerAlbumPageResult>(
             page_runner_,
@@ -70,7 +74,9 @@ application::model::SingerCollectionResult SingerCatalogWorkflow::crawlSingerAlb
                 batch.singers.insert(batch.singers.end(), page_result.batch.singers.begin(), page_result.batch.singers.end());
                 batch.profiles.insert(batch.profiles.end(), page_result.batch.profiles.begin(), page_result.batch.profiles.end());
                 for (auto &album : page_result.batch.albums) {
-                    if (!reachedWorkflowLimit(collected.size(), normalized_limit)) {
+                    const auto key = std::make_pair(album.source, album.source_album_id);
+                    if (collected_sources.contains(key) || !reachedWorkflowLimit(collected_sources.size(), normalized_limit)) {
+                        collected_sources.insert(key);
                         if (album.source_artist_id.empty()) {
                             album.source_artist_id = source_artist_id;
                         }
@@ -90,7 +96,7 @@ application::model::SingerCollectionResult SingerCatalogWorkflow::crawlSingerAlb
                     }
                 }
 
-                if (shouldStopSingerPage(page_result.page_info.should_stop_paging, page_result.batch.albums.size(), collected.size(), source_album_total) || reachedWorkflowLimit(collected.size(), normalized_limit)) {
+                if (shouldStopSingerPage(page_result.page_info.should_stop_paging, page_result.batch.albums.size(), collected_sources.size(), source_album_total) || reachedWorkflowLimit(collected_sources.size(), normalized_limit)) {
                     should_stop = true;
                 }
             }
@@ -99,14 +105,14 @@ application::model::SingerCollectionResult SingerCatalogWorkflow::crawlSingerAlb
         if (should_stop) {
             stop_paging = true;
         }
-        if (last_page == kWorkflowMaxPages && !stop_paging && !reachedWorkflowLimit(collected.size(), normalized_limit) && completion_error.empty()) {
+        if (last_page == kWorkflowMaxPages && !stop_paging && !reachedWorkflowLimit(collected_sources.size(), normalized_limit) && completion_error.empty()) {
             completion_error = "singer album pagination limit reached";
         }
         first_page = last_page + 1;
     }
 
     application::model::SingerCollectionResult result;
-    result.written_count = static_cast<int>(collected.size());
+    result.written_count = static_cast<int>(collected_sources.size());
     result.source_song_total = source_song_total;
     result.source_album_total = source_album_total;
     result.partial = !collected.empty() && fetch_failed;
@@ -126,7 +132,7 @@ application::model::SingerCollectionResult SingerCatalogWorkflow::crawlSingerAlb
             completion_error = completed.message();
     }
     const bool empty = batch.albums.empty() && batch.singers.empty() && batch.profiles.empty();
-    const bool saved = empty || (persistence_->hasAtomicWriter() ? persistence_->saveSources(std::move(batch), 0) : persistence_->saveAlbumSources(collected, normalized_limit));
+    const bool saved = empty || (persistence_->hasAtomicWriter() ? persistence_->saveSources(std::move(batch), 0) : persistence_->saveAlbumSources(collected, static_cast<int>(collected.size())));
     if (!saved) {
         result.success = false;
         result.partial = false;
