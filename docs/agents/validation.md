@@ -42,8 +42,10 @@ SQL 测试配置从 [MySqlTestSupport.h](../../tests/migu/support/MySqlTestSuppo
 | API/DTO 与 OpenAPI | `MiguCatalogApiSmokeTest`、`MiguApiDocumentTest`；真实路由另选 `MiguHttpRouteSmokeTest` | 前两者离线；路由测试使用本机 `127.0.0.1:19080` 和替身服务，端口需要可用 |
 | 平台请求与解析 | `MiguProviderTest`，及 `MiguSongSourceParserTest` / `MiguSingerIndexParserTest` / `MiguAlbumSourceParserTest` / `MiguSongResourceParserTest` 中受影响者 | 离线；按解析能力选，不为 parser 变更运行真实采集 |
 | 歌手目录和采集编排 | `MiguSingerIndexIngestionFlowTest`、`MiguSingerAlbumIngestionFlowTest` 中受影响者 | mock 数据源的本机流程；URL/搜索等没有对应 target 的分支需补覆盖，不能声称这些测试覆盖所有 workflow |
+| 独立歌手资料刷新、默认头像及有限重试 | `SingerProfileRefreshTest`；协议变更另选 API 行 | 离线；覆盖有效零总数、未知分类、默认头像、HTTP/业务错误与身份校验、写入失败，以及重试上限、禁用、取消和超时；不请求真实平台或 MySQL |
 | 元数据合并、字段归属及本地封面 | `MetadataOwnershipTest`，加受影响 parser | mock HTTP 与临时文件；SQL/迁移行为另选下一行 |
 | MySQL writer、migration、关系或 catalog | `MySqlMetadataOwnershipTest`、`MiguSongRelationIntegrationTest`、`MiguCatalogQueryIntegrationTest` 中受影响者 | 独立 MySQL；写入/升级选 ownership，关系选 relation，事实计数/查询/资源治理选 catalog |
+| 歌手资料刷新真实 adapter 与字段清理迁移 | `MySqlSingerProfileRefreshTest`；运行期 SQL prepare 另选 `MySqlMetadataOwnershipTest --check-sql-only` | 独立 MySQL；前者要求空库且库名以 `crawler_ownership_test_singer_profile_` 开头，使用离线平台响应；验证旧结构升级及重复迁移、资料/头像保存、重试、错误清理及目录生命周期隔离 |
 | 资源 workflow 与资源解析 | `SongResourceDownloadWorkflowTest`、`AsyncSongResourceDownloadWorkflowTest`，解析变化加 `MiguSongResourceParserTest` | workflow 使用替身端口，不要求真实下载；同步与异步实现都受影响时都检查 |
 | 流式传输、完整文件提交或异步运行时 | `AsyncHttpStreamTest`、`AsyncFileBlobStoreTest`、`SongResourceDownloadStorageTest`、`AsyncTaskTest` 中受影响者 | 本机 I/O；分别覆盖回环 HTTP、文件存储或异步调度，不能互相替代 |
 | 批次事件、认领与恢复 | `CrawlerServiceResourceBatchEventTest`；持久化认领/恢复选 `MiguBackfillClaimIntegrationTest` / `MiguMetadataRecoveryIntegrationTest` | 事件测试使用替身及本地日志；后两者使用独立 MySQL 并写 fixture |
@@ -110,7 +112,7 @@ $env:CRAWLER_TEST_MIGU_ASYNC_RESOURCE_CONCURRENCY='5'
 
 ## 历史结果
 
-原规范中的成功率、平台业务码样本与环境结论移至 [当前交接](current.md) 和 [运行操作](../operations/resource-storage.md)。验证命令存在不代表本次已经执行。
+历史验收按项目主题记录日期、交付版本、环境、结果和证据位置；[当前交接](current.md) 只引用相关记录。歌手资料的全量刷新及修复回归见 [歌手资料完善与验收记录](../migu/singer-profile-validation.md)，本机资源历史见 [运行操作](../operations/resource-storage.md)。验证命令存在不代表本次已经执行。
 
 ## 代码审查规范
 
