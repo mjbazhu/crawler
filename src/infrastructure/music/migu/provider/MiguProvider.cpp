@@ -1,10 +1,12 @@
 #include "crawler/infrastructure/music/migu/provider/MiguProvider.h"
+#include "crawler/infrastructure/music/migu/MiguPageSizes.h"
 
 #include "crawler/infrastructure/music/migu/provider/MiguRequestFactory.h"
 #include "crawler/infrastructure/music/migu/provider/MiguUrlResolver.h"
 #include "crawler/infrastructure/observability/logging/Logger.h"
 
 #include <cstdint>
+#include <charconv>
 #include <optional>
 #include <string>
 #include <utility>
@@ -56,6 +58,16 @@ MiguProvider::MiguProvider(
     pacmtoken_store_(std::move(pacmtoken_store))
 {
     headers_ = MiguRequestFactory::defaultHeaders();
+}
+
+std::size_t MiguProvider::singerSongPageSize() const
+{
+    return kSingerSongPageSize;
+}
+
+std::size_t MiguProvider::singerAlbumPageSize() const
+{
+    return kSingerAlbumPageSize;
 }
 
 std::optional<MiguProvider::Response> MiguProvider::fetchSongSearchPage(std::string keyword, int page, int rows)
@@ -137,6 +149,15 @@ std::optional<MiguProvider::Response> MiguProvider::fetchSingerSongsPage(std::ui
     }
 
     return toProviderResponse(client_->get(MiguRequestFactory::singerSongsUrl(singer_id, page), headers_));
+}
+
+std::optional<MiguProvider::Response> MiguProvider::fetchAlbumSongPage(std::string album_id, int page, int page_size)
+{
+    if (!client_ || page < 1 || page > 400 || page_size < 1 || page_size > 200) return std::nullopt;
+    std::uint64_t identity = 0;
+    const auto parsed = std::from_chars(album_id.data(), album_id.data() + album_id.size(), identity);
+    if (parsed.ec != std::errc {} || parsed.ptr != album_id.data() + album_id.size() || identity == 0) return std::nullopt;
+    return toProviderResponse(client_->get(MiguRequestFactory::albumSongPageUrl(identity, page, page_size), headers_));
 }
 
 std::optional<MiguProvider::Response> MiguProvider::fetchSingerIndexPage(std::string tab)

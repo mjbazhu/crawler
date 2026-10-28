@@ -20,5 +20,4 @@ INSERT INTO song_resources (
     UNIX_TIMESTAMP()
 ) ON DUPLICATE KEY UPDATE
     id = LAST_INSERT_ID(id),
-    status = IF(status IN (2, 4), status, VALUES(status)),
     updated_at = VALUES(updated_at);

@@ -55,6 +55,7 @@ bool SearchCollectionWorkflow::searchAndSave(std::string keyword, int limit, int
     }
 
     const int normalized_limit = normalizeWorkflowLimit(limit);
+    if (persistence_->hasAtomicWriter()) return searchSourcesAndSave(keyword, normalized_limit, max_page_concurrency);
     auto songs = collectSongs(keyword, normalized_limit, max_page_concurrency);
     auto albums = collectAlbums(std::move(keyword), normalized_limit, max_page_concurrency);
 

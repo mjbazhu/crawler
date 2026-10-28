@@ -1,8 +1,11 @@
 #pragma once
+#include <cstddef>
+#include <cstdint>
 
 #include "crawler/application/model/SongResourceQueue.h"
-#include "crawler/application/ports/execution/ResourcePostProcessor.h"
 #include "crawler/application/model/MiguPacmtoken.h"
+#include "crawler/application/ports/execution/AsyncRuntime.h"
+#include "crawler/application/ports/execution/ResourcePostProcessor.h"
 #include "crawler/application/ports/execution/TaskExecutor.h"
 #include "crawler/application/ports/parsing/SongResourceParser.h"
 #include "crawler/application/ports/persistence/SongResourceQueue.h"
@@ -21,10 +24,18 @@
 
 namespace orchestrator::modules::crawler::application::use_cases {
 
+class AsyncSongResourceDownloadWorkflow; // 同步兼容入口委托的唯一资源编排
+
 // 歌曲资源处理监听器，供 application 编排层实时记录批次 item 和事件。
 class SongResourceProcessListener {
 public:
     virtual ~SongResourceProcessListener() = default;
+
+    // 下载和新任务边界协作取消；默认监听器不请求停止。
+    virtual bool isCancellationRequested()
+    {
+        return false;
+    }
 
     // 批次阶段事件；payload 必须脱敏，不得包含临时下载 URL、Cookie 或 token。
     virtual void onBatchEvent(std::string event_type, std::string payload)
@@ -77,34 +88,15 @@ public:
     // 处理一批待下载资源；默认不过滤资源类型，audio 成功或受限时顺手只认领一次 cover/lyric/mrc/trc。
     application::model::SongResourceProcessResult processPending(application::model::SongResourceClaimQuery query, SongResourceProcessListener *listener = nullptr);
 
+    // 元数据响应已有地址时立即复用同一认领、下载和文件补偿流程。
+    application::model::SongResourceProcessResult processAvailableRelated(application::model::SongResourceQueueTarget song, application::model::SongResourceFetchResult resources);
+
     // 处理单条已认领资源，供测试或手动编排使用。
     application::model::SongResourceProcessItem processClaimed(application::model::SongResourceQueueTarget target, std::string batch_id);
 
 private:
-    struct ProcessRunState;
-    // 同步入口在当前受限 worker 上复用独立后处理，失败不撤销下载。
-    void postProcessCompleted(const application::model::SongResourceProcessItem &item, SongResourceProcessListener *listener);
-    application::ports::ResourceProcessingExtensions extensions_; // 创建后不变的后处理依赖组
-
-    application::model::SongResourceProcessItem processAudio(application::model::SongResourceQueueTarget target, const std::string &batch_id, application::model::SongResourceProcessResult *batch_result, SongResourceProcessListener *listener, ProcessRunState *state);
-    application::model::SongResourceProcessItem processDirectResource(application::model::SongResourceQueueTarget target, const std::string &batch_id, const application::model::SongResourceProcessOptions &options, SongResourceProcessListener *listener);
-    application::model::SongResourceProcessItem downloadAndStore(application::model::SongResourceQueueTarget target, std::string remote_url, const std::string &batch_id, const application::model::SongResourceProcessOptions &options);
-    application::model::SongResourceProcessItem downloadAndStoreAttempt(application::model::SongResourceQueueTarget target, std::string remote_url, const std::string &batch_id, const application::model::SongResourceProcessOptions &options, bool write_failure, SongResourceProcessListener *listener);
-    void processRelatedResources(const application::model::SongResourceQueueTarget &audio_target, const application::model::SongResourceFetchResult &fetch_result, const std::string &batch_id, application::model::SongResourceProcessResult &batch_result, SongResourceProcessListener *listener, ProcessRunState *state);
-    bool refreshPacmtoken(ProcessRunState &state, SongResourceProcessListener *listener, bool force);
-    application::model::SongResourceProcessItem fail(application::model::SongResourceQueueTarget target, std::string category, std::string code, std::string message, const std::string &batch_id, SongResourceProcessListener *listener = nullptr);
-    application::model::SongResourceProcessItem skip(application::model::SongResourceQueueTarget target, std::string category, std::string code, std::string message, const std::string &batch_id, SongResourceProcessListener *listener = nullptr);
-
-    std::shared_ptr<application::ports::SongResourceQueue> resource_queue_;           // 资源队列 port
-    std::shared_ptr<application::ports::SongResourceProvider> resource_provider_;     // 资源 URL provider
-    std::shared_ptr<application::ports::SongResourceParser> resource_parser_;         // 资源响应 parser
-    std::shared_ptr<application::ports::SongResourceContentFetcher> content_fetcher_; // 资源内容下载器
-    std::shared_ptr<application::ports::SongResourceBlobStore> blob_store_;           // 资源保存 port
-    SongResourcePathPlanner path_planner_;                                            // 相对路径规划器
-    std::shared_ptr<application::ports::TaskExecutor> resource_executor_;             // 资源下载并发执行器
-    std::shared_ptr<application::ports::MiguPacmtokenRefresher> pacmtoken_refresher_; // pacmtoken 刷新 port
-    std::shared_ptr<application::ports::MiguPacmtokenStore> pacmtoken_store_;         // pacmtoken 运行期存储
-    std::shared_ptr<application::ports::SongResourceCloudUploader> cloud_uploader_;   // 可选云端上传 port
+    std::shared_ptr<application::ports::AsyncRuntime> runtime_;   // 同步适配器的内联续体执行器
+    std::shared_ptr<AsyncSongResourceDownloadWorkflow> workflow_; // 唯一资源编排，实例无跨批次可变状态
 };
 
 } // namespace orchestrator::modules::crawler::application::use_cases

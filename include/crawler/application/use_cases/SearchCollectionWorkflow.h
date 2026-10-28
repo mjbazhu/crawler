@@ -35,6 +35,9 @@ public:
     bool searchAndSave(std::string keyword, int limit, int max_page_concurrency);
 
 private:
+    // 生产路径先裁剪响应实体，再统一保存；不再生成第二套领域解析结果。
+    bool searchSourcesAndSave(const std::string &keyword, int limit, int max_page_concurrency);
+
     // 获取单页歌曲搜索结果。
     std::vector<domain::Song> collectSongPage(std::string keyword, int page);
 
@@ -54,8 +57,8 @@ private:
     std::shared_ptr<application::ports::AlbumSearchProvider> album_search_provider_; // 专辑搜索 port
     std::shared_ptr<application::ports::AlbumDetailProvider> album_detail_provider_; // 专辑详情 port
     std::shared_ptr<ParserDispatch> parser_;                                         // 解析调度器
-    std::shared_ptr<MetadataPersistenceService> persistence_;                         // 持久化服务
-    TaskRunner page_runner_;                                                          // 分页执行器
+    std::shared_ptr<MetadataPersistenceService> persistence_;                        // 持久化服务
+    TaskRunner page_runner_;                                                         // 分页执行器
 };
 
 } // namespace orchestrator::modules::crawler::application::use_cases

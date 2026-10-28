@@ -510,11 +510,11 @@ boost::asio::awaitable<application::model::MiguAlbumCatalogPage> MySqlMusicCatal
     boost::mysql::results result;
 
     auto count_statement = co_await connection->async_prepare_statement(album_count_sql_, boost::asio::use_awaitable);
-    co_await connection->async_execute(count_statement.bind(query.source, query.keyword, query.keyword, query.keyword, query.artist, query.artist, query.artist, query.artist, kind, kind, hasStatuses(query.detail_sync_statuses), details[0], details[1], details[2], details[3], details[4], hasStatuses(query.songs_sync_statuses), songs[0], songs[1], songs[2], songs[3], songs[4], min_songs_count, min_songs_count, max_songs_count, max_songs_count), result, boost::asio::use_awaitable);
+    co_await connection->async_execute(count_statement.bind(query.source, query.keyword, query.keyword, query.keyword, query.artist, query.artist, query.artist, query.artist, kind, kind, static_cast<int>(query.exclude_shared_release_archives), hasStatuses(query.detail_sync_statuses), details[0], details[1], details[2], details[3], details[4], hasStatuses(query.songs_sync_statuses), songs[0], songs[1], songs[2], songs[3], songs[4], min_songs_count, min_songs_count, max_songs_count, max_songs_count), result, boost::asio::use_awaitable);
     page.total = scalarCount(result);
 
     auto list_statement = co_await connection->async_prepare_statement(album_list_sql_, boost::asio::use_awaitable);
-    co_await connection->async_execute(list_statement.bind(query.source, query.keyword, query.keyword, query.keyword, query.artist, query.artist, query.artist, query.artist, kind, kind, hasStatuses(query.detail_sync_statuses), details[0], details[1], details[2], details[3], details[4], hasStatuses(query.songs_sync_statuses), songs[0], songs[1], songs[2], songs[3], songs[4], min_songs_count, min_songs_count, max_songs_count, max_songs_count, static_cast<std::uint64_t>(query.page_size), offset), result, boost::asio::use_awaitable);
+    co_await connection->async_execute(list_statement.bind(query.source, query.keyword, query.keyword, query.keyword, query.artist, query.artist, query.artist, query.artist, kind, kind, static_cast<int>(query.exclude_shared_release_archives), hasStatuses(query.detail_sync_statuses), details[0], details[1], details[2], details[3], details[4], hasStatuses(query.songs_sync_statuses), songs[0], songs[1], songs[2], songs[3], songs[4], min_songs_count, min_songs_count, max_songs_count, max_songs_count, static_cast<std::uint64_t>(query.page_size), offset), result, boost::asio::use_awaitable);
     for (boost::mysql::row_view row : result.rows()) {
         page.items.push_back(mapAlbum(row));
     }
@@ -770,7 +770,7 @@ boost::asio::awaitable<application::model::MiguSchemaStatus> MySqlMusicCatalogQu
 {
     application::model::MiguSchemaStatus status;
     status.checked_at = nowSeconds();
-    status.latest_available_version = 2026062701;
+    status.latest_available_version = 2026102702;
     auto connection = co_await pool_->coAcquire();
     boost::mysql::results result;
     co_await connection->async_execute(schema_status_sql_, result, boost::asio::use_awaitable);
@@ -1053,6 +1053,11 @@ application::model::MiguAlbumCatalogRecord MySqlMusicCatalogQueryRepository::map
     album.created_at = MySqlValueReader::uint64At(row, 31);
     album.updated_at = MySqlValueReader::uint64At(row, 32);
     album.album_songs_count = MySqlValueReader::intAt(row, 33);
+    if (row.size() >= 36) {
+        album.source_title_pinyin = MySqlValueReader::stringAt(row, 34);
+        album.summary = MySqlValueReader::stringAt(row, 35);
+    }
+    if (row.size() >= 37) album.source_material_id = MySqlValueReader::stringAt(row, 36);
     return album;
 }
 
@@ -1162,6 +1167,7 @@ application::model::AlbumSourceMetadata MySqlMusicCatalogQueryRepository::mapAlb
     album.title = MySqlValueReader::stringAt(row, 13);
     album.normalized_title = MySqlValueReader::stringAt(row, 14);
     album.artist_name = MySqlValueReader::stringAt(row, 15);
+    if (row.size() >= 17) album.source_material_id = MySqlValueReader::stringAt(row, 16);
     return album;
 }
 

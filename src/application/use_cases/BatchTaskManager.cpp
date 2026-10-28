@@ -108,7 +108,8 @@ std::string BatchTaskManager::start(
     std::string request_params,
     std::string settings_snapshot,
     std::string parent_batch_id,
-    TargetHandler handler
+    TargetHandler handler,
+    bool allow_empty
 )
 {
     cleanupFinishedTasks();
@@ -117,7 +118,8 @@ std::string BatchTaskManager::start(
     auto progress = std::make_shared<application::model::BatchProgress>();
     progress->batch_id = batch_id;
     progress->total_items = static_cast<int>(items.size());
-    progress->state = items.empty() ? application::model::BatchState::Failed : application::model::BatchState::Running;
+    const bool empty_success = items.empty() && allow_empty;
+    progress->state = items.empty() ? (empty_success ? application::model::BatchState::Completed : application::model::BatchState::Failed) : application::model::BatchState::Running;
 
     std::vector<application::model::CrawlBatchItemRecord> persisted_items = items;
     const std::uint64_t now = nowSeconds();
@@ -133,7 +135,7 @@ std::string BatchTaskManager::start(
         batch.batch_id = batch_id;
         batch.source = "migu";
         batch.task_type = std::move(task_type);
-        batch.state = progress->state.load() == application::model::BatchState::Running ? "Running" : "Failed";
+        batch.state = items.empty() ? (empty_success ? "Completed" : "Failed") : "Running";
         batch.request_params = request_params.empty() ? "{}" : std::move(request_params);
         batch.settings_snapshot = settings_snapshot.empty() ? "{}" : std::move(settings_snapshot);
         batch.parent_batch_id = std::move(parent_batch_id);
@@ -144,10 +146,10 @@ std::string BatchTaskManager::start(
         batch.updated_at = now;
         if (persisted_items.empty()) {
             batch.finished_at = now;
-            batch.last_error = "targets cannot be empty";
+            if (!empty_success) batch.last_error = "targets cannot be empty";
         }
         (void)batch_repository_->createBatch(batch, persisted_items);
-        (void)batch_repository_->appendEvent(application::model::CrawlBatchEventRecord {batch_id, std::nullopt, "batchStarted", "Batch task started", "{}", now});
+        (void)batch_repository_->appendEvent(application::model::CrawlBatchEventRecord {batch_id, std::nullopt, empty_success ? "batchCompleted" : "batchStarted", empty_success ? "No pending targets" : "Batch task started", "{}", now});
     }
 
     {

@@ -22,7 +22,7 @@ std::uint64_t nowSeconds()
     return static_cast<std::uint64_t>(std::time(nullptr));
 }
 
-// 歌手公共表按 normalized_name 去重，平台来源唯一性仍由 singer_source_refs 负责。
+// 公共仓储只维护名字池；真实身份与类型由 singer_source_refs 管理。
 std::string normalizedSingerName(const domain::Singer &singer)
 {
     return singer.name;
@@ -62,7 +62,7 @@ boost::asio::awaitable<bool> MySqlSingerRepository::coSaveBatch(std::vector<doma
             const std::uint64_t created_at = singer.created_at == 0 ? now : singer.created_at;
             const std::uint64_t updated_at = singer.updated_at == 0 ? now : singer.updated_at;
             co_await connection->async_execute(
-                statement.bind(singer.name, normalizedSingerName(singer), static_cast<int>(singer.gender), created_at, updated_at),
+                statement.bind(singer.name, normalizedSingerName(singer), created_at, updated_at),
                 result,
                 boost::asio::use_awaitable
             );
@@ -99,7 +99,7 @@ boost::asio::awaitable<bool> MySqlSingerRepository::coCreate(const domain::Singe
         const std::uint64_t created_at = entity.created_at == 0 ? now : entity.created_at;
         const std::uint64_t updated_at = entity.updated_at == 0 ? now : entity.updated_at;
         co_await connection->async_execute(
-            statement.bind(entity.name, normalizedSingerName(entity), static_cast<int>(entity.gender), created_at, updated_at),
+            statement.bind(entity.name, normalizedSingerName(entity), created_at, updated_at),
             result,
             boost::asio::use_awaitable
         );

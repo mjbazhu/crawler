@@ -1,4 +1,5 @@
 #include "MiguParserSupportInternal.h"
+#include "crawler/infrastructure/music/migu/MiguPageSizes.h"
 
 #include "crawler/application/ports/parsing/PageInspector.h"
 #include "crawler/infrastructure/json/JsonUtils.h"
@@ -7,13 +8,6 @@
 namespace orchestrator::modules::crawler::infrastructure::music::migu::parser::detail {
 
 using json::JsonUtils;
-
-namespace {
-
-constexpr std::size_t kSingerSongPageSize = 50;
-constexpr std::size_t kSingerAlbumPageSize = 50;
-
-} // namespace
 
 application::ports::SingerSongPageInfo inspectSingerSongPageRaw(const std::vector<char> &raw_data)
 {

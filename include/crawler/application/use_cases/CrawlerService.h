@@ -274,7 +274,8 @@ private:
         std::string task_type,
         std::string request_params,
         BatchTaskManager::TargetHandler handler,
-        std::string parent_batch_id = {}
+        std::string parent_batch_id = {},
+        bool allow_empty = false // 仅已校验的数据库队列允许零目标正常结束
     );
 
     // 按显式或查询结果启动专辑详情补齐批次。

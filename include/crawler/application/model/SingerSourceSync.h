@@ -19,6 +19,7 @@ struct SingerSourceSyncQuery {
     std::size_t offset = 0;             // 查询偏移量
     bool include_stale_running = false; // 是否包含长时间卡在同步中的目标
     int stale_after_seconds = 3600;     // 同步中超过该秒数可重新认领
+    bool force = false;                 // 重采已完成目录并刷新歌手资料，不抢占运行中的任务
 };
 
 // 歌手来源同步目标，来自 singer_source_refs。
@@ -30,7 +31,7 @@ struct SingerSourceSyncTarget {
     std::string source_singer_id;   // 平台歌手 ID
     std::string name;               // 公共歌手名
     std::string source_country;     // 平台地区
-    int gender = 0;                 // 公共歌手性别
+    int gender = 0;                 // 来源歌手类型：0 未知、1 男、2 女、3 组合
     std::string avatar_url;         // 平台头像
     std::optional<int> source_song_total;  // 平台声明歌曲总数，空表示未知
     std::optional<int> source_album_total; // 平台声明专辑总数，空表示未知

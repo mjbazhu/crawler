@@ -119,7 +119,7 @@ boost::asio::awaitable<void> seedSinger(
     co_await connection->async_execute("SELECT LAST_INSERT_ID()", result, boost::asio::use_awaitable);
     const auto singer_db_id = mysql::MySqlValueReader::uint64At(result.rows().front(), 0);
     co_await connection->async_execute(
-        "INSERT INTO singer_source_refs (singer_db_id, source, source_singer_id, source_name_pinyin, source_country, songs_sync_status, songs_sync_error, songs_claim_token, songs_claimed_at, songs_claim_owner, albums_sync_status, albums_sync_error, albums_claim_token, albums_claimed_at, albums_claim_owner, created_at, updated_at) VALUES (" + std::to_string(singer_db_id) + ", 'migu', '" + source_singer_id + "', 'codex', 'huayu', " + std::to_string(songs_status) + ", 'seed songs running', 'seed-songs-token', " + std::to_string(updated_at) + ", 'test', " + std::to_string(albums_status) + ", 'seed albums running', 'seed-albums-token', " + std::to_string(updated_at) + ", 'test', " + std::to_string(updated_at) + ", " + std::to_string(updated_at) + ")",
+        "INSERT INTO singer_source_refs (singer_db_id, source, source_singer_id, source_gender, source_name_pinyin, source_country, songs_sync_status, songs_sync_error, songs_claim_token, songs_claimed_at, songs_claim_owner, albums_sync_status, albums_sync_error, albums_claim_token, albums_claimed_at, albums_claim_owner, created_at, updated_at) VALUES (" + std::to_string(singer_db_id) + ", 'migu', '" + source_singer_id + "', 1, 'codex', 'huayu', " + std::to_string(songs_status) + ", 'seed songs running', 'seed-songs-token', " + std::to_string(updated_at) + ", 'test', " + std::to_string(albums_status) + ", 'seed albums running', 'seed-albums-token', " + std::to_string(updated_at) + ", 'test', " + std::to_string(updated_at) + ", " + std::to_string(updated_at) + ")",
         result,
         boost::asio::use_awaitable
     );
@@ -281,17 +281,31 @@ void assertBatchRecovery(mysql::MySqlBatchTaskRepository &repository, const Reco
 int main()
 {
     try {
+        require(support::makeMySqlConfigFromEnv().database.starts_with("crawler_ownership_test_"), "refusing non-test metadata recovery database");
         auto pool = support::makeInitializedPool();
         FixtureGuard guard(pool);
         support::runOnExecutor(pool->executor(), cleanupRecoveryFixtures(pool), "initial recovery fixture cleanup");
 
-        mysql::MySqlMusicCatalogQueryRepository catalog_repository(pool);
         mysql::MySqlBatchTaskRepository batch_repository(pool);
         const auto fixture = support::runOnExecutor(pool->executor(), seedRecoveryFixture(pool), "seed recovery fixture");
         seedRunningBatch(batch_repository, fixture);
 
+        // 重建连接池和 adapter 后，仅依赖持久化状态恢复，不复用旧对象的内存认领。
+        auto reopened_pool = support::makeInitializedPool();
+        mysql::MySqlMusicCatalogQueryRepository catalog_repository(reopened_pool);
+        mysql::MySqlBatchTaskRepository reopened_batches(reopened_pool);
         assertMetadataRecovery(catalog_repository, fixture);
-        assertBatchRecovery(batch_repository, fixture);
+        assertBatchRecovery(reopened_batches, fixture);
+
+        const auto claims = support::runOnExecutor(reopened_pool->executor(), reopened_pool->coExecute("SELECT songs_claim_token,songs_claim_owner,songs_claimed_at FROM singer_source_refs WHERE source='migu' AND source_singer_id='" + fixture.stale_songs_singer + "'"), "check recovered claim release");
+        require(mysql::MySqlValueReader::stringAt(claims.rows().front(), 0).empty() && mysql::MySqlValueReader::stringAt(claims.rows().front(), 1).empty() && mysql::MySqlValueReader::uint64At(claims.rows().front(), 2) == 0, "stale recovery retained old ownership");
+        require(catalog_repository.recoverStaleSingerSongs("migu", 3600, "stale running recovered") == 0 && reopened_batches.recoverStaleRunningBatches("migu", 3600, "stale running recovered") == 0, "second recovery replayed a completed transition");
+        model::MiguBackfillTargetQuery retry;
+        retry.source_ids = {fixture.stale_songs_singer, fixture.fresh_songs_singer};
+        retry.force = true;
+        const auto reclaimed = catalog_repository.claimSingerSongs(retry);
+        require(reclaimed.claimed_count == 1 && reclaimed.skipped_count == 1 && reclaimed.singers.front().source_singer_id == fixture.stale_songs_singer, "retry failed to reclaim recovered metadata or stole a live claim");
+        require(catalog_repository.claimSingerSongs(retry).claimed_count == 0, "retry duplicated the reclaimed running target");
 
         std::cout << "MiguMetadataRecoveryIntegrationTest passed" << std::endl;
         return 0;

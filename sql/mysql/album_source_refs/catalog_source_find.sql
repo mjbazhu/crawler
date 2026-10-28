@@ -14,7 +14,8 @@ SELECT
     r.detail_sync_status,
     a.title,
     a.normalized_title,
-    a.primary_artist_name
+    a.primary_artist_name,
+    COALESCE((SELECT d.source_material_id FROM migu_dalbum_details d WHERE d.album_source_ref_id=r.id),'')
 FROM album_catalog_sources r
 JOIN album_catalog a ON a.id = r.album_db_id
 WHERE r.source = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci

@@ -1,5 +1,6 @@
 UPDATE song_resources
 SET status = 1,
+    claim_generation = claim_generation + 1,
     last_error = NULL,
     error_category = NULL,
     result_code = NULL,
@@ -8,3 +9,4 @@ SET status = 1,
     updated_at = UNIX_TIMESTAMP()
 WHERE id = ?
   AND status IN (?, ?, ?, ?, ?)
+  AND claim_generation = ?

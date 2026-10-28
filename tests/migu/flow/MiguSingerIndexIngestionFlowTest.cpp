@@ -7,11 +7,18 @@
 #include <chrono>
 #include <cassert>
 #include <iostream>
+#include <stdexcept>
 #include <memory>
 #include <string>
 #include <vector>
 
 namespace crawler = orchestrator::modules::crawler;
+
+// 故障断言抛异常，避免 Debug assert 触发系统弹窗。
+void require(bool condition, const char *message)
+{
+    if (!condition) throw std::runtime_error(message);
+}
 
 void test_singer_index_ingestion_flow()
 {
@@ -23,6 +30,7 @@ void test_singer_index_ingestion_flow()
     auto executor = std::make_shared<crawler::infrastructure::execution::threading::ThreadPool>(1);
 
     crawler::application::model::ProviderResponse response;
+    response.status_code = 503;
     response.body = {'s', 'i', 'n', 'g', 'e', 'r', 's'};
     provider->mock_singer_index_response = response;
 
@@ -59,6 +67,10 @@ void test_singer_index_ingestion_flow()
         singer_source_repository
     );
 
+    require(!service.crawlSingerIndexAndSaveSync("huayu-nan", 0), "HTTP 503 index response was accepted as successful metadata");
+    require(singer_source_repository->saved_singers.empty(), "failed index response reached persistence");
+    response.status_code = 200;
+    provider->mock_singer_index_response = response;
     const bool saved = service.crawlSingerIndexAndSaveSync("huayu-nan", 0);
     assert(saved);
     assert(provider->last_singer_index_tab == "huayu-nan");
@@ -71,6 +83,11 @@ void test_singer_index_ingestion_flow()
 
 int main()
 {
-    test_singer_index_ingestion_flow();
-    return 0;
+    try {
+        test_singer_index_ingestion_flow();
+        return 0;
+    } catch (const std::exception &error) {
+        std::cerr << error.what() << std::endl;
+        return 1;
+    }
 }

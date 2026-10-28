@@ -1,10 +1,13 @@
 #pragma once
+#include <cstdint>
 
 #include "crawler/application/ports/persistence/SongResourceQueue.h"
 #include "crawler/infrastructure/music/persistence/mysql/MySqlConnectionPool.h"
 
 #include <boost/asio/awaitable.hpp>
 #include <boost/mysql/row_view.hpp>
+
+#include "crawler/application/model/SongResourceFile.h"
 
 #include <memory>
 #include <optional>
@@ -27,6 +30,9 @@ public:
         std::string mark_skipped = "sql/mysql/song_resources/mark_skipped.sql";                 // 跳过回写
     };
 
+    // 启动文件补偿核对，只返回归属事实，不直接操作文件系统。
+    std::optional<application::model::ResourceWriteDisposition> inspectResourceWrite(std::uint64_t resource, std::uint64_t generation, const std::string &path);
+
     // 保存连接池并加载默认 SQL。
     explicit MySqlSongResourceQueue(std::shared_ptr<MySqlConnectionPool> pool);
 
@@ -36,6 +42,8 @@ public:
     std::vector<application::model::SongResourceQueueTarget> claimPending(application::model::SongResourceClaimQuery query) override;
     std::optional<application::model::SongResourceQueueTarget> claimRelated(application::model::SongResourceRelatedClaimRequest request) override;
     bool markSucceeded(application::model::SongResourceSuccessUpdate update) override;
+    // 回写异常后读取实际提交状态，避免删除可能已被数据库引用的文件。
+    application::result::ServiceResult<bool> confirmSucceeded(application::model::SongResourceSuccessUpdate update) override;
     bool markFailed(application::model::SongResourceFailureUpdate update) override;
     bool markSkipped(application::model::SongResourceSkipUpdate update) override;
 
@@ -46,6 +54,9 @@ public:
     boost::asio::awaitable<bool> coMarkSkipped(application::model::SongResourceSkipUpdate update);
 
 private:
+    // 使用独立查询确认模糊的成功结果，返回 NULL 代表数据库暂时不可用。
+    boost::asio::awaitable<std::optional<bool>> coConfirmSucceeded(application::model::SongResourceSuccessUpdate update);
+
     static application::model::SongResourceQueueTarget mapTarget(boost::mysql::row_view row);
 
     std::shared_ptr<MySqlConnectionPool> pool_; // 线程安全 MySQL 连接池

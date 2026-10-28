@@ -8,13 +8,13 @@ INSERT INTO singers (
 ) VALUES (
     ?,
     ?,
-    ?,
+    0,
     1,
     UNIX_TIMESTAMP(),
     UNIX_TIMESTAMP()
 ) ON DUPLICATE KEY UPDATE
     id = LAST_INSERT_ID(id),
-    name = COALESCE(NULLIF(VALUES(name), ''), name),
-    gender = IF(VALUES(gender) = 0, gender, VALUES(gender)),
+    name = COALESCE(NULLIF(name, ''), VALUES(name)),
+    gender = 0,
     status = 1,
     updated_at = VALUES(updated_at);

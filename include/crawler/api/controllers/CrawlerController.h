@@ -23,8 +23,6 @@ public:
     // 处理 Migu 歌手分类采集请求，创建后台任务后立即返回任务 ID。
     http::HttpResponse handleStartMiguSingerIndexCrawl(http::HttpRequest req);
 
-    // 处理 Migu 歌手歌曲采集请求，返回批量任务 ID。
-    http::HttpResponse handleStartMiguSingerSongsCrawl(http::HttpRequest req);
 
     // 处理 Migu 从库认领歌手并采集歌曲请求，返回批量任务 ID。
     http::HttpResponse handleStartMiguSingerSongsCrawlFromDb(http::HttpRequest req);
@@ -32,8 +30,6 @@ public:
     // 预览 Migu 从库歌手歌曲采集命中范围，不认领目标。
     http::HttpResponse handlePreviewMiguSingerSongsCrawlFromDb(http::HttpRequest req);
 
-    // 处理 Migu 歌手专辑采集请求，返回批量任务 ID。
-    http::HttpResponse handleStartMiguSingerAlbumsCrawl(http::HttpRequest req);
 
     // 处理 Migu 从库认领歌手并采集专辑请求，返回批量任务 ID。
     http::HttpResponse handleStartMiguSingerAlbumsCrawlFromDb(http::HttpRequest req);
@@ -41,14 +37,8 @@ public:
     // 预览 Migu 从库歌手专辑采集命中范围，不认领目标。
     http::HttpResponse handlePreviewMiguSingerAlbumsCrawlFromDb(http::HttpRequest req);
 
-    // 刷新库内歌手主要信息中的歌曲和专辑总数。
-    http::HttpResponse handleRefreshMiguSingerProfiles(http::HttpRequest req);
 
-    // 处理 Migu 专辑详情补齐请求，返回批量任务 ID。
-    http::HttpResponse handleStartMiguAlbumDetailsBackfill(http::HttpRequest req);
 
-    // 处理 Migu 专辑歌曲补齐请求，返回批量任务 ID。
-    http::HttpResponse handleStartMiguAlbumSongsBackfill(http::HttpRequest req);
 
     // 处理 Migu 任务停止请求。
     http::HttpResponse handleStopMiguBatch(http::HttpRequest req);

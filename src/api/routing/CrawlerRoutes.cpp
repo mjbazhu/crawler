@@ -44,11 +44,6 @@ void CrawlerRoutes::registerRoutes(RouteSink &routes) const
         return withCors(controller->handleStartMiguSingerIndexCrawl(std::move(req)));
     });
 
-    routes.route("OPTIONS", "/api/migu/singer-songs/crawl", handleCorsOptions);
-    routes.route("POST", "/api/migu/singer-songs/crawl", [controller = controller_](api::http::HttpRequest req) {
-        return withCors(controller->handleStartMiguSingerSongsCrawl(std::move(req)));
-    });
-
     routes.route("OPTIONS", "/api/migu/singer-songs/crawl-from-db", handleCorsOptions);
     routes.route("POST", "/api/migu/singer-songs/crawl-from-db", [controller = controller_](api::http::HttpRequest req) {
         return withCors(controller->handleStartMiguSingerSongsCrawlFromDb(std::move(req)));
@@ -58,11 +53,6 @@ void CrawlerRoutes::registerRoutes(RouteSink &routes) const
         return withCors(controller->handlePreviewMiguSingerSongsCrawlFromDb(std::move(req)));
     });
 
-    routes.route("OPTIONS", "/api/migu/singer-albums/crawl", handleCorsOptions);
-    routes.route("POST", "/api/migu/singer-albums/crawl", [controller = controller_](api::http::HttpRequest req) {
-        return withCors(controller->handleStartMiguSingerAlbumsCrawl(std::move(req)));
-    });
-
     routes.route("OPTIONS", "/api/migu/singer-albums/crawl-from-db", handleCorsOptions);
     routes.route("POST", "/api/migu/singer-albums/crawl-from-db", [controller = controller_](api::http::HttpRequest req) {
         return withCors(controller->handleStartMiguSingerAlbumsCrawlFromDb(std::move(req)));
@@ -70,21 +60,6 @@ void CrawlerRoutes::registerRoutes(RouteSink &routes) const
     routes.route("OPTIONS", "/api/migu/singer-albums/crawl-from-db/preview", handleCorsOptions);
     routes.route("POST", "/api/migu/singer-albums/crawl-from-db/preview", [controller = controller_](api::http::HttpRequest req) {
         return withCors(controller->handlePreviewMiguSingerAlbumsCrawlFromDb(std::move(req)));
-    });
-
-    routes.route("OPTIONS", "/api/migu/singers/profile/refresh-from-db", handleCorsOptions);
-    routes.route("POST", "/api/migu/singers/profile/refresh-from-db", [controller = controller_](api::http::HttpRequest req) {
-        return withCors(controller->handleRefreshMiguSingerProfiles(std::move(req)));
-    });
-
-    routes.route("OPTIONS", "/api/migu/album-details/crawl", handleCorsOptions);
-    routes.route("POST", "/api/migu/album-details/crawl", [controller = controller_](api::http::HttpRequest req) {
-        return withCors(controller->handleStartMiguAlbumDetailsBackfill(std::move(req)));
-    });
-
-    routes.route("OPTIONS", "/api/migu/album-songs/crawl", handleCorsOptions);
-    routes.route("POST", "/api/migu/album-songs/crawl", [controller = controller_](api::http::HttpRequest req) {
-        return withCors(controller->handleStartMiguAlbumSongsBackfill(std::move(req)));
     });
 
     routes.route("OPTIONS", "/api/migu/tasks/stop", handleCorsOptions);

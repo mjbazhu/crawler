@@ -43,12 +43,18 @@ std::optional<application::model::SongSourceMetadata> parseSongSourceFromSongObj
     application::model::SongSourceMetadata metadata;
     metadata.source = "migu";
     metadata.source_song_id = JsonUtils::getString(song_item, "songId");
-    metadata.source_content_id = firstNonEmpty({
+    // 平台给不同歌曲返回同一占位内容 ID 时，身份应回退到各自真实 songId。
+    for (const auto &content_id : {
         JsonUtils::getString(song_item, "contentId"),
         JsonUtils::getString(song_item, "refId"),
         wrapper ? JsonUtils::getString(*wrapper, "resId") : std::string {},
         wrapper ? extractActionId(JsonUtils::getString(*wrapper, "action")) : std::string {},
-    });
+    }) {
+        if (!content_id.empty() && content_id != "600000000000000000") {
+            metadata.source_content_id = content_id;
+            break;
+        }
+    }
     metadata.source_resource_type = JsonUtils::getString(song_item, "resourceType");
 
     metadata.title = firstNonEmpty({
@@ -65,6 +71,8 @@ std::optional<application::model::SongSourceMetadata> parseSongSourceFromSongObj
     metadata.source_album_id = firstNonEmpty({
         album_context ? JsonUtils::getString(*album_context, "contentId") : std::string {},
         album_context ? JsonUtils::getString(*album_context, "albumId") : std::string {},
+        // 数字专辑以 dalbumId 关联专辑目录，albumId 只保留为物料映射。
+        JsonUtils::getString(song_item, "dalbumId"),
         JsonUtils::getString(song_item, "albumId"),
     });
     metadata.source_album_material_id = JsonUtils::getString(song_item, "albumId");
@@ -96,6 +104,9 @@ std::optional<application::model::SongSourceMetadata> parseSongSourceFromSongObj
     metadata.album_disc_name = JsonUtils::getString(song_item, "disc");
     metadata.album_disc_no = parseDiscNo(metadata.album_disc_name);
     if (const auto *ext = JsonUtils::getObject(song_item, "ext")) {
+        if (metadata.lyric_url.empty()) metadata.lyric_url = JsonUtils::getString(*ext, "lrcUrl");
+        if (metadata.mrc_url.empty()) metadata.mrc_url = JsonUtils::getString(*ext, "mrcUrl");
+        if (metadata.trc_url.empty()) metadata.trc_url = JsonUtils::getString(*ext, "trcUrl");
         if (metadata.album_disc_name.empty()) metadata.album_disc_name = JsonUtils::getString(*ext, "disc");
         metadata.album_disc_no = parseDiscNo(metadata.album_disc_name);
     }
@@ -110,6 +121,8 @@ std::optional<application::model::SongSourceMetadata> parseSongSourceFromSongObj
             JsonUtils::getString(song_item, "singerId"),
             album_context ? JsonUtils::getString(*album_context, "singerId") : std::string {},
         });
+        // 多歌手父级专辑不能作为歌曲的单个歌手身份兜底。
+        if (metadata.source_primary_artist_id.find('|') != std::string::npos) metadata.source_primary_artist_id.clear();
     }
     if (metadata.source_primary_artist_name.empty()) {
         metadata.source_primary_artist_name = firstNonEmpty({
@@ -118,7 +131,7 @@ std::optional<application::model::SongSourceMetadata> parseSongSourceFromSongObj
             wrapper ? JsonUtils::getString(*wrapper, "txt2") : std::string {},
         });
     }
-    if (metadata.artist_refs.empty() && (!metadata.source_primary_artist_id.empty() || !metadata.source_primary_artist_name.empty())) {
+    if (metadata.artist_refs.empty() && !metadata.source_primary_artist_id.empty()) {
         application::model::SongSourceArtistRef artist_ref;
         artist_ref.source_artist_id = metadata.source_primary_artist_id;
         artist_ref.source_artist_name = metadata.source_primary_artist_name;

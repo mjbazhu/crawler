@@ -9,6 +9,7 @@
 #include "crawler/application/ports/persistence/SongSourceRepository.h"
 #include "crawler/application/ports/storage/FileStore.h"
 #include "crawler/application/model/SingerSourceProfile.h"
+#include "crawler/application/model/MetadataWriteBatch.h"
 #include "crawler/application/use_cases/TaskRunner.h"
 #include "crawler/application/use_cases/MetadataIngestionDependencies.h"
 #include "crawler/domain/music/model/ParseResult.h"
@@ -51,6 +52,9 @@ public:
 
     // 把同一份详情中的专辑、歌曲、歌手关系和资源作为一次写入提交。
     bool saveAlbumDetails(const std::vector<application::model::AlbumSourceMetadata> &albums, const std::vector<application::model::SongSourceMetadata> &songs);
+
+    // 保留详情响应的全部实体和同步结果，避免丢弃独立歌手片段。
+    bool saveAlbumDetails(application::model::MetadataWriteBatch batch);
 
     // 同一响应中的独立实体一次提交，数量限制在拆分关系之前应用。
     bool saveSources(application::model::MetadataWriteBatch batch, int limit);

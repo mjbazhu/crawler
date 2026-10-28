@@ -79,6 +79,9 @@ void collectSingerSources(
 // 从 Migu 歌手主要信息响应中解析平台声明总数。
 application::model::SingerSourceProfile parseSingerSourceProfileRaw(const std::vector<char> &raw_data);
 
+// 复用已解码响应；只有完整资料请求才把确实缺失的目录 tab 解释为零。
+application::model::SingerSourceProfile parseSingerSourceProfileObject(const nlohmann::json &root, bool complete_profile);
+
 // 从 Migu 歌手专辑列表卡片提取专辑来源的初始参数。
 std::optional<application::model::AlbumSourceMetadata> parseAlbumSourceFromListItem(const nlohmann::json &item);
 

@@ -6,7 +6,7 @@ SELECT
     r.source_singer_id,
     s.name,
     COALESCE(r.source_country, ''),
-    s.gender,
+    r.source_gender AS gender,
     '',
     r.albums_sync_status,
     r.albums_synced_at,

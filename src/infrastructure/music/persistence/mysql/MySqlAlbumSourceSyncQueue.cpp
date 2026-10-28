@@ -65,6 +65,7 @@ application::model::AlbumSourceMetadata mapPendingDetailRow(boost::mysql::row_vi
     album.artist_name = album.source_artist_name;
     album.cover_url = MySqlValueReader::stringAt(row, 12);
     album.detail_sync_status = MySqlValueReader::intAt(row, 13);
+    album.source_material_id = MySqlValueReader::stringAt(row, 17);
     return album;
 }
 
@@ -86,6 +87,7 @@ application::model::AlbumSourceMetadata mapPendingSongsRow(boost::mysql::row_vie
     album.cover_url = MySqlValueReader::stringAt(row, 12);
     album.total_count = MySqlValueReader::stringAt(row, 13);
     album.detail_sync_status = MySqlValueReader::intAt(row, 14);
+    album.source_material_id = MySqlValueReader::stringAt(row, 20);
     return album;
 }
 
@@ -98,7 +100,8 @@ MySqlAlbumSourceSyncQueue::MySqlAlbumSourceSyncQueue(std::shared_ptr<MySqlConnec
                                                                                                                                   update_detail_sync_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.update_detail_sync_status)),
                                                                                                                                   update_songs_sync_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.update_songs_sync_status)),
                                                                                                                                   select_pending_details_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.select_pending_details)),
-                                                                                                                                  select_pending_songs_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.select_pending_songs))
+                                                                                                                                  select_pending_songs_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.select_pending_songs)),
+                                                                                                                                  find_source_sql_(sql_loader::SqlFileLoader::loadOrThrow("sql/mysql/album_source_refs/find_source_id.sql"))
 {
     if (!pool_) {
         throw std::invalid_argument("[MySqlAlbumSourceSyncQueue] pool must not be null");
@@ -149,8 +152,11 @@ boost::asio::awaitable<bool> MySqlAlbumSourceSyncQueue::coUpdateDetailSyncStatus
         auto connection = co_await pool_->coAcquire();
         auto statement = co_await connection->async_prepare_statement(update_detail_sync_sql_, boost::asio::use_awaitable);
         boost::mysql::results result;
-        co_await connection->async_execute(statement.bind(status, status, std::move(error), std::move(source), std::move(source_album_id)), result, boost::asio::use_awaitable);
-        co_return result.affected_rows() > 0;
+        co_await connection->async_execute(statement.bind(status, status, std::move(error), source, source_album_id), result, boost::asio::use_awaitable);
+        if (result.affected_rows() > 0) co_return true;
+        auto exists = co_await connection->async_prepare_statement(find_source_sql_, boost::asio::use_awaitable);
+        co_await connection->async_execute(exists.bind(source, source_album_id), result, boost::asio::use_awaitable);
+        co_return !result.rows().empty();
     } catch (const std::exception &e) {
         logSyncQueueError("coUpdateDetailSyncStatus", e);
     }
@@ -181,8 +187,11 @@ boost::asio::awaitable<bool> MySqlAlbumSourceSyncQueue::coUpdateSongsSyncStatus(
         auto connection = co_await pool_->coAcquire();
         auto statement = co_await connection->async_prepare_statement(update_songs_sync_sql_, boost::asio::use_awaitable);
         boost::mysql::results result;
-        co_await connection->async_execute(statement.bind(status, status, count, std::move(error), std::move(source), std::move(source_album_id)), result, boost::asio::use_awaitable);
-        co_return result.affected_rows() > 0;
+        co_await connection->async_execute(statement.bind(status, status, count, std::move(error), source, source_album_id), result, boost::asio::use_awaitable);
+        if (result.affected_rows() > 0) co_return true;
+        auto exists = co_await connection->async_prepare_statement(find_source_sql_, boost::asio::use_awaitable);
+        co_await connection->async_execute(exists.bind(source, source_album_id), result, boost::asio::use_awaitable);
+        co_return !result.rows().empty();
     } catch (const std::exception &e) {
         logSyncQueueError("coUpdateSongsSyncStatus", e);
     }

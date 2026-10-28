@@ -32,7 +32,10 @@ SELECT
     COALESCE((SELECT bi.batch_id FROM crawl_batch_items bi WHERE bi.source = r.source AND bi.item_type = 'albumSongs' AND bi.source_album_id = r.source_album_id AND bi.state = 'Running' ORDER BY bi.updated_at DESC, bi.id DESC LIMIT 1), ''),
     r.created_at,
     r.updated_at,
-    (SELECT COUNT(*) FROM album_song_refs relation_rows WHERE relation_rows.album_source_ref_id=r.id) AS album_songs_count
+    (SELECT COUNT(*) FROM album_song_refs relation_rows WHERE relation_rows.album_source_ref_id=r.id) AS album_songs_count,
+    COALESCE(r.source_title_pinyin,''),
+    COALESCE(r.summary,''),
+    COALESCE((SELECT d.source_material_id FROM migu_dalbum_details d WHERE d.album_source_ref_id=r.id),'')
 FROM album_catalog_sources r
 JOIN album_catalog a ON a.id = r.album_db_id
 WHERE r.source = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci

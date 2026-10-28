@@ -7,5 +7,6 @@ CREATE TABLE IF NOT EXISTS `migu_dalbum_details` (
   `updated_at` bigint unsigned NOT NULL DEFAULT '0' COMMENT '记录最后更新时间，Unix 秒时间戳',
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_migu_dalbum_source_ref` (`album_source_ref_id`),
+  KEY `idx_migu_dalbum_material_id` (`source_material_id`),
   CONSTRAINT `fk_migu_dalbum_source_ref` FOREIGN KEY (`album_source_ref_id`) REFERENCES `album_source_refs` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Migu 数字专辑物料身份映射';

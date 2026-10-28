@@ -14,28 +14,14 @@ SELECT
     base.source_song_total,
     base.source_album_total,
     base.avatar_url,
-    CASE
-        WHEN base.source_song_total IS NOT NULL AND base.songs_sync_count >= base.source_song_total AND base.songs_sync_error = '' AND base.raw_songs_sync_status <> 1 THEN 2
-        WHEN base.source_song_total IS NOT NULL AND base.songs_sync_count < base.source_song_total AND base.songs_sync_error = '' AND base.raw_songs_sync_status <> 1 THEN 4
-        ELSE base.raw_songs_sync_status
-    END AS songs_sync_status,
-    CASE
-        WHEN base.source_song_total IS NOT NULL AND base.songs_sync_count >= base.source_song_total AND base.songs_sync_error = '' AND base.raw_songs_synced_at = 0 THEN base.updated_at
-        ELSE base.raw_songs_synced_at
-    END AS songs_synced_at,
+    base.raw_songs_sync_status AS songs_sync_status,
+    base.raw_songs_synced_at AS songs_synced_at,
     base.songs_sync_count,
     base.songs_sync_error,
     base.songs_last_batch_id,
     base.songs_running_batch_id,
-    CASE
-        WHEN base.source_album_total IS NOT NULL AND base.albums_sync_count >= base.source_album_total AND base.albums_sync_error = '' AND base.raw_albums_sync_status <> 1 THEN 2
-        WHEN base.source_album_total IS NOT NULL AND base.albums_sync_count < base.source_album_total AND base.albums_sync_error = '' AND base.raw_albums_sync_status <> 1 THEN 4
-        ELSE base.raw_albums_sync_status
-    END AS albums_sync_status,
-    CASE
-        WHEN base.source_album_total IS NOT NULL AND base.albums_sync_count >= base.source_album_total AND base.albums_sync_error = '' AND base.raw_albums_synced_at = 0 THEN base.updated_at
-        ELSE base.raw_albums_synced_at
-    END AS albums_synced_at,
+    base.raw_albums_sync_status AS albums_sync_status,
+    base.raw_albums_synced_at AS albums_synced_at,
     base.albums_sync_count,
     base.albums_sync_error,
     base.albums_last_batch_id,
@@ -48,7 +34,7 @@ FROM (
         s.name,
         s.normalized_name,
         COALESCE(r.source_name_pinyin, '') AS source_name_pinyin,
-        s.gender,
+        r.source_gender AS gender,
         s.status,
         r.id AS source_ref_id,
         r.source,
@@ -58,7 +44,7 @@ FROM (
         COALESCE((SELECT m.source_tag FROM singer_index_memberships m WHERE m.singer_source_ref_id=r.id AND NULLIF(m.source_tag,'') IS NOT NULL ORDER BY m.id LIMIT 1), '') AS source_tag,
         r.source_song_total,
         r.source_album_total,
-        '' AS avatar_url,
+        COALESCE((SELECT resource.remote_url FROM singer_resources resource WHERE resource.singer_source_ref_id=r.id AND resource.resource_kind='cover'), '') AS avatar_url,
         r.songs_sync_status AS raw_songs_sync_status,
         r.songs_synced_at AS raw_songs_synced_at,
         (

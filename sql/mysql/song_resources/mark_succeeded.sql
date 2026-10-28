@@ -15,3 +15,5 @@ SET local_path = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci,
     cloud_uploaded_at = IF(CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci = '', 0, UNIX_TIMESTAMP()),
     updated_at = UNIX_TIMESTAMP()
 WHERE id = ?
+  AND status = 1
+  AND claim_generation = ?

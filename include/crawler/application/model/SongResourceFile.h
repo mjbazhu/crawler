@@ -77,10 +77,19 @@ struct SongResourceBlobSaveRequest {
     std::string content_type;       // 资源 Content-Type
 };
 
+// 文件日志核对结果，无法查询时由 optional 空值保守保留。
+enum class ResourceWriteDisposition { Committed,
+                                      Active,
+                                      Discard };
+
 // 歌曲资源流式保存请求，写入实现负责临时对象和最终提交。
 struct SongResourceBlobStreamSaveRequest {
-    std::string relative_path_hint; // 期望保存的相对路径
-    std::string content_type;       // 资源 Content-Type
+    std::uint64_t resource_id = 0;      // 文件日志所属资源
+    std::uint64_t claim_generation = 0; // 文件日志所属认领代次
+    std::string previous_local_path;    // 数据库确认替换后才清理的旧文件
+    bool require_database_ack = false;  // workflow 写入在数据库确认前保留补偿能力
+    std::string relative_path_hint;     // 期望保存的相对路径
+    std::string content_type;           // 资源 Content-Type
 };
 
 // 歌曲资源字节保存结果，用于成功回写 song_resources。
@@ -122,9 +131,9 @@ struct SongResourceBatchCloudUploadObject {
 
 // 批量云端上传请求，用于一次性上传一个资源处理批次。
 struct SongResourceBatchCloudUploadRequest {
-    std::string batch_id;                                      // 当前处理批次 ID
-    std::vector<SongResourceBatchCloudUploadObject> objects;   // 待上传对象
-    int timeout_ms = 0;                                        // 单次批量上传等待超时；0 表示 adapter 默认值
+    std::string batch_id;                                    // 当前处理批次 ID
+    std::vector<SongResourceBatchCloudUploadObject> objects; // 待上传对象
+    int timeout_ms = 0;                                      // 单次批量上传等待超时；0 表示 adapter 默认值
 };
 
 // 批量云端上传对象结果，成功后给 workflow 回写每条资源的云端路径。
@@ -136,12 +145,12 @@ struct SongResourceBatchCloudUploadObjectResult {
 
 // 批量云端上传结果，adapter 负责保证返回路径稳定可回写。
 struct SongResourceBatchCloudUploadResult {
-    bool ok = false;                                                   // 是否完成整批上传
-    std::string backend;                                               // 上传后端，例如 baidupcs
-    std::vector<SongResourceBatchCloudUploadObjectResult> objects;     // 每条对象的云端路径
-    std::string error_category;                                        // 失败分类
-    std::string result_code;                                           // 结果编码
-    std::string message;                                               // 脱敏诊断说明
+    bool ok = false;                                               // 是否完成整批上传
+    std::string backend;                                           // 上传后端，例如 baidupcs
+    std::vector<SongResourceBatchCloudUploadObjectResult> objects; // 每条对象的云端路径
+    std::string error_category;                                    // 失败分类
+    std::string result_code;                                       // 结果编码
+    std::string message;                                           // 脱敏诊断说明
 };
 
 // 歌曲资源远端 URL 复制请求，由远端存储服务直接拉取资源 URL。

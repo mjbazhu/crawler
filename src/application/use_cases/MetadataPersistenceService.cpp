@@ -186,6 +186,12 @@ bool MetadataPersistenceService::saveSingerSources(const std::vector<application
 
 bool MetadataPersistenceService::saveSingerSourceProfile(const application::model::SingerSourceProfile &profile)
 {
+    if (ingestion_.writer && !profile.source.empty() && !profile.source_singer_id.empty()) {
+        application::model::MetadataWriteBatch batch;
+        batch.profiles.push_back(profile);
+        if (profile.metadata) batch.singers.push_back(*profile.metadata);
+        return saveMetadataBatch(std::move(batch));
+    }
     if (!singer_source_repository_ || profile.source.empty() || profile.source_singer_id.empty() || (!profile.source_song_total && !profile.source_album_total)) {
         return false;
     }

@@ -29,12 +29,14 @@ public:
     application::async::Task<std::vector<application::model::SongResourceQueueTarget>> claimPending(application::model::SongResourceClaimQuery query) override;
     application::async::Task<std::optional<application::model::SongResourceQueueTarget>> claimRelated(application::model::SongResourceRelatedClaimRequest request) override;
     application::async::Task<bool> markSucceeded(application::model::SongResourceSuccessUpdate update) override;
+    // 保留底层仓储对不确定提交的区分，不能退化为 bool。
+    application::async::Task<application::result::ServiceResult<bool>> confirmSucceeded(application::model::SongResourceSuccessUpdate update) override;
     application::async::Task<bool> markFailed(application::model::SongResourceFailureUpdate update) override;
     application::async::Task<bool> markSkipped(application::model::SongResourceSkipUpdate update) override;
 
 private:
-    std::shared_ptr<application::ports::SongResourceQueue> queue_;  // 同步队列 port
-    std::shared_ptr<application::ports::AsyncRuntime> runtime_;     // 阻塞调用隔离 runtime
+    std::shared_ptr<application::ports::SongResourceQueue> queue_; // 同步队列 port
+    std::shared_ptr<application::ports::AsyncRuntime> runtime_;    // 阻塞调用隔离 runtime
 };
 
 // 把同步资源 provider 包装成异步 provider，作为测试和兼容 fallback。

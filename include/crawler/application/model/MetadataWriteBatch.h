@@ -1,5 +1,7 @@
 #pragma once
 
+#include "crawler/application/model/SingerSourceProfile.h"
+
 #include <cstdint>
 #include <string>
 
@@ -11,9 +13,18 @@
 
 namespace orchestrator::modules::crawler::application::model {
 
-// 已提交事务的文件补偿信息；由 application 清理已被新封面替换的旧文件。
+// 事务产生的歌曲来源主键，供 application 消费当前响应中的临时关联资源。
+struct PersistedSongSource {
+    std::uint64_t source_ref_id = 0; // 已提交来源主键
+    std::string source;              // 平台身份
+    std::string song_id;             // 平台歌曲身份
+    std::string content_id;          // 资源内容身份
+};
+
+// 已提交事务的文件补偿信息；由 application 清理已替换或本次未采用的封面。
 struct MetadataWriteResult {
-    std::vector<std::string> replaced_cover_paths; // 仅包含本事务替换的本地封面路径
+    std::vector<std::string> replaced_cover_paths;       // 提交后可清理的旧封面或本事务未采用的新封面
+    std::vector<PersistedSongSource> saved_song_sources; // 本事务已保存的歌曲来源
 };
 
 // 索引归属与歌手实体分开收集，避免同一歌手跨多个 tab 时被去重丢失。
@@ -26,11 +37,12 @@ struct SingerIndexMembership {
     std::string source_metric;     // 分类热度原始值
 };
 
-// 一个采集响应的持久化单位，实体和关系必须在同一事务中完成。
+// 一次采集及必要分页补齐的持久化单位，实体和关系必须在同一事务中完成。
 struct MetadataWriteBatch {
     std::vector<SingerSourceMetadata> singers;      // 已归一化的歌手来源
     std::vector<AlbumSourceMetadata> albums;        // 已归一化的专辑来源
     std::vector<SongSourceMetadata> songs;          // 歌曲来源及待建立关系
+    std::vector<SingerSourceProfile> profiles;      // 平台声明总数与实体在同一事务保存
     std::vector<SingerIndexMembership> memberships; // 独立的分类归属
 };
 

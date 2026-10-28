@@ -71,7 +71,7 @@ void logSyncQueueError(const std::string &context, const std::exception &error)
 }
 
 // 规整同步状态过滤，空过滤默认认领未同步、失败和部分完成。
-std::array<int, kStatusSlotCount> normalizedStatuses(const std::vector<int> &statuses)
+std::array<int, kStatusSlotCount> normalizedStatuses(const std::vector<int> &statuses, bool force)
 {
     std::array<int, kStatusSlotCount> normalized {-1, -1, -1, -1, -1};
     std::vector<int> values;
@@ -84,10 +84,12 @@ std::array<int, kStatusSlotCount> normalizedStatuses(const std::vector<int> &sta
                 values.push_back(status);
             }
         }
-        if (values.empty()) {
-            values = {0, 3, 4};
-        }
     }
+
+    if (!force)
+        std::erase(values, 2);
+    else if (std::find(values.begin(), values.end(), 2) == values.end())
+        values.push_back(2);
 
     for (std::size_t index = 0; index < values.size() && index < normalized.size(); ++index) {
         normalized[index] = values[index];
@@ -198,7 +200,7 @@ boost::asio::awaitable<std::vector<application::model::SingerSourceSyncTarget>> 
 {
     query = normalizeQuery(std::move(query));
     std::vector<application::model::SingerSourceSyncTarget> claimed;
-    const auto statuses = normalizedStatuses(query.sync_statuses);
+    const auto statuses = normalizedStatuses(query.sync_statuses, query.force);
     const int stale_enabled = query.include_stale_running ? 1 : 0;
     const int gender_filter = query.gender.value_or(-1);
 
@@ -217,7 +219,7 @@ boost::asio::awaitable<std::vector<application::model::SingerSourceSyncTarget>> 
             auto target = mapSingerTargetRow(row);
             boost::mysql::results claim_result;
             co_await connection->async_execute(
-                claim_statement.bind(target.source, target.source_singer_id, statuses[0], statuses[1], statuses[2], statuses[3], statuses[4], stale_enabled, query.stale_after_seconds),
+                claim_statement.bind(target.source, target.source_singer_id, statuses[0], statuses[1], statuses[2], statuses[3], statuses[4], stale_enabled, query.stale_after_seconds, query.force ? 1 : 0),
                 claim_result,
                 boost::asio::use_awaitable
             );
@@ -236,7 +238,7 @@ boost::asio::awaitable<application::model::SingerSourceSyncPreviewResult> MySqlS
 {
     query = normalizeQuery(std::move(query));
     application::model::SingerSourceSyncPreviewResult preview;
-    const auto statuses = normalizedStatuses(query.sync_statuses);
+    const auto statuses = normalizedStatuses(query.sync_statuses, query.force);
     const int stale_enabled = query.include_stale_running ? 1 : 0;
     const int gender_filter = query.gender.value_or(-1);
 
@@ -271,7 +273,7 @@ boost::asio::awaitable<std::vector<application::model::SingerSourceSyncTarget>> 
 {
     query = normalizeQuery(std::move(query));
     std::vector<application::model::SingerSourceSyncTarget> claimed;
-    const auto statuses = normalizedStatuses(query.sync_statuses);
+    const auto statuses = normalizedStatuses(query.sync_statuses, query.force);
     const int stale_enabled = query.include_stale_running ? 1 : 0;
     const int gender_filter = query.gender.value_or(-1);
 
@@ -290,7 +292,7 @@ boost::asio::awaitable<std::vector<application::model::SingerSourceSyncTarget>> 
             auto target = mapSingerTargetRow(row);
             boost::mysql::results claim_result;
             co_await connection->async_execute(
-                claim_statement.bind(target.source, target.source_singer_id, statuses[0], statuses[1], statuses[2], statuses[3], statuses[4], stale_enabled, query.stale_after_seconds),
+                claim_statement.bind(target.source, target.source_singer_id, statuses[0], statuses[1], statuses[2], statuses[3], statuses[4], stale_enabled, query.stale_after_seconds, query.force ? 1 : 0),
                 claim_result,
                 boost::asio::use_awaitable
             );
@@ -309,7 +311,7 @@ boost::asio::awaitable<application::model::SingerSourceSyncPreviewResult> MySqlS
 {
     query = normalizeQuery(std::move(query));
     application::model::SingerSourceSyncPreviewResult preview;
-    const auto statuses = normalizedStatuses(query.sync_statuses);
+    const auto statuses = normalizedStatuses(query.sync_statuses, query.force);
     const int stale_enabled = query.include_stale_running ? 1 : 0;
     const int gender_filter = query.gender.value_or(-1);
 

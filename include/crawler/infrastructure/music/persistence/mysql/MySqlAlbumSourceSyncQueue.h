@@ -53,6 +53,7 @@ private:
     std::string update_songs_sync_sql_;      // 更新专辑歌曲同步状态语句
     std::string select_pending_details_sql_; // 查询待补齐详情语句
     std::string select_pending_songs_sql_;   // 查询待获取歌曲语句
+    std::string find_source_sql_;            // 零变更时区分已存在来源与无效目标
 };
 
 } // namespace orchestrator::modules::crawler::infrastructure::music::persistence::mysql

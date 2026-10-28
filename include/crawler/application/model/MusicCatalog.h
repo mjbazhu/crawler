@@ -22,7 +22,7 @@ struct MiguSingerCatalogQuery : CatalogPageQuery {
     std::string keyword;                   // 歌手名或平台歌手 ID 关键字
     std::string source_singer_id;          // 精确平台歌手 ID，空表示不限
     std::string country;                   // 平台地区过滤，空表示不限
-    std::optional<int> gender;             // 性别过滤，空表示不限
+    std::optional<int> gender;             // 来源歌手类型过滤：0 未知、1 男、2 女、3 组合
     std::vector<int> songs_sync_statuses;  // 歌曲列表同步状态过滤
     std::vector<int> albums_sync_statuses; // 专辑列表同步状态过滤
     std::optional<int> min_songs_count;    // 最小已关联歌曲数，空表示不限
@@ -41,6 +41,7 @@ struct MiguAlbumCatalogQuery : CatalogPageQuery {
     std::vector<int> songs_sync_statuses;  // 专辑歌曲同步状态过滤
     std::optional<int> min_songs_count;    // 最小已关联专辑歌曲数，空表示不限
     std::optional<int> max_songs_count;    // 最大已关联专辑歌曲数，空表示不限
+    bool exclude_shared_release_archives = false; // 回补排除公共归档，普通目录仍展示其摘要
 };
 
 // Migu 歌曲目录查询参数。
@@ -88,6 +89,7 @@ struct MiguBackfillTargetQuery : CatalogPageQuery {
     std::string artist;                  // 专辑歌手过滤
     std::optional<int> album_kind;       // 专辑类型过滤
     int limit = 50;                      // retry/reset 最大处理数量
+    bool force = false;                  // retry 包含已完成目标，仍跳过正在执行的目标
 };
 
 // 补池操作目标明细，用于前端展示认领、跳过或重置原因。
@@ -111,7 +113,7 @@ struct MiguSingerCatalogRecord {
     std::uint64_t singer_db_id = 0;        // singers.id
     std::string name;                      // 公共歌手名
     std::string normalized_name;           // 标准化歌手名
-    int gender = 0;                        // 公共歌手性别
+    int gender = 0;                        // 来源歌手类型，不从公共名称池推断
     int status = 0;                        // 公共歌手状态
     std::uint64_t source_ref_id = 0;       // singer_source_refs.id
     std::string source = "migu";           // 音乐平台标识
@@ -150,10 +152,13 @@ struct MiguAlbumCatalogRecord {
     std::string source = "migu";         // 音乐平台标识
     std::string source_item_key;         // 平台来源唯一键
     std::string source_album_id;         // 平台专辑 ID
+    std::string source_material_id;      // 明确的数字专辑物料身份，供回补策略判断
     std::string source_resource_type;    // 详情资源类型
     std::string source_res_type;         // 列表资源类型
     int source_album_kind = 0;           // 平台专辑类型
     std::string source_title;            // 平台专辑标题
+    std::string source_title_pinyin;     // 来源专辑拼音，缺失时为空
+    std::string summary;                 // 来源专辑简介，缺失时为空
     std::string source_artist_id;        // 平台歌手 ID
     std::string source_artist_name;      // 平台歌手名
     std::string cover_url;               // 平台封面

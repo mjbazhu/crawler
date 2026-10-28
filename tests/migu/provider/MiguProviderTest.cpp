@@ -243,6 +243,17 @@ void test_singer_album_provider()
         assert(client->last_request_url == "unchanged");
         std::cout << "Passed" << std::endl;
     }
+
+    {
+        // 独立曲目接口才支持分页，不能把 pageNo 附到旧详情接口。
+        (void)provider.fetchAlbumSongPage("1001414820", 2, 50);
+        assert(client->last_request_url == "https://app.c.nf.migu.cn/MIGUM3.0/resource/album/song/v2.0?pageNo=2&pageSize=50&albumId=1001414820");
+        client->last_request_url = "unchanged";
+        assert(!provider.fetchAlbumSongPage("1x", 2, 50));
+        assert(!provider.fetchAlbumSongPage("1", 0, 50));
+        assert(!provider.fetchAlbumSongPage("1", 2, 201));
+        assert(client->last_request_url == "unchanged");
+    }
 }
 
 int main()

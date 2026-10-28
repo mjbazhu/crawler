@@ -1,5 +1,7 @@
 #include "crawler/infrastructure/music/migu/parser/MiguParser.h"
 
+#include <nlohmann/json.hpp>
+
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -18,11 +20,13 @@ void require(bool condition, const std::string &message)
     }
 }
 
+// 将离线响应文本转换为解析器输入。
 std::vector<char> toBytes(const std::string &text)
 {
     return std::vector<char>(text.begin(), text.end());
 }
 
+// 验证专辑列表字段和尾页识别。
 void testParseSingerAlbumList()
 {
     const std::string raw = R"({
@@ -56,6 +60,28 @@ void testParseSingerAlbumList()
     require(page_info.should_stop_paging, "page_info.should_stop_paging");
 }
 
+// 满页不能结束翻页，最后一页及空页才停止；对应真实的 41 张专辑响应。
+void testSingerAlbumPagingUsesTenItemPages()
+{
+    migu_parser::MiguParser parser;
+    std::size_t count = 0;
+    for (std::size_t page = 0; page < 5; ++page) {
+        auto root = nlohmann::json::parse(R"({"data":{"contents":[]}})");
+        const std::size_t size = page == 4 ? 1 : 10;
+        for (std::size_t index = 0; index < size; ++index) {
+            root["data"]["contents"].push_back({{"view", "ZJ-Album-Item"}, {"resId", std::to_string(page * 10 + index)}, {"txt", "分页专辑"}});
+        }
+        const auto raw = toBytes(root.dump());
+        const auto info = parser.inspectSingerAlbumPage(raw);
+        require(info.album_count == size, "album page size was not counted");
+        require(info.should_stop_paging == (page == 4), "full ten-item album page ended pagination early");
+        count += parser.parseAlbumSources(raw).size();
+    }
+    require(count == 41, "five album pages did not retain all 41 albums");
+    require(parser.inspectSingerAlbumPage(toBytes(R"({"data":{"contents":[]}})")).should_stop_paging, "empty album page did not stop pagination");
+}
+
+// 数字专辑详情的外层身份优先于歌曲自带的其他专辑身份。
 void testParseDigitalAlbumDetail()
 {
     const std::string raw = R"({
@@ -92,6 +118,8 @@ void testParseDigitalAlbumDetail()
                 "refId": "600927000001",
                 "songId": "1142521344",
                 "songName": "太阳之子",
+                "albumId": "1142521343",
+                "dalbumId": "other-digital-context",
                 "duration": 297,
                 "singer": "周杰伦",
                 "singerId": "112",
@@ -135,6 +163,7 @@ void testParseDigitalAlbumDetail()
     require(songs.size() == 1, "songs.size() == 1");
     require(songs.front().source_content_id == "600927000001", "song source content id from refId");
     require(songs.front().source_album_id == "600927015009001083", "song source album id from album detail");
+    require(songs.front().source_album_material_id == "1142521343", "song material mapping from album detail");
     require(songs.front().source_album_name == "太阳之子", "song source album name from album detail");
     require(songs.front().source_primary_artist_id == "112", "song source singer id");
     require(songs.front().artist_refs.size() == 2, "song source artist refs size");
@@ -178,14 +207,41 @@ void testParseCatalogAlbumDetail()
     require(albums.front().detail_sync_status == 2, "albums.front().detail_sync_status == 2");
 }
 
+// 合唱专辑的旧 singerId/singer 以竖线一一对应，不得形成复合身份端点。
+void testDelimitedAlbumArtists()
+{
+    migu_parser::MiguParser parser;
+    const auto albums = parser.parseAlbumSources(toBytes(R"({"resource":[{"albumId":"duet-album","resourceType":"2003","title":"合唱专辑","singerId":"artist-one| artist-two ","singer":"歌手一| 歌手二 ","totalCount":"1","songItems":[{"contentId":"duet-song","songName":"合唱歌曲","artists":[{"id":"artist-one","name":"歌手一"},{"id":"artist-two","name":"歌手二"}]}]}]})"));
+    require(albums.size() == 1 && albums[0].artist_refs.size() == 2, "delimited album artists were lost");
+    require(albums[0].artist_refs[0].source_artist_id == "artist-one" && albums[0].artist_refs[0].source_artist_name == "歌手一", "first album artist identity or name is wrong");
+    require(albums[0].artist_refs[1].source_artist_id == "artist-two" && albums[0].artist_refs[1].source_artist_name == "歌手二", "second album artist identity or name is wrong");
+    require(albums[0].artist_refs[0].is_primary && !albums[0].artist_refs[1].is_primary && albums[0].artist_refs[1].artist_order == 2, "delimited album artist order is wrong");
+}
+
+// 详情歌手头像必须绑定明确的单个 singerId，不得变成专辑封面或猜给合唱歌手。
+void testAlbumSingerImages()
+{
+    migu_parser::MiguParser parser;
+    const auto single = parser.parseAlbumSources(toBytes(R"({"resource":[{"albumId":"album-image","title":"专辑","singerId":"solo","singer":"独立歌手","singerImgs":[{"imgSizeType":"02","img":"//example.test/singer.webp"}],"imgItems":[{"img":"https://example.test/album.webp"}]}]})"));
+    require(single.size() == 1 && single[0].artist_refs.size() == 1, "single singer image fixture failed");
+    require(single[0].artist_refs[0].source_artist_image == "https://example.test/singer.webp", "singerImgs was lost or assigned to another owner");
+    require(single[0].cover_url == "https://example.test/album.webp", "singer image replaced album cover");
+    const auto shared = parser.parseAlbumSources(toBytes(R"({"resource":[{"albumId":"album-shared","title":"合唱专辑","singerId":"one|two","singer":"歌手一|歌手二","singerImgs":[{"img":"https://example.test/ambiguous.webp"}]}]})"));
+    require(shared.size() == 1 && shared[0].artist_refs.size() == 2, "shared singer image fixture failed");
+    require(shared[0].artist_refs[0].source_artist_image.empty() && shared[0].artist_refs[1].source_artist_image.empty(), "ambiguous image was assigned to an individual singer");
+}
+
 } // namespace
 
 int main()
 {
     try {
         testParseSingerAlbumList();
+        testSingerAlbumPagingUsesTenItemPages();
         testParseDigitalAlbumDetail();
         testParseCatalogAlbumDetail();
+        testDelimitedAlbumArtists();
+        testAlbumSingerImages();
         std::cout << "MiguAlbumSourceParserTest passed." << std::endl;
         return 0;
     } catch (const std::exception &e) {

@@ -2,6 +2,8 @@
 
 #include "crawler/application/model/SongResourceQueue.h"
 
+#include "crawler/application/result/ServiceResult.h"
+
 #include <optional>
 #include <vector>
 
@@ -20,6 +22,12 @@ public:
 
     // 标记资源保存成功。
     virtual bool markSucceeded(application::model::SongResourceSuccessUpdate update) = 0;
+
+    // 确认成功回写结果；success(false) 表示明确拒绝，failure 表示无法确认提交结果。
+    virtual application::result::ServiceResult<bool> confirmSucceeded(application::model::SongResourceSuccessUpdate update)
+    {
+        return application::result::ServiceResult<bool>::success(markSucceeded(std::move(update)));
+    }
 
     // 标记资源处理失败。
     virtual bool markFailed(application::model::SongResourceFailureUpdate update) = 0;

@@ -10,7 +10,7 @@ SELECT
     r.source_song_total,
     r.source_album_total,
     r.source_country,
-    s.gender,
+    r.source_gender AS gender,
     '' AS avatar_url,
     r.metadata_status,
     r.songs_sync_status,

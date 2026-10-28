@@ -83,60 +83,6 @@ std::optional<std::string> firstStringField(const json &body, std::initializer_l
     return std::nullopt;
 }
 
-// 尝试把 JSON 值解析为正整数 ID。
-std::optional<std::uint64_t> parseUnsignedId(const json &value)
-{
-    if (value.is_number_unsigned()) {
-        const auto id = value.get<std::uint64_t>();
-        return id == 0 ? std::nullopt : std::optional<std::uint64_t>(id);
-    }
-    if (value.is_number_integer()) {
-        const auto id = value.get<long long>();
-        return id <= 0 ? std::nullopt : std::optional<std::uint64_t>(static_cast<std::uint64_t>(id));
-    }
-    if (value.is_string()) {
-        try {
-            std::size_t parsed = 0;
-            const std::string text = value.get<std::string>();
-            const auto id = std::stoull(text, &parsed);
-            if (parsed == text.size() && id > 0) {
-                return id;
-            }
-        } catch (...) {
-            return std::nullopt;
-        }
-    }
-    return std::nullopt;
-}
-
-// 读取第一个 ID 字段。
-std::optional<std::uint64_t> firstIdField(const json &body, std::initializer_list<const char *> names)
-{
-    for (const char *name : names) {
-        if (body.contains(name)) {
-            return parseUnsignedId(body[name]);
-        }
-    }
-    return std::nullopt;
-}
-
-// 读取第一个 ID 数组字段。
-std::vector<std::uint64_t> firstIdArrayField(const json &body, std::initializer_list<const char *> names)
-{
-    for (const char *name : names) {
-        if (body.contains(name) && body[name].is_array()) {
-            std::vector<std::uint64_t> ids;
-            for (const auto &item : body[name]) {
-                if (auto id = parseUnsignedId(item)) {
-                    ids.push_back(*id);
-                }
-            }
-            return ids;
-        }
-    }
-    return {};
-}
-
 // 读取第一个字符串数组字段。
 std::vector<std::string> firstStringArrayField(const json &body, std::initializer_list<const char *> names)
 {
@@ -237,16 +183,6 @@ std::optional<std::string> validateSingerIndexSelection(std::size_t size, int li
 }
 
 // 校验歌手 ID 采集入口，limit=0 表示每个歌手全部歌曲或专辑。
-std::optional<std::string> validateSingerIdsSelection(std::size_t size, int limit, int start_index, std::optional<int> end_index)
-{
-    if (auto error = validateSelectionRange(size, start_index, end_index)) {
-        return error;
-    }
-    if (limit < 0 || limit > kMaxLimit) {
-        return "limit must be between 0 and 500";
-    }
-    return std::nullopt;
-}
 
 // 选择字符串区间。
 std::vector<std::string> selectedStrings(const std::vector<std::string> &values, int start_index, std::optional<int> end_index)
@@ -259,14 +195,6 @@ std::vector<std::string> selectedStrings(const std::vector<std::string> &values,
 }
 
 // 选择 ID 区间。
-std::vector<std::uint64_t> selectedIds(const std::vector<std::uint64_t> &values, int start_index, std::optional<int> end_index)
-{
-    const int end = end_index.value_or(static_cast<int>(values.size()));
-    return std::vector<std::uint64_t>(
-        values.begin() + static_cast<std::ptrdiff_t>(start_index),
-        values.begin() + static_cast<std::ptrdiff_t>(end)
-    );
-}
 
 } // namespace
 
@@ -317,76 +245,6 @@ std::vector<std::string> MiguSingerIndexCrawlRequestDto::selectedTargets() const
     return selected;
 }
 
-std::optional<MiguSingerIdsCrawlRequestDto> MiguSingerIdsCrawlRequestDto::fromRequest(const http::HttpRequest &req)
-{
-    try {
-        if (req.body.empty()) {
-            return std::nullopt;
-        }
-
-        auto body = json::parse(req.body);
-        MiguSingerIdsCrawlRequestDto dto;
-        dto.limit = parseLimit(body, 0);
-        dto.start_index = parseIntField(body, {"start_index", "startPosition", "start"}, 0);
-        dto.end_index = parseOptionalIntField(body, {"end_index", "endPosition", "end"});
-        dto.singer_ids = firstIdArrayField(body, {"singer_ids", "singerIds"});
-        if (dto.singer_ids.empty()) {
-            if (auto id = firstIdField(body, {"singer_id", "singerId"})) {
-                dto.singer_ids.push_back(*id);
-            }
-        }
-        return dto;
-    } catch (...) {
-        return std::nullopt;
-    }
-}
-
-std::optional<std::string> MiguSingerIdsCrawlRequestDto::validate() const
-{
-    return validateSingerIdsSelection(singer_ids.size(), limit, start_index, end_index);
-}
-
-std::vector<std::string> MiguSingerIdsCrawlRequestDto::selectedSongTargets() const
-{
-    auto ids = selectedIds(singer_ids, start_index, end_index);
-    std::vector<std::string> targets;
-    targets.reserve(ids.size());
-    for (std::uint64_t id : ids) {
-        targets.push_back("singer:" + std::to_string(id));
-    }
-    return targets;
-}
-
-std::vector<std::string> MiguSingerIdsCrawlRequestDto::selectedAlbumTargets() const
-{
-    auto ids = selectedIds(singer_ids, start_index, end_index);
-    std::vector<std::string> targets;
-    targets.reserve(ids.size());
-    for (std::uint64_t id : ids) {
-        targets.push_back("singer-albums:" + std::to_string(id));
-    }
-    return targets;
-}
-
-std::optional<MiguAlbumBackfillRequestDto> MiguAlbumBackfillRequestDto::fromRequest(const http::HttpRequest &req)
-{
-    try {
-        MiguAlbumBackfillRequestDto dto;
-        if (req.body.empty()) {
-            return dto;
-        }
-
-        auto body = json::parse(req.body);
-        dto.limit = parseLimit(body);
-        if (auto source = firstStringField(body, {"source"})) {
-            dto.source = *source;
-        }
-        return dto;
-    } catch (...) {
-        return std::nullopt;
-    }
-}
-
 std::optional<MiguSingerFromDbCrawlRequestDto> MiguSingerFromDbCrawlRequestDto::fromRequest(const http::HttpRequest &req)
 {
     try {
@@ -406,6 +264,8 @@ std::optional<MiguSingerFromDbCrawlRequestDto> MiguSingerFromDbCrawlRequestDto::
         }
         dto.query.limit = static_cast<std::size_t>(parseIntField(body, {"max_targets", "maxTargets", "target_limit", "targetLimit"}, 20));
         dto.limit_per_singer = parseIntField(body, {"limit_per_singer", "limitPerSinger", "per_singer_limit", "perSingerLimit"}, 0);
+        if (body.contains("force") && !body["force"].is_boolean()) return std::nullopt;
+        dto.query.force = body.value("force", false);
         dto.query.include_stale_running = parseBoolField(body, {"include_stale_running", "includeStaleRunning"}, false);
         dto.query.stale_after_seconds = parseIntField(body, {"stale_after_seconds", "staleAfterSeconds"}, 3600);
 
@@ -459,17 +319,6 @@ std::optional<std::string> MiguSingerFromDbCrawlRequestDto::validate() const
         if (status < 0 || status > 4) {
             return "sync_status values must be between 0 and 4";
         }
-    }
-    return std::nullopt;
-}
-
-std::optional<std::string> MiguAlbumBackfillRequestDto::validate() const
-{
-    if (source != "migu") {
-        return "source must be migu";
-    }
-    if (limit <= 0 || limit > kMaxLimit) {
-        return "limit must be between 1 and 500";
     }
     return std::nullopt;
 }

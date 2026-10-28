@@ -1,7 +1,5 @@
 #include "crawler/application/use_cases/AsyncSongResourceDownloadWorkflow.h"
 
-#include "crawler/application/use_cases/SongResourceDownloadWorkflow.h"
-
 #include <algorithm>
 #include <string>
 #include <string_view>
@@ -44,18 +42,6 @@ application::async::Task<void> AsyncSongResourceDownloadWorkflow::postProcessCom
     }
     if (processed.isSuccess() && processed.data() && !*processed.data()) co_return;
     co_await notifyItemEvent(listener, item, processed.isSuccess() ? "resourcePostProcessingCompleted" : "resourcePostProcessingFailed", eventPayload(processed));
-}
-
-void SongResourceDownloadWorkflow::postProcessCompleted(const application::model::SongResourceProcessItem &item, SongResourceProcessListener *listener)
-{
-    if (!item.ok || !extensions_.post_processor) return;
-    const auto processed = processResource(*extensions_.post_processor, item);
-    if (!listener || (processed.isSuccess() && processed.data() && !*processed.data())) return;
-    try {
-        listener->onItemEvent(item, processed.isSuccess() ? "resourcePostProcessingCompleted" : "resourcePostProcessingFailed", eventPayload(processed));
-    } catch (...) {
-        // 监听器负责诊断输出，不能影响已完成的下载或派生产物。
-    }
 }
 
 } // namespace orchestrator::modules::crawler::application::use_cases

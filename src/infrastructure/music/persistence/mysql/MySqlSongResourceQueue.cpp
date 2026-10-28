@@ -1,6 +1,7 @@
 #include "crawler/infrastructure/music/persistence/mysql/MySqlSongResourceQueue.h"
 
 #include "crawler/infrastructure/music/persistence/mysql/MySqlValueReader.h"
+#include "MySqlResourceQueueSupport.h"
 #include "crawler/infrastructure/music/persistence/mysql/MySqlWriteRunner.h"
 #include "crawler/infrastructure/music/persistence/sql/SqlFileLoader.h"
 
@@ -21,33 +22,14 @@
 #include <utility>
 
 namespace orchestrator::modules::crawler::infrastructure::music::persistence::mysql {
+using resource_detail::waitForMysqlResult;
+using resource_detail::logResourceQueueError;
 
 namespace {
 
 namespace sql_loader = infrastructure::music::persistence::sql;
 
 constexpr std::size_t kStatusSlotCount = 5;
-
-// 在同步 port 边界阻塞等待 MySQL 查询完成，避免把 Asio 暴露到 application。
-template <typename T>
-T waitForMysqlResult(boost::asio::any_io_executor executor, boost::asio::awaitable<T> task, std::string_view component, std::string_view context, T fallback)
-{
-    std::future<T> future = boost::asio::co_spawn(std::move(executor), std::move(task), boost::asio::use_future);
-    try {
-        return future.get();
-    } catch (const std::exception &e) {
-        std::cerr << "[" << component << "] " << context << " failed: " << e.what() << std::endl;
-    } catch (...) {
-        std::cerr << "[" << component << "] " << context << " failed with unknown error" << std::endl;
-    }
-    return fallback;
-}
-
-// 记录资源队列异常。
-void logResourceQueueError(const std::string &context, const std::exception &error)
-{
-    std::cerr << "[MySqlSongResourceQueue] " << context << " failed: " << error.what() << std::endl;
-}
 
 // 规整资源状态过滤，空过滤默认认领待获取和失败；跳过状态不再认领。
 std::array<int, kStatusSlotCount> normalizedStatuses(const std::vector<int> &statuses)
@@ -113,21 +95,6 @@ std::optional<application::model::SongResourceQueueTarget> MySqlSongResourceQueu
     return waitForMysqlResult<std::optional<application::model::SongResourceQueueTarget>>(pool_->executor(), coClaimRelated(std::move(request)), "MySqlSongResourceQueue", "claimRelated", std::nullopt);
 }
 
-bool MySqlSongResourceQueue::markSucceeded(application::model::SongResourceSuccessUpdate update)
-{
-    return MySqlWriteRunner::waitForWrite(pool_->executor(), coMarkSucceeded(std::move(update)), "MySqlSongResourceQueue", "markSucceeded");
-}
-
-bool MySqlSongResourceQueue::markFailed(application::model::SongResourceFailureUpdate update)
-{
-    return MySqlWriteRunner::waitForWrite(pool_->executor(), coMarkFailed(std::move(update)), "MySqlSongResourceQueue", "markFailed");
-}
-
-bool MySqlSongResourceQueue::markSkipped(application::model::SongResourceSkipUpdate update)
-{
-    return MySqlWriteRunner::waitForWrite(pool_->executor(), coMarkSkipped(std::move(update)), "MySqlSongResourceQueue", "markSkipped");
-}
-
 boost::asio::awaitable<std::vector<application::model::SongResourceQueueTarget>> MySqlSongResourceQueue::coClaimPending(application::model::SongResourceClaimQuery query)
 {
     query = normalizeQuery(std::move(query));
@@ -157,12 +124,13 @@ boost::asio::awaitable<std::vector<application::model::SongResourceQueueTarget>>
                 application::model::SongResourceQueueTarget target = mapTarget(result.rows().front());
                 boost::mysql::results claim_result;
                 co_await connection->async_execute(
-                    claim_statement.bind(query.batch_id, target.resource_id, statuses[0], statuses[1], statuses[2], statuses[3], statuses[4]),
+                    claim_statement.bind(query.batch_id, target.resource_id, statuses[0], statuses[1], statuses[2], statuses[3], statuses[4], target.claim_generation),
                     claim_result,
                     boost::asio::use_awaitable
                 );
                 if (claim_result.affected_rows() > 0) {
                     target.status = 1;
+                    ++target.claim_generation;
                     claimed.push_back(std::move(target));
                 }
             }
@@ -180,12 +148,13 @@ boost::asio::awaitable<std::vector<application::model::SongResourceQueueTarget>>
             application::model::SongResourceQueueTarget target = mapTarget(row);
             boost::mysql::results claim_result;
             co_await connection->async_execute(
-                claim_statement.bind(query.batch_id, target.resource_id, statuses[0], statuses[1], statuses[2], statuses[3], statuses[4]),
+                claim_statement.bind(query.batch_id, target.resource_id, statuses[0], statuses[1], statuses[2], statuses[3], statuses[4], target.claim_generation),
                 claim_result,
                 boost::asio::use_awaitable
             );
             if (claim_result.affected_rows() > 0) {
                 target.status = 1;
+                ++target.claim_generation;
                 claimed.push_back(std::move(target));
             }
         }
@@ -227,109 +196,6 @@ boost::asio::awaitable<std::optional<application::model::SongResourceQueueTarget
     co_return std::nullopt;
 }
 
-boost::asio::awaitable<bool> MySqlSongResourceQueue::coMarkSucceeded(application::model::SongResourceSuccessUpdate update)
-{
-    if (update.resource_id == 0 || update.local_path.empty()) {
-        co_return false;
-    }
-    if (update.result_code.empty()) {
-        update.result_code = "ok";
-    }
-
-    try {
-        boost::mysql::pooled_connection connection = co_await pool_->coAcquire();
-        boost::mysql::statement statement = co_await connection->async_prepare_statement(mark_succeeded_sql_, boost::asio::use_awaitable);
-        boost::mysql::results result;
-        const std::string cloud_backend = update.cloud_backend;
-        co_await connection->async_execute(
-            statement.bind(
-                std::move(update.local_path),
-                std::move(update.cloud_backend),
-                std::move(update.cloud_path),
-                update.size_bytes,
-                std::move(update.checksum),
-                std::move(update.result_code),
-                std::move(update.batch_id),
-                cloud_backend,
-                update.resource_id
-            ),
-            result,
-            boost::asio::use_awaitable
-        );
-        co_return result.affected_rows() > 0;
-    } catch (const std::exception &e) {
-        logResourceQueueError("coMarkSucceeded", e);
-    }
-    co_return false;
-}
-
-boost::asio::awaitable<bool> MySqlSongResourceQueue::coMarkFailed(application::model::SongResourceFailureUpdate update)
-{
-    if (update.resource_id == 0) {
-        co_return false;
-    }
-    if (update.error_category.empty()) {
-        update.error_category = "unknown";
-    }
-    if (update.result_code.empty()) {
-        update.result_code = "failed";
-    }
-
-    try {
-        boost::mysql::pooled_connection connection = co_await pool_->coAcquire();
-        boost::mysql::statement statement = co_await connection->async_prepare_statement(mark_failed_sql_, boost::asio::use_awaitable);
-        boost::mysql::results result;
-        co_await connection->async_execute(statement.bind(std::move(update.message), std::move(update.error_category), std::move(update.result_code), std::move(update.batch_id), update.resource_id), result, boost::asio::use_awaitable);
-        co_return result.affected_rows() > 0;
-    } catch (const std::exception &e) {
-        logResourceQueueError("coMarkFailed", e);
-    }
-    co_return false;
-}
-
-boost::asio::awaitable<bool> MySqlSongResourceQueue::coMarkSkipped(application::model::SongResourceSkipUpdate update)
-{
-    if (update.resource_id == 0 && update.song_source_ref_id == 0) {
-        co_return false;
-    }
-    if (update.error_category.empty()) {
-        update.error_category = "resource";
-    }
-    if (update.result_code.empty()) {
-        update.result_code = "skipped";
-    }
-
-    try {
-        const std::string resource_kind = update.resource_kind;
-        const std::string format_type = update.format_type;
-        boost::mysql::pooled_connection connection = co_await pool_->coAcquire();
-        boost::mysql::statement statement = co_await connection->async_prepare_statement(mark_skipped_sql_, boost::asio::use_awaitable);
-        boost::mysql::results result;
-        co_await connection->async_execute(
-            statement.bind(
-                std::move(update.message),
-                std::move(update.error_category),
-                std::move(update.result_code),
-                std::move(update.batch_id),
-                update.song_source_ref_id,
-                update.song_source_ref_id,
-                update.song_source_ref_id,
-                update.resource_id,
-                resource_kind,
-                resource_kind,
-                format_type,
-                format_type
-            ),
-            result,
-            boost::asio::use_awaitable
-        );
-        co_return result.affected_rows() > 0;
-    } catch (const std::exception &e) {
-        logResourceQueueError("coMarkSkipped", e);
-    }
-    co_return false;
-}
-
 application::model::SongResourceQueueTarget MySqlSongResourceQueue::mapTarget(boost::mysql::row_view row)
 {
     application::model::SongResourceQueueTarget target;
@@ -354,6 +220,7 @@ application::model::SongResourceQueueTarget MySqlSongResourceQueue::mapTarget(bo
     if (row.size() > 18) {
         target.resource_fetch_format_type = MySqlValueReader::stringAt(row, 18);
     }
+    if (row.size() > 19) target.claim_generation = MySqlValueReader::uint64At(row, 19);
     return target;
 }
 

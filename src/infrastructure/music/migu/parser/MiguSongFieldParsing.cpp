@@ -1,4 +1,5 @@
 #include "MiguSongFieldParsing.h"
+#include "MiguParserSupportInternal.h"
 
 #include "crawler/infrastructure/json/JsonUtils.h"
 
@@ -30,6 +31,53 @@ std::string stringAlias(const nlohmann::json &item, const char *first, const cha
     return value;
 }
 
+// 保留空片段以维持 ID 和姓名的对应位置，只去掉字段两端的空白。
+std::vector<std::string> splitArtistField(const std::string &value)
+{
+    std::vector<std::string> parts;
+    if (value.empty()) return parts;
+    std::size_t start = 0;
+    while (start <= value.size()) {
+        const auto end = value.find('|', start);
+        auto part = value.substr(start, end == std::string::npos ? end : end - start);
+        const auto first = part.find_first_not_of(" \t\r\n");
+        if (first == std::string::npos)
+            part.clear();
+        else
+            part = part.substr(first, part.find_last_not_of(" \t\r\n") - first + 1);
+        parts.push_back(std::move(part));
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    return parts;
+}
+
+// 数组结构优先于旧的分隔字段；数组元素必须代表一个独立歌手身份。
+void appendArtistArray(const nlohmann::json *artists, std::vector<application::model::SongSourceArtistRef> &result)
+{
+    if (!artists) return;
+    for (const auto &artist : *artists) {
+        application::model::SongSourceArtistRef ref;
+        ref.source_artist_id = stringAlias(artist, "id", "singerId", "artistId");
+        if (ref.source_artist_id.empty() || ref.source_artist_id.find('|') != std::string::npos) continue;
+        ref.source_artist_name = json::JsonUtils::getString(artist, "name");
+        ref.source_artist_name_pinyin = json::JsonUtils::getString(artist, "nameSpelling");
+        ref.source_artist_image = normalizeMiguResourceUrl(json::JsonUtils::getString(artist, "img"));
+        ref.artist_order = static_cast<std::uint32_t>(result.size()) + 1;
+        ref.is_primary = result.empty();
+        result.push_back(std::move(ref));
+    }
+}
+
+// singerImgs 是同一歌手的多种分辨率；只有唯一且明确匹配的身份才能使用。
+void fillSingleArtistImage(const nlohmann::json &item, std::vector<application::model::SongSourceArtistRef> &artists)
+{
+    if (artists.size() != 1 || !artists.front().source_artist_image.empty()) return;
+    const auto identities = splitArtistField(json::JsonUtils::getString(item, "singerId"));
+    if (identities.size() != 1 || identities.front() != artists.front().source_artist_id) return;
+    artists.front().source_artist_image = normalizeMiguResourceUrl(selectImageUrl(json::JsonUtils::getArray(item, "singerImgs")));
+}
+
 } // namespace
 
 std::uint32_t parseSongDuration(const nlohmann::json &song)
@@ -57,20 +105,28 @@ std::uint32_t parseSongDuration(const nlohmann::json &song)
 
 std::vector<application::model::SongSourceArtistRef> parseSourceArtists(const nlohmann::json &item)
 {
-    const auto *artists = json::JsonUtils::getArray(item, "singerList");
-    if (!artists) artists = json::JsonUtils::getArray(item, "artists");
     std::vector<application::model::SongSourceArtistRef> result;
-    if (!artists) return result;
-    for (const auto &artist : *artists) {
+    appendArtistArray(json::JsonUtils::getArray(item, "singerList"), result);
+    if (result.empty()) appendArtistArray(json::JsonUtils::getArray(item, "artists"), result);
+    if (!result.empty()) {
+        fillSingleArtistImage(item, result);
+        return result;
+    }
+
+    const auto ids = splitArtistField(json::JsonUtils::getString(item, "singerId"));
+    const auto names = splitArtistField(json::JsonUtils::getString(item, "singer"));
+    std::set<std::string> seen;
+    for (std::size_t index = 0; index < ids.size(); ++index) {
+        if (ids[index].empty() || !seen.insert(ids[index]).second) continue;
         application::model::SongSourceArtistRef ref;
-        ref.source_artist_id = stringAlias(artist, "id", "singerId", "artistId");
-        if (ref.source_artist_id.empty()) continue;
-        ref.source_artist_name = json::JsonUtils::getString(artist, "name");
-        ref.source_artist_name_pinyin = json::JsonUtils::getString(artist, "nameSpelling");
+        ref.source_artist_id = ids[index];
+        // 数量不匹配时只保留身份，不能把合唱显示名冒充任意单个歌手。
+        if (names.size() == ids.size()) ref.source_artist_name = names[index];
         ref.artist_order = static_cast<std::uint32_t>(result.size()) + 1;
         ref.is_primary = result.empty();
         result.push_back(std::move(ref));
     }
+    fillSingleArtistImage(item, result);
     return result;
 }
 

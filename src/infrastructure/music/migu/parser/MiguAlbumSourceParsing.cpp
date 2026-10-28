@@ -36,6 +36,7 @@ std::optional<application::model::AlbumSourceMetadata> parseAlbumSourceFromListI
     metadata.source_res_type = JsonUtils::getString(item, "resType");
     metadata.source_action = source_action;
     metadata.source_album_kind = albumKindFromTypes(metadata.source_res_type, {});
+    if (metadata.source_album_kind != 0) metadata.source_resource_type = metadata.source_album_kind == 2 ? "5" : "2003";
     metadata.source_title_pinyin = firstNonEmpty({JsonUtils::getString(item, "albumPinyin"), JsonUtils::getString(item, "albumNamePinyin")});
     metadata.artist_refs = parseSourceArtists(item);
     metadata.source_artist_name = metadata.artist_name;
@@ -136,6 +137,33 @@ std::optional<application::model::AlbumSourceMetadata> parseAlbumSourceFromDetai
     return metadata;
 }
 
+namespace {
+// 搜索接口采用 id/name/imgItems，与目录卡片和详情对象不同。
+void collectAlbumSearchItems(const nlohmann::json &container, std::vector<application::model::AlbumSourceMetadata> &albums)
+{
+    const auto *items = JsonUtils::getArray(container, "result");
+    if (!items) return;
+    for (const auto &item : *items) {
+        application::model::AlbumSourceMetadata album;
+        album.source_album_id = JsonUtils::getString(item, "id");
+        album.title = JsonUtils::getString(item, "name");
+        if (album.source_album_id.empty() || album.title.empty()) continue;
+        album.normalized_title = album.title;
+        album.source_resource_type = JsonUtils::getString(item, "resourceType");
+        album.source_album_kind = albumKindFromTypes({}, album.source_resource_type);
+        album.source_res_type = album.source_album_kind == 2 ? "1" : "0";
+        album.source_title_pinyin = firstNonEmpty({JsonUtils::getString(item, "albumPinyin"), JsonUtils::getString(item, "albumNamePinyin")});
+        album.cover_url = normalizeMiguResourceUrl(selectImageUrl(JsonUtils::getArray(item, "imgItems")));
+        album.release_date = JsonUtils::getString(item, "publishDate");
+        album.summary = JsonUtils::getString(item, "desc");
+        album.artist_refs = parseSourceArtists(item);
+        // singer 文本没有来源身份时只保留展示上下文，不能伪造关系端点。
+        album.source_artist_name = JsonUtils::getString(item, "singer");
+        albums.push_back(std::move(album));
+    }
+}
+} // namespace
+
 void collectAlbumSources(const nlohmann::json &node, std::vector<application::model::AlbumSourceMetadata> &albums)
 {
     if (node.is_array()) {
@@ -158,7 +186,9 @@ void collectAlbumSources(const nlohmann::json &node, std::vector<application::mo
         return;
     }
 
+    if (const auto *search = JsonUtils::getObject(node, "albumResultData")) collectAlbumSearchItems(*search, albums);
     if (const auto *data = JsonUtils::getObject(node, "data")) {
+        collectAlbumSearchItems(*data, albums);
         collectAlbumSources(*data, albums);
     }
     if (const auto *resource = JsonUtils::getArray(node, "resource")) {

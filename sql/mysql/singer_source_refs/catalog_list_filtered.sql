@@ -4,7 +4,7 @@ WITH base_candidates AS (
         s.name,
         s.normalized_name,
         COALESCE(r.source_name_pinyin, '') AS source_name_pinyin,
-        s.gender,
+        r.source_gender AS gender,
         s.status,
         r.id AS source_ref_id,
         r.source,
@@ -14,7 +14,7 @@ WITH base_candidates AS (
         COALESCE((SELECT m.source_tag FROM singer_index_memberships m WHERE m.singer_source_ref_id=r.id AND NULLIF(m.source_tag,'') IS NOT NULL ORDER BY m.id LIMIT 1), '') AS source_tag,
         r.source_song_total,
         r.source_album_total,
-        '' AS avatar_url,
+        COALESCE((SELECT resource.remote_url FROM singer_resources resource WHERE resource.singer_source_ref_id=r.id AND resource.resource_kind='cover'), '') AS avatar_url,
         r.songs_sync_status AS raw_songs_sync_status,
         r.songs_synced_at AS raw_songs_synced_at,
         COALESCE(r.songs_sync_error, '') AS songs_sync_error,
@@ -29,7 +29,7 @@ WITH base_candidates AS (
       AND (? = '' OR s.name LIKE CONCAT('%', CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci, '%') OR r.source_singer_id LIKE CONCAT('%', CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci, '%'))
       AND (? = '' OR r.source_singer_id = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci)
       AND (? = '' OR r.source_country = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci)
-      AND (? = -1 OR s.gender = ?)
+      AND (? = -1 OR r.source_gender = ?)
 ),
 song_counts AS (
     SELECT
@@ -67,26 +67,12 @@ summary AS (
         base.source_song_total,
         base.source_album_total,
         base.avatar_url,
-        CASE
-            WHEN base.source_song_total IS NOT NULL AND COALESCE(sc.songs_sync_count, 0) >= base.source_song_total AND base.songs_sync_error = '' AND base.raw_songs_sync_status <> 1 THEN 2
-            WHEN base.source_song_total IS NOT NULL AND COALESCE(sc.songs_sync_count, 0) < base.source_song_total AND base.songs_sync_error = '' AND base.raw_songs_sync_status <> 1 THEN 4
-            ELSE base.raw_songs_sync_status
-        END AS songs_sync_status,
-        CASE
-            WHEN base.source_song_total IS NOT NULL AND COALESCE(sc.songs_sync_count, 0) >= base.source_song_total AND base.songs_sync_error = '' AND base.raw_songs_synced_at = 0 THEN base.updated_at
-            ELSE base.raw_songs_synced_at
-        END AS songs_synced_at,
+        base.raw_songs_sync_status AS songs_sync_status,
+        base.raw_songs_synced_at AS songs_synced_at,
         COALESCE(sc.songs_sync_count, 0) AS songs_sync_count,
         base.songs_sync_error,
-        CASE
-            WHEN base.source_album_total IS NOT NULL AND COALESCE(ac.albums_sync_count, 0) >= base.source_album_total AND base.albums_sync_error = '' AND base.raw_albums_sync_status <> 1 THEN 2
-            WHEN base.source_album_total IS NOT NULL AND COALESCE(ac.albums_sync_count, 0) < base.source_album_total AND base.albums_sync_error = '' AND base.raw_albums_sync_status <> 1 THEN 4
-            ELSE base.raw_albums_sync_status
-        END AS albums_sync_status,
-        CASE
-            WHEN base.source_album_total IS NOT NULL AND COALESCE(ac.albums_sync_count, 0) >= base.source_album_total AND base.albums_sync_error = '' AND base.raw_albums_synced_at = 0 THEN base.updated_at
-            ELSE base.raw_albums_synced_at
-        END AS albums_synced_at,
+        base.raw_albums_sync_status AS albums_sync_status,
+        base.raw_albums_synced_at AS albums_synced_at,
         COALESCE(ac.albums_sync_count, 0) AS albums_sync_count,
         base.albums_sync_error,
         base.created_at,

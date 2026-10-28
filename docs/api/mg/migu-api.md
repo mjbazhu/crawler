@@ -28,19 +28,15 @@ OpenAPI：
 17. 需要内存级实时当前项时调用 `GET /api/migu/tasks/progress?batch_id=...`。
 18. 需要停止时调用 `POST /api/migu/tasks/stop`。
 
-`limit` 表示每个手动目标或每次专辑补齐最多处理的数量。歌手歌曲/专辑采集的 `limit=0` 表示获取该歌手全部歌曲/专辑，正数表示每个歌手最多获取数量，范围 `1..500`。`POST /api/migu/singers/crawl` 例外：`limit=0` 表示每个歌手分类全部获取，正数不设 500 上限。从库歌手批量接口使用 `max_targets` 控制认领歌手数，使用 `limit_per_singer` 控制每个歌手最多抓取数量；`limit_per_singer=0` 为默认全量抓取。
+`POST /api/migu/singers/crawl` 的 `limit=0` 表示每个分类全部获取。歌手目录主入口使用 `max_targets` 控制认领歌手数、`limit_per_singer` 控制每个歌手抓取数量，后者默认 `0` 表示在分页保护内全量获取，正数范围为 `1..500`。补池 retry 使用 `limit` 控制目标数、`limit_per_target` 控制每个歌手的抓取数量。
 
 ## 当前 API 清单
 
 | API | 用途 | 入库重点 |
 | --- | --- | --- |
 | `POST /api/migu/singers/crawl` | 获取歌手分类列表 | `singers`、`singer_source_refs` |
-| `POST /api/migu/singer-songs/crawl` | 根据歌手 ID 获取歌曲 | `songs`、`song_source_refs`、`song_artist_refs`、`album_song_refs`、`song_source_audio_formats`、`song_resources` |
 | `POST /api/migu/singer-songs/crawl-from-db` | 从库中认领未同步歌曲的歌手并批量获取歌曲 | `singer_source_refs.songs_sync_status`、歌曲来源表、批次表 |
-| `POST /api/migu/singer-albums/crawl` | 根据歌手 ID 获取专辑列表 | `albums`、`album_source_refs` |
 | `POST /api/migu/singer-albums/crawl-from-db` | 从库中认领未同步专辑的歌手并批量获取专辑 | `singer_source_refs.albums_sync_status`、专辑来源表、批次表 |
-| `POST /api/migu/album-details/crawl` | 补齐待处理专辑详情 | `albums`、`album_source_refs`、`migu_dalbum_details`，并解析响应里的 `songItems` |
-| `POST /api/migu/album-songs/crawl` | 单独补齐已同步详情专辑的歌曲 | `songs`、`song_source_refs`、`album_song_refs`、`song_artist_refs`、`song_source_audio_formats`、`song_resources` |
 | `GET /api/migu/overview` | 控制台总览 | 从 `singers`、`songs`、`albums`、来源表和同步状态聚合 |
 | `GET /api/migu/integrity` | 状态一致性检查 | 歌手缺歌曲/缺专辑按真实关联表判断，并返回 stale running 计数 |
 | `GET /api/migu/schema/status` | Schema 检查 | 返回 MySQL schema 版本、缺失表和缺失关键列 |
@@ -101,7 +97,6 @@ GET /api/migu/singers?min_songs_count=1&max_albums_count=20
 GET /api/migu/singers/112
 GET /api/migu/singers/112/songs?page=1&page_size=50
 GET /api/migu/singers/112/albums?detail_sync_status=0,3,4&min_album_songs_count=1
-POST /api/migu/singers/profile/refresh-from-db
 
 GET /api/migu/albums?q=太阳之子&artist=周杰伦&kind=2
 GET /api/migu/albums?min_songs_count=1&max_songs_count=30
@@ -125,8 +120,8 @@ GET /api/migu/schema/status
 - 多状态过滤使用逗号分隔，例如 `status=0,3,4`。
 - `1 同步中` 是临时运行态。服务启动会执行一次轻量 stale 恢复；前端也可以手动调用维护接口回收长时间卡住的 running 状态。
 - 歌手和专辑详情会返回 `*_last_batch_id`、`*_running_batch_id`；补池队列统一返回 `last_batch_id`、`running_batch_id`、`last_processed_at`，前端可以直接跳转最近批次排障。
-- `GET /api/migu/singers` 和 `GET /api/migu/singers/{source_singer_id}` 的歌手汇总使用真实关联表：`songs_sync_count` 来自 `song_artist_refs` 中该歌手关联的去重歌曲数；`albums_sync_count` 来自 `album_source_refs.source_artist_id` 关联的专辑数。接口还返回 `source_song_total`/`songs_total`、`source_album_total`/`albums_total`、`songs_remaining_count`、`albums_remaining_count`、`songs_completed` 和 `albums_completed`。当平台总数已知且真实计数不足时，同步状态保持 `4 部分完成`，不会再误显示为已完成；当 total 为 `null` 时表示尚未刷新 `singer/info`，前端应展示“总数未知/需刷新歌手信息”，不能显示已全量抓完。
-- `POST /api/migu/singers/profile/refresh-from-db` 是默认唯一请求 Migu `singer/info` 写入 `source_song_total`/`source_album_total` 的链路；刷新成功后会按真实关系数校准歌曲和专辑同步状态，历史误置为 `2` 但数量不足的歌手会回到 `4` 并可重新进入补抓队列。不传 `source_ids` 时会从本地 `singer_source_refs` 批量选择歌手，`max_targets` 默认 50、最大 1000；传 `max_targets: 0` 或 `run_all: true` 表示刷新全部匹配的本地歌手。
+- `GET /api/migu/singers` 和 `GET /api/migu/singers/{source_singer_id}` 的歌手汇总继续统计真实关系：`songs_sync_count` / `songs_count` 来自 `song_artist_refs`，`albums_sync_count` / `albums_count` 来自 `album_artist_refs`。`songs_sync_status`、`albums_sync_status` 和同步时间只读取对应目录的采集结果，不再由关系数量推算。专辑响应可带入歌曲、歌曲响应可带入专辑，因此计数达到平台声明总数也不能证明目录已采全；`songs_completed`、`albums_completed` 只依状态判断。总数为 `null` 时不能确认全量完成。
+- 歌手资料随专辑、歌曲目录采集统一补齐；声明总数未知时获取一份完整 `singer/info` 响应并随目录批次入库。需要刷新已知资料时，在主入口或歌手 backfill retry 中传 `force: true`，无需单独调用资料刷新接口。
 - 前端展示可直接读取别名字段：歌手返回 `songs_count`/`albums_count` 和对应 `*_total`/`*_remaining_count`，专辑返回 `songs_count`/`album_songs_count`。这些字段不写入汇总表，真实计数由查询时实时聚合得到；数量过滤同样使用实时事实计数。
 - 专辑 `songs_sync_count` 单独表示最近一次专辑歌曲采集成功处理条数，直接读取 `album_source_refs.songs_sync_count`；`album_songs_count` 和 `songs_count` 表示当前累计保存的去重关系数。歌手歌曲等入口也可以创建专辑关系，因此两种数量可以不同，专辑歌曲完成情况只按 `songs_sync_status` 判断。
 - 三类来源接口的 `source_item_key` 是根据平台 ID 计算的兼容字段，不再持久化；专辑 `source_title` 是公共专辑 `title` 的兼容别名，数据库只保存一份标题。
@@ -275,9 +270,11 @@ GET /api/migu/backfill/album-songs/queue?status=3&min_album_songs_count=1
 
 队列响应统一使用同一视图模型，不再需要根据 singer/album 字段推断：
 
-歌手补池队列和歌手列表使用同一套真实汇总口径：`singer-songs` 的 `sync_count` 来自 `song_artist_refs`，`singer-albums` 的 `sync_count` 来自 `album_source_refs.source_artist_id`。默认 `status=0,3,4` 只返回真正仍缺内容或失败/部分完成的目标；如果歌手已经有真实歌曲或专辑且没有同步错误，会按 `2 已完成` 暴露，不应继续出现在“歌手缺歌曲/缺专辑”队列里。
+歌手补池队列和歌手列表使用同一份目录采集状态。`sync_count` 保留关系事实统计：歌曲来自 `song_artist_refs`，专辑来自 `album_artist_refs`；默认 `status=0,3,4` 按保存的采集状态选择目标，不因关联数量达到声明总数而跳过。受 `limit` 截断的采集保持部分完成，即使数据库已有更多关联内容。`force=true` 可重采已完成目录，但不抢占运行中的任务。
 
 补池队列的数量过滤同内容列表一致：歌手队列支持 `min_songs_count`、`max_songs_count`、`min_albums_count`、`max_albums_count`；专辑队列支持 `min_songs_count`、`max_songs_count`，也兼容 `min_album_songs_count`、`max_album_songs_count`。
+
+普通 `albumId=1`“单曲发行”公共归档保留在内容列表，不进入 `album-details` 或 `album-songs` 回补队列。显式指定该 ID 时，预览、重试和重置以 `shared_release_archive` 说明跳过原因，`force` 不改变此规则。已有归档歌曲及关系保持原样；其他 ID 的同名真实专辑和有明确数字类型或物料身份的专辑仍完整采集曲目。
 
 ```json
 {
@@ -411,7 +408,7 @@ retry/reset 都会返回汇总和明细。显式 ID 场景下，`items` 会包�
 }
 ```
 
-其中 `singers_without_songs` 统计没有任何 `song_artist_refs` 真实歌曲关联的歌手来源，`singers_without_albums` 统计没有任何 `album_source_refs.source_artist_id` 真实专辑关联的歌手来源。这两个字段不再只看 `songs_sync_status` 或 `albums_sync_status`，所以已有真实歌曲/专辑的歌手不会被误计入缺失项。
+其中 `singers_without_songs` 统计没有任何 `song_artist_refs` 真实歌曲关联的歌手来源，`singers_without_albums` 统计没有任何 `album_artist_refs` 真实专辑关联的歌手来源。这两个字段不再只看 `songs_sync_status` 或 `albums_sync_status`，所以已有真实歌曲/专辑的歌手不会被误计入缺失项。
 
 ## Stale Running 恢复
 
@@ -445,7 +442,7 @@ retry/reset 都会返回汇总和明细。显式 ID 场景下，`items` 会包�
 
 `POST /api/migu/resources/process`
 
-该接口是歌曲资源正式处理入口：从 MySQL `song_resources` 队列认领待处理记录，音频资源先调用 Migu 资源接口换取临时 URL，再下载内容、写入本地存储；如果启用云端上传，会继续调用 BaiduPCS-Go 上传到配置的云端根目录，并回写 `remote_url`、`local_path`、`cloud_backend`、`cloud_path`、大小、状态和批次结果。
+该接口是歌曲资源正式处理入口：从 MySQL `song_resources` 条件认领待处理记录，音频资源先换取本次临时 URL，再流式下载、校验并提交本地文件，最后按认领代次回写 `local_path`、大小、checksum、状态和批次结果。同步入口与异步入口复用同一编排，主流程不自动上传百度网盘，不持久化远端 URL。文件使用独立尝试路径，数据库确认前保留补偿与启动核对日志；客户端应使用返回的实际路径。完整字段归属、事务和恢复说明见 [持久化流程](../../architecture/persistence-flow.md)。
 
 请求：
 
@@ -704,29 +701,6 @@ rihan-nan, rihan-nv, rihan-group
 
 ## 歌手歌曲
 
-`POST /api/migu/singer-songs/crawl`
-
-```json
-{
-  "singer_ids": [112, 266],
-  "limit": 0,
-  "start_index": 0,
-  "end_index": 2
-}
-```
-
-支持单个歌手：
-
-```json
-{
-  "singer_id": 112,
-  "limit": 0
-}
-```
-
-`limit=0` 表示获取该歌手全部歌曲；正数表示每个歌手最多获取数量，范围 `1..500`。
-
-### 从库批量获取歌手歌曲
 
 `POST /api/migu/singer-songs/crawl-from-db`
 
@@ -748,18 +722,6 @@ rihan-nan, rihan-nv, rihan-group
 
 ## 歌手专辑
 
-`POST /api/migu/singer-albums/crawl`
-
-```json
-{
-  "singer_ids": [112, 266],
-  "limit": 0
-}
-```
-
-`limit=0` 表示获取该歌手全部专辑；正数表示每个歌手最多获取数量，范围 `1..500`。该接口只获取歌手专辑列表，并把待补齐详情状态写入 `album_source_refs`。详情和专辑歌曲由下面两个补齐接口触发。
-
-### 从库批量获取歌手专辑
 
 `POST /api/migu/singer-albums/crawl-from-db`
 
@@ -779,57 +741,58 @@ rihan-nan, rihan-nv, rihan-group
 
 该接口从 `singer_source_refs` 中认领 `albums_sync_status` 命中的歌手。筛选字段都可省略；如果只想重试失败项，可以传 `"sync_status": [3]`；`limit_per_singer=0` 表示按分页保护全量获取。
 
-## 专辑详情补齐
+## 显式重采与失败补齐
 
-`POST /api/migu/album-details/crawl`
+正常采集顺序为歌手索引、歌手专辑、歌手歌曲。专辑和歌曲目录采集会携带歌手资料和当前选择范围的专辑详情，不要求逐字段另发请求。仅需恢复失败或强制重采时使用现有 backfill。
 
-```json
-{
-  "source": "migu",
-  "limit": 50
-}
+主入口及其 `/preview` 支持 `force`，默认 `false`。`true` 将已完成歌手纳入候选，并为每个选中歌手刷新一次完整资料；后续歌曲、专辑仍使用同一批次写入。普通模式复用已知资料，避免重复请求。
+
+```http
+POST /api/migu/singer-albums/crawl-from-db
 ```
 
-该接口从 `album_source_refs` 中选择 `detail_sync_status IN (0, 3, 4)` 的记录，获取详情接口并保存详情字段。详情响应中如果包含 `songItems`，会同步解析并写入歌曲来源，同时更新 `songs_sync_status`。
-
-## 专辑歌曲补齐
-
-`POST /api/migu/album-songs/crawl`
-
 ```json
-{
-  "source": "migu",
-  "limit": 50
-}
+{"source":"migu","max_targets":20,"limit_per_singer":0,"force":true}
 ```
 
-该接口从 `album_source_refs` 中选择 `detail_sync_status = 2` 且 `songs_sync_status IN (0, 3, 4)` 的记录，重新获取专辑详情响应并只解析 `songItems`。
+按准确平台 ID 选择歌手，使用 backfill 的 `source_ids`；`limit_per_target` 控制每个歌手抓取数量。
+
+```http
+POST /api/migu/backfill/singer-songs/retry
+```
+
+```json
+{"source":"migu","source_ids":["112"],"limit_per_target":20,"force":true}
+```
+
+单独刷新专辑详情使用 `POST /api/migu/backfill/album-details/retry`；补齐完整专辑曲目使用 `POST /api/migu/backfill/album-songs/retry`，保留完整分页和原子写入。两者都支持 `source_ids`、`limit`、`force`。专辑曲目认领仍要求详情已完成，`force` 不跳过此条件。主入口的 `force` 刷新歌手资料，不强制重取已完成的专辑详情。
+
+`force` 不抢占 `1 同步中` 的任务。主入口已有的 `include_stale_running` 仅用于明确回收超时任务；backfill 通过维护接口先恢复超时状态。`/preview` 与 retry 使用相同强制重采资格；`reset` 拒绝 `force: true`，因为 reset 只负责重置状态。
+
+下列五条旧路径及其 OPTIONS 已移除，调用方需迁移：
+
+| 原路径 | 替代路径 |
+|---|---|
+| `/api/migu/singer-songs/crawl` | `/api/migu/singer-songs/crawl-from-db`；精确 ID 使用 `backfill/singer-songs/retry` |
+| `/api/migu/singer-albums/crawl` | `/api/migu/singer-albums/crawl-from-db`；精确 ID 使用 `backfill/singer-albums/retry` |
+| `/api/migu/singers/profile/refresh-from-db` | 歌手目录主入口或歌手 backfill retry 的 `force: true` |
+| `/api/migu/album-details/crawl` | `/api/migu/backfill/album-details/retry` |
+| `/api/migu/album-songs/crawl` | `/api/migu/backfill/album-songs/retry` |
+
+内部执行方法保留，已有批次仍可查询和重放。
 
 ## 任务响应
 
-所有启动接口都返回 `202`：
+歌手索引和两个目录主入口启动后返回 `202` 和 `batch_id`；空队列也生成已完成的零目标批次。backfill retry 使用其治理响应，返回 `batch_id`、`claimed_count`、`skipped_count` 和目标结果，详见“补池治理”。
 
 ```json
 {
   "batch_id": "batch_1779200000000",
   "message": "migu singer songs crawl started",
   "target_count": 2,
-  "limit": 50,
+  "limit": 20,
   "start_index": 0,
   "end_index": 2
-}
-```
-
-专辑补齐接口还会返回内部目标：
-
-```json
-{
-  "batch_id": "batch_1779200000000",
-  "message": "migu album details backfill started",
-  "target_count": 50,
-  "limit": 50,
-  "start_index": 0,
-  "end_index": 50
 }
 ```
 
@@ -1093,3 +1056,18 @@ GET /api/migu/governance/events?page=1&page_size=20&target_type=batch&batch_id=b
 这些字段支持 camelCase 别名：`maxBatchConcurrency`、`maxPageConcurrency`、`maxRetries`、`taskTimeoutMs`、`resourceDownloadConcurrency`、`resourceDownloadRetries`、`resourceDownloadTimeoutMs`、`pacmtokenRefreshIntervalSeconds`、`autoRefreshPacmtoken`、`refreshPacmtokenOn440013`。
 
 `readonly.resource_worker_threads` 来自启动参数 `CRAWLER_RESOURCE_WORKER_THREADS`，默认 `8`；前端设置的资源并发可以高于 worker 数，实际任务会在 worker pool 中排队。
+
+
+### 目录采集时统一补齐元数据
+
+标准顺序为歌手索引入库、歌手专辑采集、歌手歌曲采集。专辑和歌曲入口会复用已知歌手总数；总数未知时按歌手获取一份完整资料，随本次实体和关系原子保存，不要求前端逐字段调用刷新接口。专辑来源尚未采集详情时，按来源身份获取一次完整详情，携带简介、声明曲目数、日期及可用拼音；后续目录采集复用已保存状态和有界响应缓存，不因平台仍缺少某一字段而循环补查。
+
+专辑阶段保存目标专辑返回的全部曲目，按平台来源身份去重，补齐已有字段和专辑、歌手关系；曲目不足声明总数时复用详情首段，仅补必要分页。歌曲携带的专辑、歌手信息同样随批次建档或补缺。`limit` 控制入口选取的专辑或歌曲数量，不再过滤目标专辑已经返回的曲目；关联实体落库不会触发其其他目录或推荐专辑的递归采集。详情与必要缺页复用同一在途请求和有界缓存，重启后复用数据库已核实的详情、曲目状态。专辑查询同时返回 `source_title_pinyin`、`summary` 和 `cover_url`，歌手查询返回 `avatar_url`。平台未提供的字段保持未知；曲目分页失败时保留已返回数据，并记录该专辑的部分完成状态。
+
+普通 `albumId=1`“单曲发行”按公共归档处理：只保存当前响应携带的歌曲、摘要和关系，常规采集不自动展开其详情和全部曲目，也不从缓存或旧库完整归档中补入其他歌曲。真实专辑仍完整入库，数字专辑、其他平台及其他 ID 的同名专辑不受此规则影响。接口参数和响应字段不变；历史归档数据不会被自动清理。
+
+### 元数据与二进制下载分离
+
+歌手索引、歌手资料、专辑列表和专辑详情响应中的图片地址，分别保存到 `singer_resources.remote_url`、`album_resources.remote_url`，与本批实体、关系在同一事务提交。新资源只登记为 `status=0`，不生成本地文件，也不把已完成资源重置为待下载。空地址不清除已有地址，列表缩略图不覆盖已采集详情的封面地址。
+
+元数据采集完成后不再自动下载歌手头像、专辑封面、歌曲封面或 `lrc/mrc/trc`。歌曲资源任务仍正常生成，音频、歌曲封面及歌词继续由现有 `POST /api/migu/resources/process` 获取，歌曲远端地址仍由 listen 提供，不新增歌曲 URL 持久字段。该接口本轮不增加歌手或专辑资源处理能力，两者的下载接入后续单独完成。

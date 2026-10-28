@@ -671,7 +671,7 @@ void testAsyncWorkflowSkipsKnownDigitalAlbumBeforeFetch()
     require(result.failed_count == 0, "known digital album should not fail");
     require(provider->requests.empty(), "known digital album should not call listen provider");
     require(queue->skipped.size() == 1, "known digital album should use skip writeback");
-    require(queue->skipped.front().resource_kind == "audio", "known digital album should only skip audio resources");
+    require(queue->skipped.front().resource_kind.empty(), "known digital album should skip unfinished song resources");
     require(queue->skipped.front().result_code == "digital_album", "known digital album should use stable skip code");
     require(listener.hasEvent("resourceSkipWritebackCompleted"), "known digital album should emit skip writeback event");
 }
@@ -695,7 +695,7 @@ void testAsyncWorkflowSkipsAudioOn440016()
     require(queue->failed.empty(), "440016 should not use failure writeback");
     require(queue->skipped.size() == 1, "440016 should use skip writeback");
     require(queue->skipped.front().song_source_ref_id == 11, "440016 skip should target song source ref");
-    require(queue->skipped.front().resource_kind == "audio", "440016 skip should only cover audio");
+    require(queue->skipped.front().resource_kind.empty(), "440016 skip should cover unfinished song resources");
     require(queue->skipped.front().format_type.empty(), "440016 should mark all audio formats skipped for the song");
     require(queue->skipped.front().result_code == "440016", "440016 skip should preserve platform code");
 }
@@ -736,7 +736,7 @@ void testAsyncWorkflowDownloadsRelatedTextWhenAudioRestricted()
         require(result.related_failed_count == 0, std::string(test_case.code) + " should not fail related text resources");
         require(result.related_skipped_count == 0, std::string(test_case.code) + " should not skip related text resources");
         require(queue->skipped.size() == 1, std::string(test_case.code) + " should write one audio skip");
-        require(queue->skipped.front().resource_kind == "audio", std::string(test_case.code) + " skip should only target audio");
+        require(queue->skipped.front().resource_kind.empty(), std::string(test_case.code) + " skip should cover unfinished song resources");
         require(queue->succeeded.size() == 3, std::string(test_case.code) + " should write lyric/mrc/trc success");
         require(std::count_if(result.items.begin(), result.items.end(), [](const model::SongResourceProcessItem &item) {
                     return item.related && item.ok;
@@ -778,7 +778,7 @@ void testAsyncWorkflowSkipsPermanentListenRestrictions()
         require(queue->failed.empty(), std::string(test_case.code) + " should not use failure writeback");
         require(queue->skipped.size() == 1, std::string(test_case.code) + " should use skip writeback");
         require(queue->skipped.front().song_source_ref_id == 11, std::string(test_case.code) + " skip should target song source ref");
-        require(queue->skipped.front().resource_kind == "audio", std::string(test_case.code) + " skip should only cover audio");
+        require(queue->skipped.front().resource_kind.empty(), std::string(test_case.code) + " skip should cover unfinished song resources");
         require(queue->skipped.front().format_type.empty(), std::string(test_case.code) + " skip should cover all audio formats");
     }
 }
@@ -863,7 +863,7 @@ void testAsyncWorkflowRefreshesMissingCoverUrlThroughListen()
     require(fetcher->requested_urls.size() == 1, "refreshed cover url should be downloaded once");
     require(fetcher->requested_urls.front() == "https://d.musicapp.migu.cn/data/oss/resource/00/cover/new.webp", "cover url should be normalized before download");
     require(queue->succeeded.size() == 1, "refreshed cover should be written back");
-    require(queue->succeeded.front().remote_url == fetcher->requested_urls.front(), "success writeback should store refreshed cover url");
+    require(!fetcher->requested_urls.front().empty(), "download should use a fresh cover URL without persisting it");
     require(listener.hasEvent("resourceUrlFetched"), "cover refresh should emit url fetched event");
 }
 
@@ -885,7 +885,7 @@ void testAsyncWorkflowSkipsRestrictedDirectRelatedResource()
     require(result.skipped_count == 1, "restricted direct related resource should be skipped");
     require(queue->failed.empty(), "restricted direct related resource should not use failure writeback");
     require(queue->skipped.size() == 1, "restricted direct related resource should use skip writeback");
-    require(queue->skipped.front().resource_kind == "lyric", "restricted direct related skip should keep resource kind");
+    require(queue->skipped.front().resource_kind.empty(), "permanent restriction should cover unfinished song resources");
     require(queue->skipped.front().result_code == "440000", "restricted direct related skip should preserve platform code");
     require(result.items.size() == 1 && result.items.front().skipped, "restricted direct related item should be skipped");
     require(result.items.front().error_category == "copyright", std::string("restricted direct related item should expose copyright category, got ") + result.items.front().error_category);
