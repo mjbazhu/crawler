@@ -67,26 +67,12 @@ summary AS (
         base.source_song_total,
         base.source_album_total,
         base.avatar_url,
-        CASE
-            WHEN base.source_song_total IS NOT NULL AND COALESCE(sc.songs_sync_count, 0) >= base.source_song_total AND base.songs_sync_error = '' AND base.raw_songs_sync_status <> 1 THEN 2
-            WHEN base.source_song_total IS NOT NULL AND COALESCE(sc.songs_sync_count, 0) < base.source_song_total AND base.songs_sync_error = '' AND base.raw_songs_sync_status <> 1 THEN 4
-            ELSE base.raw_songs_sync_status
-        END AS songs_sync_status,
-        CASE
-            WHEN base.source_song_total IS NOT NULL AND COALESCE(sc.songs_sync_count, 0) >= base.source_song_total AND base.songs_sync_error = '' AND base.raw_songs_synced_at = 0 THEN base.updated_at
-            ELSE base.raw_songs_synced_at
-        END AS songs_synced_at,
+        base.raw_songs_sync_status AS songs_sync_status,
+        base.raw_songs_synced_at AS songs_synced_at,
         COALESCE(sc.songs_sync_count, 0) AS songs_sync_count,
         base.songs_sync_error,
-        CASE
-            WHEN base.source_album_total IS NOT NULL AND COALESCE(ac.albums_sync_count, 0) >= base.source_album_total AND base.albums_sync_error = '' AND base.raw_albums_sync_status <> 1 THEN 2
-            WHEN base.source_album_total IS NOT NULL AND COALESCE(ac.albums_sync_count, 0) < base.source_album_total AND base.albums_sync_error = '' AND base.raw_albums_sync_status <> 1 THEN 4
-            ELSE base.raw_albums_sync_status
-        END AS albums_sync_status,
-        CASE
-            WHEN base.source_album_total IS NOT NULL AND COALESCE(ac.albums_sync_count, 0) >= base.source_album_total AND base.albums_sync_error = '' AND base.raw_albums_synced_at = 0 THEN base.updated_at
-            ELSE base.raw_albums_synced_at
-        END AS albums_synced_at,
+        base.raw_albums_sync_status AS albums_sync_status,
+        base.raw_albums_synced_at AS albums_synced_at,
         COALESCE(ac.albums_sync_count, 0) AS albums_sync_count,
         base.albums_sync_error,
         base.created_at,

@@ -154,7 +154,7 @@ int main()
     assert(integrity_properties.contains("running_batches_stale"));
     requireDumpContains(integrity_properties["singers_without_songs"], "song_artist_refs");
     requireDumpContains(integrity_properties["singers_without_songs"], "not only songs_sync_status");
-    requireDumpContains(integrity_properties["singers_without_albums"], "album_source_refs.source_artist_id");
+    requireDumpContains(integrity_properties["singers_without_albums"], "album_artist_refs");
     requireDumpContains(integrity_properties["singers_without_albums"], "not only albums_sync_status");
 
     const auto &overview_properties = schemas["Overview"]["properties"];
@@ -242,12 +242,12 @@ int main()
     requireDumpContains(singer_properties["source_song_total"], "Null means not refreshed yet");
     requireDumpContains(singer_properties["source_album_total"], "Null means not refreshed yet");
     requireDumpContains(singer_properties["songs_sync_count"], "song_artist_refs");
-    requireDumpContains(singer_properties["albums_sync_count"], "album_source_refs.source_artist_id");
-    requireDumpContains(singer_properties["songs_sync_status"], "real song_artist_refs");
-    requireDumpContains(singer_properties["songs_sync_status"], "completed (2)");
+    requireDumpContains(singer_properties["albums_sync_count"], "album_artist_refs");
+    requireDumpContains(singer_properties["songs_sync_status"], "from its own collection result");
+    requireDumpContains(singer_properties["songs_sync_status"], "completion (2)");
     requireDumpContains(singer_properties["songs_sync_status"], "full completion cannot be confirmed");
-    requireDumpContains(singer_properties["albums_sync_status"], "album_source_refs.source_artist_id");
-    requireDumpContains(singer_properties["albums_sync_status"], "completed (2)");
+    requireDumpContains(singer_properties["albums_sync_status"], "from its own collection result");
+    requireDumpContains(singer_properties["albums_sync_status"], "completion (2)");
     requireDumpContains(singer_properties["albums_sync_status"], "full completion cannot be confirmed");
 
     const auto &album_properties = schemas["AlbumRecord"]["properties"];
@@ -256,9 +256,9 @@ int main()
     requireDumpContains(album_properties["album_songs_count"], "album_song_refs");
 
     const auto &backfill_target_properties = schemas["BackfillQueueTarget"]["properties"];
-    requireDumpContains(backfill_target_properties["sync_status"], "same real-relation derived status as SingerRecord");
+    requireDumpContains(backfill_target_properties["sync_status"], "same directory collection status as SingerRecord");
     requireDumpContains(backfill_target_properties["sync_count"], "song_artist_refs");
-    requireDumpContains(backfill_target_properties["sync_count"], "album_source_refs.source_artist_id");
+    requireDumpContains(backfill_target_properties["sync_count"], "album_artist_refs");
 
     const auto &batch_properties = schemas["BatchTask"]["properties"];
     assert(batch_properties.contains("archived_at"));
@@ -313,9 +313,9 @@ int main()
 
     const auto &queue_response = doc["paths"]["/api/migu/backfill/singer-songs/queue"]["get"]["responses"]["200"]["content"]["application/json"]["schema"];
     assert(queue_response["$ref"] == "#/components/schemas/BackfillQueueTargetPage");
-    requireDumpContains(doc["paths"]["/api/migu/backfill/singer-songs/queue"]["get"], "real song_artist_refs summary");
+    requireDumpContains(doc["paths"]["/api/migu/backfill/singer-songs/queue"]["get"], "same directory collection status");
     requireDumpContains(doc["paths"]["/api/migu/backfill/singer-songs/queue"]["get"], "not returned by the default missing-song queue");
-    requireDumpContains(doc["paths"]["/api/migu/backfill/singer-albums/queue"]["get"], "real album_source_refs.source_artist_id summary");
+    requireDumpContains(doc["paths"]["/api/migu/backfill/singer-albums/queue"]["get"], "same directory collection status");
     requireDumpContains(doc["paths"]["/api/migu/backfill/singer-albums/queue"]["get"], "not returned by the default missing-album queue");
 
     const auto &error_properties = schemas["ErrorResponse"]["properties"];

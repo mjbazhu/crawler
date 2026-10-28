@@ -12,23 +12,7 @@ FROM (
         s.name,
         COALESCE(r.source_country, '') AS source_country,
         r.source_gender AS gender,
-        CASE
-            WHEN r.source_song_total IS NOT NULL AND (
-                SELECT COUNT(DISTINCT ar.song_source_ref_id)
-                FROM song_artist_refs ar
-                JOIN song_source_refs sr ON sr.id = ar.song_source_ref_id
-                WHERE sr.source = r.source
-                  AND ar.singer_source_ref_id = r.id
-            ) >= r.source_song_total AND COALESCE(r.songs_sync_error, '') = '' AND r.songs_sync_status <> 1 THEN 2
-            WHEN r.source_song_total IS NOT NULL AND (
-                SELECT COUNT(DISTINCT ar.song_source_ref_id)
-                FROM song_artist_refs ar
-                JOIN song_source_refs sr ON sr.id = ar.song_source_ref_id
-                WHERE sr.source = r.source
-                  AND ar.singer_source_ref_id = r.id
-            ) < r.source_song_total AND COALESCE(r.songs_sync_error, '') = '' AND r.songs_sync_status <> 1 THEN 4
-            ELSE r.songs_sync_status
-        END AS sync_status,
+        r.songs_sync_status AS sync_status,
         r.updated_at
     FROM singer_source_refs r
     JOIN singers s ON s.id = r.singer_db_id

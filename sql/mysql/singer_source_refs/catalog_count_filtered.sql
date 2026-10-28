@@ -38,17 +38,9 @@ album_counts AS (
 ),
 summary AS (
     SELECT
-        CASE
-            WHEN base.source_song_total IS NOT NULL AND COALESCE(sc.songs_sync_count, 0) >= base.source_song_total AND base.songs_sync_error = '' AND base.raw_songs_sync_status <> 1 THEN 2
-            WHEN base.source_song_total IS NOT NULL AND COALESCE(sc.songs_sync_count, 0) < base.source_song_total AND base.songs_sync_error = '' AND base.raw_songs_sync_status <> 1 THEN 4
-            ELSE base.raw_songs_sync_status
-        END AS songs_sync_status,
+        base.raw_songs_sync_status AS songs_sync_status,
         COALESCE(sc.songs_sync_count, 0) AS songs_sync_count,
-        CASE
-            WHEN base.source_album_total IS NOT NULL AND COALESCE(ac.albums_sync_count, 0) >= base.source_album_total AND base.albums_sync_error = '' AND base.raw_albums_sync_status <> 1 THEN 2
-            WHEN base.source_album_total IS NOT NULL AND COALESCE(ac.albums_sync_count, 0) < base.source_album_total AND base.albums_sync_error = '' AND base.raw_albums_sync_status <> 1 THEN 4
-            ELSE base.raw_albums_sync_status
-        END AS albums_sync_status,
+        base.raw_albums_sync_status AS albums_sync_status,
         COALESCE(ac.albums_sync_count, 0) AS albums_sync_count
     FROM base_candidates base
     LEFT JOIN song_counts sc ON sc.source_ref_id = base.source_ref_id

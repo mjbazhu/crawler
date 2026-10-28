@@ -222,6 +222,9 @@ boost::asio::awaitable<ClaimFixture> seedClaimFixture(const std::shared_ptr<mysq
     co_await seedAlbum(pool, fixture.suffix, "detail_done", fixture.album_detail_done, 2, 0);
     co_await seedAlbum(pool, fixture.suffix, "songs_failed", fixture.album_songs_failed, 2, 3);
     co_await seedAlbum(pool, fixture.suffix, "songs_blocked", fixture.album_songs_blocked, 0, 3);
+    // 关联专辑已存在不代表该歌手的专辑目录已经采集。
+    co_await executeSql(pool, "UPDATE singer_source_refs SET source_album_total=1 WHERE source='migu' AND source_singer_id='" + fixture.singer_has_content + "'");
+    co_await executeSql(pool, "INSERT INTO album_artist_refs(album_source_ref_id,singer_source_ref_id,artist_role,artist_order,is_primary) SELECT a.id,s.id,'artist',1,1 FROM album_source_refs a JOIN singer_source_refs s ON s.source=a.source AND s.source_singer_id='" + fixture.singer_has_content + "' WHERE a.source='migu' AND a.source_album_id='" + fixture.album_detail_done + "'");
     co_return fixture;
 }
 
@@ -243,12 +246,13 @@ void assertSingerClaims(mysql::MySqlMusicCatalogQueryRepository &repository, con
     model::MiguBackfillTargetQuery content_query;
     content_query.source_ids = {fixture.singer_has_content};
     content_query.statuses = {0};
-    auto content_claim = repository.claimSingerSongs(content_query);
-    require(content_claim.claimed_count == 0, "claimSingerSongs should skip singer with real song refs");
     auto content_singer = repository.findSinger("migu", fixture.singer_has_content);
     require(content_singer.has_value(), "content singer should exist");
     require(content_singer->songs_sync_count == 1, "content singer should expose real song count");
-    require(content_singer->songs_sync_status == 2, "content singer should expose completed song status");
+    require(content_singer->songs_sync_status == 0 && content_singer->songs_synced_at == 0, "relations must not fabricate a completed singer-song collection");
+    auto content_claim = repository.claimSingerSongs(content_query);
+    require(content_claim.claimed_count == 1, "uncollected singer directory was skipped because associated songs exist");
+    require(repository.claimSingerSongs(content_query).claimed_count == 0, "associated songs must not bypass running claim protection");
 
     model::MiguBackfillTargetQuery filter_query;
     filter_query.statuses = {4};
@@ -301,12 +305,21 @@ void assertForcedClaims(mysql::MySqlMusicCatalogQueryRepository &repository, con
 
     query.keyword = fixture.singer_has_content;
     query.force = false;
-    require(queue.previewPendingSongs(query).eligible_count == 0, "normal queue must honor real-count completion");
+    require(queue.updateSongsSyncStatus("migu", fixture.singer_has_content, 0, 0, {}), "reset content singer for main queue test");
+    require(queue.previewPendingSongs(query).eligible_count == 1, "normal queue must include uncollected directory despite existing song relations");
     query.force = true;
-    require(queue.previewPendingSongs(query).eligible_count == 1, "forced queue must include real-count completion");
-    require(queue.claimPendingSongs(query).size() == 1, "forced queue must bypass real-count completion guard");
+    require(queue.previewPendingSongs(query).eligible_count == 1, "forced preview must agree on uncollected directory eligibility");
+    query.force = false;
+    require(queue.claimPendingSongs(query).size() == 1, "normal queue must claim uncollected directory without force");
+    query.force = true;
     support::runOnExecutor(pool->executor(), executeSql(pool, "UPDATE singer_source_refs SET source_song_total=2 WHERE source='migu' AND source_singer_id='" + fixture.singer_has_content + "'"), "make running singer incomplete");
     require(queue.previewPendingSongs(query).eligible_count == 0 && queue.claimPendingSongs(query).empty(), "incomplete count must not bypass active claim protection");
+
+    query.force = false;
+    require(queue.previewPendingAlbums(query).eligible_count == 1, "associated album count must not complete an uncollected singer-album directory");
+    require(queue.claimPendingAlbums(query).size() == 1, "normal album queue must claim uncollected directory despite existing relations");
+    require(queue.claimPendingAlbums(query).empty(), "album relations must not bypass running claim protection");
+    query.force = true;
 
     model::MiguBackfillTargetQuery retry;
     retry.force = true;

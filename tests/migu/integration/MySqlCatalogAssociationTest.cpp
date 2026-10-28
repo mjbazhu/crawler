@@ -1,9 +1,11 @@
 #include "crawler/application/use_cases/CatalogMetadataCompletion.h"
+#include "crawler/application/use_cases/CrawlerService.h"
 #include "crawler/application/use_cases/MetadataPersistenceService.h"
 #include "crawler/application/use_cases/SingerCatalogWorkflow.h"
 #include "crawler/infrastructure/music/migu/parser/MiguParser.h"
 #include "crawler/infrastructure/music/persistence/mysql/MySqlMetadataBatchWriter.h"
 #include "crawler/infrastructure/music/persistence/mysql/MySqlMusicCatalogQueryRepository.h"
+#include "crawler/infrastructure/music/persistence/mysql/MySqlSingerSourceSyncQueue.h"
 #include "migu/support/MetadataTestDiagnostics.h"
 #include "migu/support/MySqlTestSupport.h"
 #include "mocks/MockMusicProvider.h"
@@ -11,11 +13,13 @@
 #include <nlohmann/json.hpp>
 
 #include <chrono>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace c = orchestrator::modules::crawler;
 namespace model = c::application::model;
@@ -76,6 +80,26 @@ public:
     {
         ++pages;
         return std::nullopt;
+    }
+};
+
+// 顺序驱动批次执行，避免元数据状态回归依赖线程时序。
+class Executor final : public c::application::ports::TaskExecutor {
+public:
+    std::vector<std::function<void()>> tasks; // 本轮批次调度的任务
+
+    // 捕获批次工作，待测试显式执行。
+    void submit(std::function<void()> task) override
+    {
+        tasks.push_back(std::move(task));
+    }
+
+    // 执行已认领的单个目录批次。
+    void runAll()
+    {
+        auto pending = std::move(tasks);
+        tasks.clear();
+        for (auto &task : pending) task();
     }
 };
 
@@ -163,6 +187,50 @@ int main()
         require(scalar(pool, "SELECT COUNT(*) FROM album_song_refs r JOIN album_source_refs a ON a.id=r.album_source_ref_id JOIN song_source_refs s ON s.id=r.song_source_ref_id WHERE a.source_album_id='" + other_album + "' AND s.source_content_id='" + prefix + "song-carried'") == 1, "song-carried album relation was not deduplicated");
         require(scalar(pool, "SELECT COUNT(*) FROM song_artist_refs r JOIN song_source_refs s ON s.id=r.song_source_ref_id JOIN singer_source_refs a ON a.id=r.singer_source_ref_id WHERE s.source_content_id='" + prefix + "song-carried' AND a.source_singer_id='777003'") == 1, "song-carried singer relation was not completed");
         require(scalar(pool, "SELECT COUNT(*) FROM song_resources r JOIN song_source_refs s ON s.id=r.song_source_ref_id WHERE s.source_content_id LIKE '" + prefix + "%' AND (r.status NOT IN(0,4) OR r.local_path IS NOT NULL OR r.fetched_at<>0 OR r.size_bytes<>0 OR r.claim_generation<>0)") == 0, "metadata ingestion unexpectedly processed a binary resource");
+
+        // 关联数量已达总数时，受 limit 截断的目录仍必须保持部分完成。
+        auto queue = std::make_shared<mysql::MySqlSingerSourceSyncQueue>(pool);
+        auto executor = std::make_shared<Executor>();
+        use::CrawlerServiceDependencies dependencies;
+        dependencies.providers.singer_catalog_provider = provider;
+        dependencies.providers.album_detail_provider = provider;
+        dependencies.parsers.parse_result_parser = parser;
+        dependencies.parsers.song_source_parser = parser;
+        dependencies.parsers.singer_source_parser = parser;
+        dependencies.parsers.album_source_parser = parser;
+        dependencies.parsers.singer_profile_parser = parser;
+        dependencies.parsers.page_inspector = parser;
+        dependencies.persistence.metadata_batch_writer = writer;
+        dependencies.persistence.catalog_query_repository = catalog;
+        dependencies.persistence.singer_source_sync_queue = queue;
+        dependencies.executors.batch_executor = executor;
+        dependencies.options.runtime_settings.max_retries = 0;
+        use::CrawlerService service(std::move(dependencies));
+        support::runOnExecutor(pool->executor(), pool->coExecute("UPDATE singer_source_refs SET source_song_total=10,source_album_total=2,songs_sync_status=0,songs_sync_error=NULL,albums_sync_status=0,albums_sync_error=NULL WHERE source='migu' AND source_singer_id='777001'"), "prepare uncollected directory states");
+        model::SingerSourceSyncQuery query;
+        query.keyword = "777001";
+        query.limit = 1;
+        require(!service.startSingerSongsFromDbAsync(query, 1, "{}").empty(), "song directory batch was not created");
+        executor->runAll();
+        require(scalar(pool, "SELECT COUNT(*) FROM singer_source_refs WHERE source_singer_id='777001' AND songs_sync_status=4 AND songs_sync_count=1") == 1, "associated songs incorrectly completed a limited directory run");
+        require(!service.startSingerAlbumsFromDbAsync(query, 1, "{}").empty(), "album directory batch was not created");
+        executor->runAll();
+        require(scalar(pool, "SELECT COUNT(*) FROM singer_source_refs WHERE source_singer_id='777001' AND albums_sync_status=4 AND albums_sync_count=1") == 1, "associated albums incorrectly completed a limited directory run");
+
+        // 三张专辑的七首不同歌曲共用内容占位值；重复提交仍保留独立身份和关系。
+        Json placeholder_albums = Json::array();
+        for (int album_number = 0; album_number < 3; ++album_number) {
+            const auto placeholder_album_id = prefix + "placeholder-album-" + std::to_string(album_number);
+            Json placeholder_tracks = Json::array();
+            for (int track = 0; track < (album_number == 2 ? 1 : 3); ++track) {
+                placeholder_tracks.push_back({{"songId", prefix + "placeholder-song-" + std::to_string(album_number) + "-" + std::to_string(track)}, {"contentId", "600000000000000000"}, {"songName", prefix + "占位曲目" + std::to_string(album_number) + "-" + std::to_string(track)}});
+            }
+            placeholder_albums.push_back({{"albumId", placeholder_album_id}, {"title", prefix + "占位专辑" + std::to_string(album_number)}, {"totalCount", placeholder_tracks.size()}, {"songItems", placeholder_tracks}});
+        }
+        const auto placeholder_batch = dispatch->parseSources(response({{"resource", placeholder_albums}}).body);
+        require(saver->saveSources(placeholder_batch, 0) && saver->saveSources(placeholder_batch, 0), "placeholder album replay failed");
+        require(scalar(pool, "SELECT COUNT(*) FROM song_source_refs WHERE source_song_id LIKE '" + prefix + "placeholder-song-%' AND source_content_id IS NULL") == 7, "placeholder tracks were merged or duplicated in MySQL");
+        require(scalar(pool, "SELECT COUNT(*) FROM album_song_refs r JOIN album_source_refs a ON a.id=r.album_source_ref_id JOIN song_source_refs s ON s.id=r.song_source_ref_id WHERE a.source_album_id LIKE '" + prefix + "placeholder-album-%' AND s.source_song_id LIKE CONCAT(REPLACE(a.source_album_id,'placeholder-album-','placeholder-song-'),'-%')") == 7, "placeholder tracks were linked to a different album's song");
         std::cout << "PASS: 8 existing + 2 new tracks, fields, artist/album relations, deduplication, response reuse and restart; no downloads\n";
         return 0;
     } catch (const std::exception &error) {

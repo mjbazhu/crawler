@@ -13,6 +13,7 @@
 - `song_source_refs.source_title_pinyin` 属于 Migu 来源拼音，保留在 refs；不要移动到公共 `songs`。
 - `song_source_refs.copyright_id` 目前作为资源链路兼容参数保留；`copyright_type`、`restrict_type`、`product_authorize_usage` 这类暂不服务采集和资源处理的字段不应继续扩大使用，后续确认资源链路不需要后可清理。
 - `song_source_refs` 不保存专辑属性及封面、歌词远端地址。解析输入中的专辑名称与拼音在首次写入时分到 `albums/album_source_refs`，拼音使用 `album_source_refs.source_title_pinyin`。
+- Migu 共用的占位 `contentId=600000000000000000` 不是有效来源身份，解析时排除并保留真实 `songId`。不能据此合并不同曲目；两种真实 ID 都缺失时不登记歌曲。
 
 ### 歌曲、歌手和专辑关系
 
@@ -37,7 +38,7 @@
 - 专辑 `album_songs_count` 是当前关系数量，`songs_sync_count` 是最近一次专辑歌曲采集成功处理条数，必须分开读取与返回。专辑完成情况按 `album_source_refs.songs_sync_status` 统计，不能由已有关系数量覆盖；歌手歌曲入口可以创建关系，但不会因此完成专辑曲目采集。
 - 三个来源表不保存派生的 `source_item_key`，兼容接口按平台 ID 计算；歌曲仍保留歌曲 ID、内容 ID 两组唯一约束及至少一个有效 ID 的数据库 CHECK。专辑标题只写 `albums.title`，`source_title` 仅可作为兼容查询别名。
 - 数量过滤参数应跟事实计数一致：歌手支持 `min_songs_count/max_songs_count/min_albums_count/max_albums_count`；专辑支持 `min_songs_count/max_songs_count`，可兼容 `min_album_songs_count/max_album_songs_count`。
-- 当真实关系已存在且没有同步错误时，歌手歌曲/专辑队列可以按完成状态展示；但 `1 running` 仍必须保持运行态，不能被事实计数覆盖。
+- 歌手歌曲/专辑目录的状态和同步时间只使用对应目录采集结果。关系数量达到声明总数也不能证明目录覆盖完整，未采集状态仍为 `0`，限量采集不足总数仍为 `4`；`1 running` 不被计数或强制重采覆盖。歌手查询中的数量继续作关系事实统计，不回写采集完成状态。
 
 ### Migration 和 schema 状态
 

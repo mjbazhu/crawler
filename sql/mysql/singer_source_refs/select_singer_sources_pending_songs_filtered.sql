@@ -28,33 +28,8 @@ FROM (
         '' AS avatar_url,
         r.source_song_total,
         r.source_album_total,
-        CASE
-            WHEN r.source_song_total IS NOT NULL AND (
-                SELECT COUNT(DISTINCT ar.song_source_ref_id)
-                FROM song_artist_refs ar
-                JOIN song_source_refs sr ON sr.id = ar.song_source_ref_id
-                WHERE sr.source = r.source
-                  AND ar.singer_source_ref_id = r.id
-            ) >= r.source_song_total AND COALESCE(r.songs_sync_error, '') = '' AND r.songs_sync_status <> 1 THEN 2
-            WHEN r.source_song_total IS NOT NULL AND (
-                SELECT COUNT(DISTINCT ar.song_source_ref_id)
-                FROM song_artist_refs ar
-                JOIN song_source_refs sr ON sr.id = ar.song_source_ref_id
-                WHERE sr.source = r.source
-                  AND ar.singer_source_ref_id = r.id
-            ) < r.source_song_total AND COALESCE(r.songs_sync_error, '') = '' AND r.songs_sync_status <> 1 THEN 4
-            ELSE r.songs_sync_status
-        END AS sync_status,
-        CASE
-            WHEN r.source_song_total IS NOT NULL AND (
-                SELECT COUNT(DISTINCT ar.song_source_ref_id)
-                FROM song_artist_refs ar
-                JOIN song_source_refs sr ON sr.id = ar.song_source_ref_id
-                WHERE sr.source = r.source
-                  AND ar.singer_source_ref_id = r.id
-            ) >= r.source_song_total AND COALESCE(r.songs_sync_error, '') = '' AND r.songs_synced_at = 0 THEN r.updated_at
-            ELSE r.songs_synced_at
-        END AS synced_at,
+        r.songs_sync_status AS sync_status,
+        r.songs_synced_at AS synced_at,
         (
             SELECT COUNT(DISTINCT ar.song_source_ref_id)
             FROM song_artist_refs ar

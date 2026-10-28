@@ -310,13 +310,20 @@ void assertCatalogQueries(mysql::MySqlMusicCatalogQueryRepository &repository, c
     require(summarized.has_value(), "findSinger should find summarized fixture");
     require(summarized->songs_sync_count == 1, "summarized singer songs count should be derived from real refs");
     require(summarized->albums_sync_count == 1, "summarized singer albums count should be derived from real refs");
-    require(summarized->songs_sync_status == 2, "summarized singer songs status should become completed");
-    require(summarized->albums_sync_status == 2, "summarized singer albums status should become completed");
+    require(summarized->songs_sync_status == 0 && summarized->songs_synced_at == 0, "song relations must not fabricate directory completion or sync time");
+    require(summarized->albums_sync_status == 0 && summarized->albums_synced_at == 0, "album relations must not fabricate directory completion or sync time");
+
+    model::MiguSingerCatalogQuery uncollected_singer_query;
+    uncollected_singer_query.source_singer_id = fixture.summarized_singer_source_id;
+    const auto uncollected_singer = repository.listSingers(uncollected_singer_query);
+    require(uncollected_singer.total == 1 && uncollected_singer.items.front().songs_sync_status == 0 && uncollected_singer.items.front().albums_sync_status == 0, "unfiltered catalog list overwrote persisted directory states");
 
     model::MiguSingerCatalogQuery pending_singer_query;
     pending_singer_query.keyword = fixture.summarized_singer_source_id;
     pending_singer_query.songs_sync_statuses = {0, 3, 4};
-    require(repository.listSingers(pending_singer_query).total == 0, "summarized singer should not stay in missing songs queue");
+    require(repository.listSingers(pending_singer_query).total == 1, "uncollected singer must remain eligible despite associated songs");
+    pending_singer_query.albums_sync_statuses = {0};
+    require(repository.listSingers(pending_singer_query).total == 1, "filtered catalog list overwrote persisted album directory state");
 
     model::MiguAlbumCatalogQuery album_query;
     album_query.keyword = fixture.album_source_id;
@@ -362,10 +369,12 @@ void assertCatalogQueries(mysql::MySqlMusicCatalogQueryRepository &repository, c
     sparse_album.source_album_id = fixture.album_source_id + "_material";
     sparse_album.title = "sparse list title";
     sparse.albums = {sparse_album};
+    require(!completion.completeAlbums(sparse).isSuccess(), "partial tracks were incorrectly treated as a complete cached album");
+    support::runOnExecutor(pool->executor(), pool->coExecute("UPDATE album_source_refs SET songs_sync_status=2,songs_sync_count=2 WHERE source='migu' AND source_album_id='" + fixture.album_source_id + "'"), "complete album tracks fixture");
     const auto reused = completion.completeAlbums(sparse);
     require(reused.isSuccess() && reused.data()->albums.size() == 1, "cold completion should reuse the canonical album");
     require(reused.data()->albums.front().summary == "catalog-summary" && reused.data()->albums.front().detail_sync_status == 0, "reused metadata must retain detail fields without advancing sync time");
-    support::runOnExecutor(pool->executor(), pool->coExecute("UPDATE album_source_refs SET detail_sync_status=3 WHERE source='migu' AND source_album_id='" + fixture.album_source_id + "'"), "restore album fixture");
+    support::runOnExecutor(pool->executor(), pool->coExecute("UPDATE album_source_refs SET detail_sync_status=3,songs_sync_status=4,songs_sync_count=1 WHERE source='migu' AND source_album_id='" + fixture.album_source_id + "'"), "restore album fixture");
     require(album_detail->album_songs_count == 2, "album detail relation count should use album_song_refs");
     require(album_detail->songs_sync_count == 1, "album detail must preserve the latest sync count");
 
@@ -439,9 +448,9 @@ void assertBackfillReset(mysql::MySqlMusicCatalogQueryRepository &repository, co
 
     const auto singer = repository.findSinger("migu", fixture.singer_source_id);
     require(singer.has_value(), "singer should still exist after reset");
-    require(singer->songs_sync_status == 2, "singer songs status should stay completed when real refs exist");
+    require(singer->songs_sync_status == 0, "song relations must not undo an explicit sync reset");
     require(singer->songs_sync_count == 2, "singer songs count should stay derived after reset");
-    require(singer->albums_sync_status == 2, "singer albums status should stay completed when real refs exist");
+    require(singer->albums_sync_status == 0, "album relations must not undo an explicit sync reset");
     require(singer->albums_sync_count == 1, "singer albums count should stay derived after reset");
 
     model::MiguBackfillTargetQuery album_reset;

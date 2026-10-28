@@ -14,28 +14,14 @@ SELECT
     base.source_song_total,
     base.source_album_total,
     base.avatar_url,
-    CASE
-        WHEN base.source_song_total IS NOT NULL AND base.songs_sync_count >= base.source_song_total AND base.songs_sync_error = '' AND base.raw_songs_sync_status <> 1 THEN 2
-        WHEN base.source_song_total IS NOT NULL AND base.songs_sync_count < base.source_song_total AND base.songs_sync_error = '' AND base.raw_songs_sync_status <> 1 THEN 4
-        ELSE base.raw_songs_sync_status
-    END AS songs_sync_status,
-    CASE
-        WHEN base.source_song_total IS NOT NULL AND base.songs_sync_count >= base.source_song_total AND base.songs_sync_error = '' AND base.raw_songs_synced_at = 0 THEN base.updated_at
-        ELSE base.raw_songs_synced_at
-    END AS songs_synced_at,
+    base.raw_songs_sync_status AS songs_sync_status,
+    base.raw_songs_synced_at AS songs_synced_at,
     base.songs_sync_count,
     base.songs_sync_error,
     base.songs_last_batch_id,
     base.songs_running_batch_id,
-    CASE
-        WHEN base.source_album_total IS NOT NULL AND base.albums_sync_count >= base.source_album_total AND base.albums_sync_error = '' AND base.raw_albums_sync_status <> 1 THEN 2
-        WHEN base.source_album_total IS NOT NULL AND base.albums_sync_count < base.source_album_total AND base.albums_sync_error = '' AND base.raw_albums_sync_status <> 1 THEN 4
-        ELSE base.raw_albums_sync_status
-    END AS albums_sync_status,
-    CASE
-        WHEN base.source_album_total IS NOT NULL AND base.albums_sync_count >= base.source_album_total AND base.albums_sync_error = '' AND base.raw_albums_synced_at = 0 THEN base.updated_at
-        ELSE base.raw_albums_synced_at
-    END AS albums_synced_at,
+    base.raw_albums_sync_status AS albums_sync_status,
+    base.raw_albums_synced_at AS albums_synced_at,
     base.albums_sync_count,
     base.albums_sync_error,
     base.albums_last_batch_id,

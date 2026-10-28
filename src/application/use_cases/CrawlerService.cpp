@@ -926,44 +926,6 @@ void applySingerDeclaredTotalCompletion(application::model::SingerCollectionResu
     result.error = std::string(item_name) + " incomplete: fetched " + std::to_string(result.written_count) + " of " + std::to_string(*declared_total);
 }
 
-// 判断当前错误是否只是声明总数不足导致的可重算状态。
-bool isDeclaredTotalIncompleteError(const std::string &error)
-{
-    return error.find(" incomplete: fetched ") != std::string::npos;
-}
-
-// 用数据库真实关系数量重算歌手歌曲/专辑完成度，避免按本轮写入数量误判。
-void applyRealSingerCountCompletion(application::model::SingerCollectionResult &result, const application::model::MiguSingerCatalogRecord &singer, bool songs_type)
-{
-    const auto declared_total = songs_type ? singer.source_song_total : singer.source_album_total;
-    const int real_count = songs_type ? singer.songs_sync_count : singer.albums_sync_count;
-    const std::string_view item_name = songs_type ? "singer songs" : "singer albums";
-    result.source_song_total = singer.source_song_total;
-    result.source_album_total = singer.source_album_total;
-    result.written_count = real_count;
-
-    const bool can_recalculate = result.success || (result.partial && isDeclaredTotalIncompleteError(result.error));
-    if (!can_recalculate) {
-        return;
-    }
-    if (!declared_total) {
-        result.success = true;
-        result.partial = false;
-        result.error.clear();
-        return;
-    }
-    if (real_count >= *declared_total) {
-        result.success = true;
-        result.partial = false;
-        result.error.clear();
-        return;
-    }
-
-    result.success = false;
-    result.partial = real_count > 0;
-    result.error = std::string(item_name) + " incomplete: fetched " + std::to_string(real_count) + " of " + std::to_string(*declared_total);
-}
-
 // 根据采集结果和已知平台总数计算同步状态；总数未知时不把成功采集推断为全量完成。
 int syncStatusFromResult(const application::model::SingerCollectionResult &result, std::optional<int> declared_total)
 {
@@ -1500,11 +1462,6 @@ application::model::SingerCollectionResult CrawlerService::crawlSingerSongsWithS
     }
 
     auto result = workflow_->crawlSingerSongsAndSaveResult(singer_id, limit, maxPageConcurrency(), source_song_total, source_album_total);
-    if (catalog_query_service_) {
-        if (auto singer = catalog_query_service_->findSinger(source_singer_id)) {
-            applyRealSingerCountCompletion(result, *singer, true);
-        }
-    }
     return result;
 }
 
@@ -1525,11 +1482,6 @@ application::model::SingerCollectionResult CrawlerService::crawlSingerAlbumsWith
     }
 
     auto result = workflow_->crawlSingerAlbumsAndSaveResult(singer_id, limit, maxPageConcurrency(), source_song_total, source_album_total);
-    if (catalog_query_service_) {
-        if (auto singer = catalog_query_service_->findSinger(source_singer_id)) {
-            applyRealSingerCountCompletion(result, *singer, false);
-        }
-    }
     return result;
 }
 
@@ -1835,11 +1787,6 @@ std::string CrawlerService::startSingerSongsFromDbAsync(application::model::Sing
                 result.source_song_total = source.source_song_total;
             }
             applySingerDeclaredTotalCompletion(result, result.source_song_total, "singer songs");
-            if (catalog_query_service_) {
-                if (auto singer = catalog_query_service_->findSinger(source.source_singer_id)) {
-                    applyRealSingerCountCompletion(result, *singer, true);
-                }
-            }
             const bool updated = queue->updateSongsSyncStatus(source.source, source.source_singer_id, syncStatusFromResult(result, result.source_song_total), result.written_count, result.error);
             return batchResultFromSingerCollection(result, updated);
         }
@@ -1907,11 +1854,6 @@ std::string CrawlerService::startSingerAlbumsFromDbAsync(application::model::Sin
                 result.source_album_total = source.source_album_total;
             }
             applySingerDeclaredTotalCompletion(result, result.source_album_total, "singer albums");
-            if (catalog_query_service_) {
-                if (auto singer = catalog_query_service_->findSinger(source.source_singer_id)) {
-                    applyRealSingerCountCompletion(result, *singer, false);
-                }
-            }
             const bool updated = queue->updateAlbumsSyncStatus(source.source, source.source_singer_id, syncStatusFromResult(result, result.source_album_total), result.written_count, result.error);
             return batchResultFromSingerCollection(result, updated);
         }
@@ -2651,21 +2593,11 @@ application::model::MiguBackfillRetryResult CrawlerService::retryMiguBackfill(st
                         result.source_song_total = source.source_song_total;
                     }
                     applySingerDeclaredTotalCompletion(result, result.source_song_total, "singer songs");
-                    if (catalog_query_service_) {
-                        if (auto singer = catalog_query_service_->findSinger(source.source_singer_id)) {
-                            applyRealSingerCountCompletion(result, *singer, true);
-                        }
-                    }
                 } else {
                     if (!result.source_album_total && source.source_album_total) {
                         result.source_album_total = source.source_album_total;
                     }
                     applySingerDeclaredTotalCompletion(result, result.source_album_total, "singer albums");
-                    if (catalog_query_service_) {
-                        if (auto singer = catalog_query_service_->findSinger(source.source_singer_id)) {
-                            applyRealSingerCountCompletion(result, *singer, false);
-                        }
-                    }
                 }
                 const bool updated = backfill_type == "singer-songs" ? queue->updateSongsSyncStatus("migu", source.source_singer_id, syncStatusFromResult(result, result.source_song_total), result.written_count, result.error) : queue->updateAlbumsSyncStatus("migu", source.source_singer_id, syncStatusFromResult(result, result.source_album_total), result.written_count, result.error);
                 return batchResultFromSingerCollection(result, updated);

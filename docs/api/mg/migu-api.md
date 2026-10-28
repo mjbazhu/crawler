@@ -120,7 +120,7 @@ GET /api/migu/schema/status
 - 多状态过滤使用逗号分隔，例如 `status=0,3,4`。
 - `1 同步中` 是临时运行态。服务启动会执行一次轻量 stale 恢复；前端也可以手动调用维护接口回收长时间卡住的 running 状态。
 - 歌手和专辑详情会返回 `*_last_batch_id`、`*_running_batch_id`；补池队列统一返回 `last_batch_id`、`running_batch_id`、`last_processed_at`，前端可以直接跳转最近批次排障。
-- `GET /api/migu/singers` 和 `GET /api/migu/singers/{source_singer_id}` 的歌手汇总使用真实关联表：`songs_sync_count` 来自 `song_artist_refs` 中该歌手关联的去重歌曲数；`albums_sync_count` 来自 `album_artist_refs` 中该歌手关联的去重专辑数。接口还返回 `source_song_total`/`songs_total`、`source_album_total`/`albums_total`、`songs_remaining_count`、`albums_remaining_count`、`songs_completed` 和 `albums_completed`。当平台总数已知且真实计数不足时，同步状态保持 `4 部分完成`，不会再误显示为已完成；当 total 为 `null` 时表示尚未刷新 `singer/info`，前端应展示“总数未知/需刷新歌手信息”，不能显示已全量抓完。
+- `GET /api/migu/singers` 和 `GET /api/migu/singers/{source_singer_id}` 的歌手汇总继续统计真实关系：`songs_sync_count` / `songs_count` 来自 `song_artist_refs`，`albums_sync_count` / `albums_count` 来自 `album_artist_refs`。`songs_sync_status`、`albums_sync_status` 和同步时间只读取对应目录的采集结果，不再由关系数量推算。专辑响应可带入歌曲、歌曲响应可带入专辑，因此计数达到平台声明总数也不能证明目录已采全；`songs_completed`、`albums_completed` 只依状态判断。总数为 `null` 时不能确认全量完成。
 - 歌手资料随专辑、歌曲目录采集统一补齐；声明总数未知时获取一份完整 `singer/info` 响应并随目录批次入库。需要刷新已知资料时，在主入口或歌手 backfill retry 中传 `force: true`，无需单独调用资料刷新接口。
 - 前端展示可直接读取别名字段：歌手返回 `songs_count`/`albums_count` 和对应 `*_total`/`*_remaining_count`，专辑返回 `songs_count`/`album_songs_count`。这些字段不写入汇总表，真实计数由查询时实时聚合得到；数量过滤同样使用实时事实计数。
 - 专辑 `songs_sync_count` 单独表示最近一次专辑歌曲采集成功处理条数，直接读取 `album_source_refs.songs_sync_count`；`album_songs_count` 和 `songs_count` 表示当前累计保存的去重关系数。歌手歌曲等入口也可以创建专辑关系，因此两种数量可以不同，专辑歌曲完成情况只按 `songs_sync_status` 判断。
@@ -270,7 +270,7 @@ GET /api/migu/backfill/album-songs/queue?status=3&min_album_songs_count=1
 
 队列响应统一使用同一视图模型，不再需要根据 singer/album 字段推断：
 
-歌手补池队列和歌手列表使用同一套真实汇总口径：`singer-songs` 的 `sync_count` 来自 `song_artist_refs`，`singer-albums` 的 `sync_count` 来自 `album_source_refs.source_artist_id`。默认 `status=0,3,4` 只返回真正仍缺内容或失败/部分完成的目标；如果歌手已经有真实歌曲或专辑且没有同步错误，会按 `2 已完成` 暴露，不应继续出现在“歌手缺歌曲/缺专辑”队列里。
+歌手补池队列和歌手列表使用同一份目录采集状态。`sync_count` 保留关系事实统计：歌曲来自 `song_artist_refs`，专辑来自 `album_artist_refs`；默认 `status=0,3,4` 按保存的采集状态选择目标，不因关联数量达到声明总数而跳过。受 `limit` 截断的采集保持部分完成，即使数据库已有更多关联内容。`force=true` 可重采已完成目录，但不抢占运行中的任务。
 
 补池队列的数量过滤同内容列表一致：歌手队列支持 `min_songs_count`、`max_songs_count`、`min_albums_count`、`max_albums_count`；专辑队列支持 `min_songs_count`、`max_songs_count`，也兼容 `min_album_songs_count`、`max_album_songs_count`。
 
