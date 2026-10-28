@@ -9,6 +9,7 @@
 
 #include <iostream>
 #include <stdexcept>
+#include <utility>
 
 namespace crawler = orchestrator::modules::crawler;
 namespace model = crawler::application::model;
@@ -54,9 +55,87 @@ model::ProviderResponse response(std::string_view text)
     return value;
 }
 
+// 观察详情请求，验证公共归档在发出请求之前就被排除。
+class SearchProvider final : public crawler::tests::MockMusicProvider {
+public:
+    int details = 0; // 搜索触发的专辑详情请求数
+
+    // 真实专辑继续使用同一份离线详情响应。
+    std::optional<Response> fetchAlbumDetail(std::string id, std::string type) override
+    {
+        ++details;
+        return MockMusicProvider::fetchAlbumDetail(std::move(id), std::move(type));
+    }
+};
+
+// 公共归档只保留搜索响应；同名真实专辑和明确数字身份仍完整写入返回曲目。
+void verifySearchArchiveBoundary()
+{
+    auto provider = std::make_shared<SearchProvider>();
+    auto parser = std::make_shared<SourceOnlyParser>();
+    auto dispatch = std::make_shared<cases::ParserDispatch>(parser, parser, parser, parser, parser, parser, nullptr, nullptr);
+    auto writer = std::make_shared<Writer>();
+    auto persistence = std::make_shared<cases::MetadataPersistenceService>(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, cases::MetadataIngestionDependencies {writer, nullptr});
+    cases::SearchCollectionWorkflow search(provider, provider, provider, dispatch, persistence, nullptr, nullptr);
+    provider->mock_song_search_response = response(R"([{"songId":"carried-song","contentId":"carried-content","songName":"当前单曲","albumId":"1","album":"单曲发行","singerList":[{"id":"7","name":"入口歌手"}]}])");
+    provider->mock_album_search_response = response(R"({"data":{"result":[{"id":"1","name":"单曲发行","resourceType":"2003"}]}})");
+    provider->mock_album_detail_response = response(R"({"resource":[{"albumId":"1","title":"单曲发行","totalCount":"1100","songItems":[{"songId":"unrelated-song","contentId":"unrelated-content","songName":"其他歌手单曲"}]}]})");
+    for (int repeat = 0; repeat < 2; ++repeat) {
+        writer->batches.clear();
+        require(search.searchAndSave("单曲发行", 1, 1), "shared archive search failed");
+        require(provider->details == 0 && writer->batches.size() == 2, "search expanded the shared archive detail response");
+        require(writer->batches.front().songs.size() == 1 && writer->batches.front().songs.front().source_song_id == "carried-song" && writer->batches.front().songs.front().source_album_id == "1", "shared archive guard discarded current-response songs or relationships");
+        require(writer->batches.back().albums.size() == 1 && writer->batches.back().albums.front().source_album_id == "1" && writer->batches.back().songs.empty(), "shared archive summary was dropped or contaminated");
+    }
+    provider->mock_song_search_response = response("[]");
+    provider->mock_album_search_response = response(R"({"data":{"result":[{"id":"real-album","name":"单曲发行","resourceType":"2003"}]}})");
+    provider->mock_album_detail_response = response(R"({"resource":[{"albumId":"real-album","title":"单曲发行","totalCount":"2","songItems":[{"songId":"real-1","songName":"真实曲目一"},{"songId":"real-2","songName":"真实曲目二"}]}]})");
+    writer->batches.clear();
+    require(search.searchAndSave("单曲发行", 1, 1) && provider->details == 1 && writer->batches.back().songs.size() == 2, "shared archive guard suppressed a same-name real album");
+    provider->mock_album_search_response = response(R"({"data":{"result":[{"id":"1","name":"单曲发行","resourceType":"5"}]}})");
+    provider->mock_album_detail_response = response(R"({"resource":[{"contentId":"1","materialId":"digital-material","resourceType":"5","title":"单曲发行","totalCount":"2","songItems":[{"songId":"digital-1","songName":"数字曲目一"},{"songId":"digital-2","songName":"数字曲目二"}]}]})");
+    writer->batches.clear();
+    require(search.searchAndSave("单曲发行", 1, 1) && provider->details == 2 && writer->batches.back().songs.size() == 2, "shared archive guard suppressed an explicit digital identity");
+    std::cout << "SEARCH_ARCHIVE_COUNTS archive_details=0 real_and_digital_details=" << provider->details << '\n';
+}
+
+// 错误状态或其他专辑的响应不能成为成功入库依据；修正后可正常重试。
+void verifySearchResponseFailures()
+{
+    auto provider = std::make_shared<SearchProvider>();
+    auto parser = std::make_shared<SourceOnlyParser>();
+    auto dispatch = std::make_shared<cases::ParserDispatch>(parser, parser, parser, parser, parser, parser, nullptr, nullptr);
+    auto writer = std::make_shared<Writer>();
+    auto persistence = std::make_shared<cases::MetadataPersistenceService>(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, cases::MetadataIngestionDependencies {writer, nullptr});
+    cases::SearchCollectionWorkflow search(provider, provider, provider, dispatch, persistence, nullptr, nullptr);
+    provider->mock_song_search_response = response(R"([{"songId":"error-song","songName":"错误响应中的歌曲"}])");
+    provider->mock_song_search_response->status_code = 503;
+    provider->mock_album_search_response = response(R"({"data":{"result":[{"id":"wanted-album","name":"目标专辑","resourceType":"2003"}]}})");
+    require(!search.searchAndSave("fixture", 1, 1) && writer->batches.empty(), "non-2xx song search response was persisted");
+    provider->mock_song_search_response = response("[]");
+    provider->mock_album_search_response->status_code = 503;
+    require(!search.searchAndSave("fixture", 1, 1) && writer->batches.empty(), "non-2xx album search response was persisted");
+    provider->mock_album_search_response->status_code = 200;
+    provider->mock_album_detail_response = response(R"({"resource":[{"albumId":"wanted-album","title":"目标专辑","totalCount":"1","songItems":[{"songId":"wanted-song","songName":"目标曲目"}]}]})");
+    provider->mock_album_detail_response->status_code = 503;
+    require(!search.searchAndSave("fixture", 1, 1) && writer->batches.size() == 1 && writer->batches.back().songs.empty(), "non-2xx album detail response was persisted");
+    writer->batches.clear();
+    provider->mock_album_detail_response = response(R"({"resource":[{"albumId":"wrong-album","title":"其他专辑","totalCount":"1","songItems":[{"songId":"wrong-song","songName":"其他专辑曲目"}]}]})");
+    require(!search.searchAndSave("fixture", 1, 1) && writer->batches.size() == 1 && writer->batches.back().songs.empty(), "another album's detail was accepted by search");
+    writer->batches.clear();
+    provider->mock_album_detail_response = response(R"({"resource":[{"albumId":"wanted-album","title":"目标专辑","totalCount":"1","songItems":[{"songId":"wanted-song","songName":"目标曲目"}]}]})");
+    require(search.searchAndSave("fixture", 1, 1) && writer->batches.size() == 2 && writer->batches.back().songs.front().source_song_id == "wanted-song", "search did not recover after a corrected response");
+    writer->batches.clear();
+    provider->mock_album_search_response = response(R"({"data":{"result":[{"id":"material-alias","name":"数字专辑","resourceType":"5"}]}})");
+    provider->mock_album_detail_response = response(R"({"resource":[{"contentId":"canonical-album","materialId":"material-alias","resourceType":"5","title":"数字专辑","totalCount":"1","songItems":[{"songId":"digital-song","songName":"数字专辑曲目"}]}]})");
+    require(search.searchAndSave("fixture", 1, 1) && writer->batches.back().albums.front().source_album_id == "canonical-album", "explicit digital material mapping failed search identity validation");
+}
+
 int main()
 {
     try {
+        verifySearchArchiveBoundary();
+        verifySearchResponseFailures();
         auto provider = std::make_shared<crawler::tests::MockMusicProvider>();
         auto source_parser = std::make_shared<SourceOnlyParser>();
         auto dispatch = std::make_shared<cases::ParserDispatch>(source_parser, source_parser, source_parser, source_parser, source_parser, source_parser, nullptr, nullptr);

@@ -1,13 +1,13 @@
 # 当前任务与会话交接
 
-更新日期：2026-10-28。工作目录：`C:/Users/nidie/.codex/worktrees/metadata-api-cleanup/crawler`。分支：`codex/resource-persistence-flow`，PR：[mjbazhu/crawler#4](https://github.com/mjbazhu/crawler/pull/4)。本轮开发前基线为 `2e25813`，实际发布提交、远端状态以 Git 和 PR head 为准。
+更新日期：2026-10-28。工作目录：`C:/Users/nidie/.codex/worktrees/metadata-api-cleanup/crawler`。分支：`codex/resource-persistence-flow`，PR：[mjbazhu/crawler#4](https://github.com/mjbazhu/crawler/pull/4)。本轮修复基线为 `d5fc338`；按身份关系、搜索边界两组提交交付，未执行合并，实际发布提交、远端状态以 Git 和 PR head 为准。
 
 ## 当前目标与范围
 
-- 元数据请求效率收尾：核对整份资料、详情复用与分页次数，减少有证据的末尾预取，保持短中间页完整性。
+- 延续合并前修复，检查双 ID 冲突下的限量、来源合并与关系归属，以及搜索错误响应和详情身份校验。
 - 沿用歌手索引、从库采集歌手专辑、从库采集歌手歌曲三个常规入口，实体与关系随已有响应去重入库。
 - 公共 `albumId=1`“单曲发行”保留当前响应携带的数据，常规及回补路径均不自动展开；真实专辑仍全曲目入库。
-- 本轮不扩大歌手样本，不增加逐字段补查接口或资源下载功能，不测试资源。
+- 本轮只做元数据离线与独立 MySQL 回归，不扩大歌手样本，不增加逐字段补查接口或资源下载功能，不测试资源、不合并。
 
 ## 已确认基线与本轮完成
 
@@ -16,15 +16,24 @@
 - 已输出字段级缺失清单及证据分级；957 项缺少足够的原始响应证据，不应写成 957 个已确认数据丢失问题。
 - 复现并修复歌手索引不检查 HTTP 状态的问题：503 响应不再进入解析/持久化，200 重试正常。
 - 增加分页失败、写入失败后的重试，MySQL 事务回滚及修正后幂等写入，重建连接池后的超时认领恢复与再认领用例。
-- 本轮确认两轮普通目录采集仍各取列表，整份歌手资料和专辑详情各请求 1 次，没有按拼音、简介等字段分别补查。
+- 前轮请求效率验证确认两轮普通目录采集仍各取列表，整份歌手资料和专辑详情各请求 1 次，没有按拼音、简介等字段分别补查。
 - 分页在已知正总数和容量提示时动态收缩窗口，下一批按实际末页推进。同一 fixture 的歌曲/专辑页数均从 4 降到 3，124 首歌曲和 21 张专辑的来源集合一致；未知提示、短中间页、总数滞后、满页探测和页数保护均有用例。
+- 本轮按任务内唯一来源维护歌手目录计数、选取 limit 和完成度；歌曲保留两类 ID 的识别，重复片段仍补字段和专辑关系，成功写入后才累计计数。专辑兼容仓储不再按重复卡片重新截断限量结果。
+- 搜索复用公共归档判定，在请求详情前跳过归档展开；已返回歌曲和关系仍保存，同名真实专辑与明确数字身份仍保存全部返回曲目。
+- 继续回归发现并修复冲突替代 ID 污染本轮去重、单 ID 批次合并丢弃独立来源的问题；只补缺失身份，不把冲突值登记为别名，双 ID 不一致的片段交给实际 writer 处理。
+- 独立 MySQL 复现同批次主键映射覆盖造成专辑关系串写；事务内按平台及两组输入 ID 分别保存真实来源主键，替代入口关系继续指向原来源。
+- 搜索列表与详情增加 HTTP 2xx 检查，详情校验目标专辑或明确物料身份；错误响应不再成功入库，修正后正常重试。
+- 本轮变更涉及 12 个文件：上述三个采集实现、`MetadataBatchBuilder.cpp`、三个 `MySqlMetadataWrite*` 文件，三个相关既有测试及元数据说明、本交接；未修改 SQL、API 契约或资源下载处理。
 
 ## 实际验证与证据
 
-- 四项离线：`MiguSingerIndexIngestionFlowTest`、`SingerShortPageTest`、`CatalogMetadataCompletionTest`、`AlbumTrackPaginationTest`。
-- 本轮独立 MySQL：`MySqlCatalogAssociationTest`；库为 `crawler_ownership_test_request_efficiency_20261028_124121`。前序故障恢复库与验证仍在持久化流程说明中保留。
-- 生产目标及所选测试构建通过，相关实现 clangd 检查 0 errors。
-- 本轮证据：`D:/codex-runs/crawler-metadata-request-efficiency/20261028_124121/`；前序缺失清单位于 `D:/codex-runs/crawler-metadata-quality-recovery/20261028_115414/`，业务解释与各轮范围见 [持久化流程](../architecture/persistence-flow.md)。
+- 本轮新增回归在修复前复现替代身份限量与搜索状态失败；中间版本的独立 MySQL 另复现关系串写，最终全部修复。
+- 最终六项离线通过：`SingerShortPageTest`、`MetadataIngestionWorkflowTest`、`CatalogMetadataCompletionTest`、`AlbumTrackPaginationTest`、`MetadataOwnershipTest`、`MiguSongSourceParserTest`。继续覆盖前轮重复页、短页、限量、元数据携带与公共归档边界，新增替代 ID 双向冲突、错误状态、详情身份错配和修正重试。
+- 最终独立库 `crawler_ownership_test_identity_boundary_final_20261028_134217` 中 `MySqlCatalogAssociationTest` 通过；新增六种身份/限额组合各执行两轮，来源行数与返回计数一致，稳定绑定、入口歌手及原/替代/独立专辑关系均核对通过，原事务回滚与修正重放用例仍通过。
+- `demo` 及所选测试构建通过；歌手歌曲、搜索、batch builder 和两个 writer 实现的五项 clangd 检查均 0 errors。
+- 本轮证据：`D:/codex-runs/crawler-metadata-identity-boundary/20261028_134217/`。中间版本失败库 `crawler_ownership_test_identity_boundary_before_20261028_134217` 保留复现数据；最终库独立新建。本轮未请求真实平台、未运行资源测试。
+- 前轮两项修复的四项离线及三个 clangd 证据为 `D:/codex-runs/crawler-metadata-review-fixes/20261028_132930/`。
+- 前轮独立 MySQL 为 `MySqlCatalogAssociationTest`，库 `crawler_ownership_test_request_efficiency_20261028_124121`；请求效率证据位于 `D:/codex-runs/crawler-metadata-request-efficiency/20261028_124121/`。前序缺失清单位于 `D:/codex-runs/crawler-metadata-quality-recovery/20261028_115414/`，历史验收边界见 [持久化流程](../architecture/persistence-flow.md)。
 - 本次不代表重新跑过全量歌手或固定 20 位实采，也没有强杀真实采集进程做崩溃注入；GitHub CI 与本地验证分别记录。
 
 ## 后续边界
@@ -33,3 +42,4 @@
 - 普通资料/详情请求及目录预取已完成本轮核对；后续若平台分页契约改变，再调整 provider 容量提示并复测边界。
 - 历史库的错误合并、关系或扩采未自动清理，需要确认实际受影响范围后处理。
 - 歌手/专辑图片下载、资源处理扩展继续留在后续独立范围。
+- 原两项审查问题及本轮复现的身份、关系、搜索响应问题均已完成修复与对应回归；本轮按两组提交交付并更新 PR 验证记录，后续核对最新提交差异和检查结果，用户要求暂不合并。

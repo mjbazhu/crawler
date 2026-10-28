@@ -1,6 +1,8 @@
 #include "crawler/application/use_cases/SearchCollectionWorkflow.h"
 #include "crawler/application/use_cases/WorkflowPaging.h"
+#include "crawler/application/model/AlbumCollectionPolicy.h"
 
+#include <algorithm>
 #include <optional>
 #include <utility>
 
@@ -27,7 +29,7 @@ bool SearchCollectionWorkflow::searchSourcesAndSave(const std::string &keyword, 
                     result.page = page;
                     auto response = songs ? song_search_provider_->fetchSongSearchPage(keyword, page, kWorkflowSearchRows)
                                           : album_search_provider_->fetchAlbumSearchPage(keyword, page, kWorkflowSearchRows);
-                    if (!response) return result;
+                    if (!response || response->status_code < 200 || response->status_code >= 300) return result;
                     result.fetched = true;
                     result.batch = parser_->parseSources(std::move(response->body));
                     return result; }, "collect search sources");
@@ -47,10 +49,14 @@ bool SearchCollectionWorkflow::searchSourcesAndSave(const std::string &keyword, 
                 processed += static_cast<int>((std::min)(available, remaining));
                 if (!songs && album_detail_provider_) {
                     for (const auto &album : selected_albums) {
+                        if (application::model::isSharedReleaseArchive(album)) continue;
                         auto detail = album_detail_provider_->fetchAlbumDetail(album.source_album_id, album.source_res_type);
-                        if (!detail) return false;
+                        if (!detail || detail->status_code < 200 || detail->status_code >= 300) return false;
                         auto details = parser_->parseSources(std::move(detail->body));
-                        if (details.albums.empty() || !persistence_->saveSources(std::move(details), 0)) return false;
+                        const bool matched = std::any_of(details.albums.begin(), details.albums.end(), [&](const auto &item) {
+                            return item.source == album.source && item.detail_sync_status == 2 && (item.source_album_id == album.source_album_id || item.source_material_id == album.source_album_id);
+                        });
+                        if (!matched || !persistence_->saveSources(std::move(details), 0)) return false;
                     }
                 }
             }
