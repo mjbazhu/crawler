@@ -154,6 +154,7 @@ add_crawler_test(MiguHttpRouteSmokeTest tests/migu/api/MiguHttpRouteSmokeTest.cp
 add_crawler_test(MiguCatalogQueryIntegrationTest tests/migu/integration/MiguCatalogQueryIntegrationTest.cpp)
 add_crawler_test(MySqlMetadataOwnershipTest tests/migu/integration/MySqlMetadataOwnershipTest.cpp)
 add_crawler_test(MySqlMetadataCoverUrlTest tests/migu/integration/MySqlMetadataCoverUrlTest.cpp)
+add_crawler_test(MySqlCatalogAssociationTest tests/migu/integration/MySqlCatalogAssociationTest.cpp)
 add_crawler_test(MySqlAlbumIdentityTest tests/migu/integration/MySqlAlbumIdentityTest.cpp)
 add_crawler_test(MySqlSourceBindingTest tests/migu/integration/MySqlSourceBindingTest.cpp)
 add_crawler_test(MySqlSingerIdentityTest tests/migu/integration/MySqlSingerIdentityTest.cpp)

@@ -1,4 +1,5 @@
 #include "crawler/application/use_cases/AlbumDetailBackfillWorkflow.h"
+#include "crawler/application/use_cases/CatalogMetadataCompletion.h"
 #include "crawler/infrastructure/music/migu/parser/MiguParser.h"
 #include "mocks/MockAlbumSourceRepository.h"
 #include "mocks/MockMusicProvider.h"
@@ -50,8 +51,16 @@ Json tracks(int first, int last, std::string album = "album-fixture")
 // 测试替身线程不安全，仅由当前用例顺序调用，记录页号避免重复第一页。
 class Provider final : public c::tests::MockMusicProvider {
 public:
+    int details = 0;                                              // 详情请求数，防止目录阶段重复获取
     std::map<int, model::ProviderResponse> pages;                 // 页号对应原始响应
     std::vector<std::tuple<std::string, int, int>> page_requests; // 实际身份、页号、页大小
+    // 统计目录补齐是否复用已经取得的详情。
+    std::optional<Response> fetchAlbumDetail(std::string id, std::string type) override
+    {
+        ++details;
+        return MockMusicProvider::fetchAlbumDetail(std::move(id), std::move(type));
+    }
+
     std::optional<Response> fetchAlbumSongPage(std::string id, int page, int size) override
     {
         page_requests.emplace_back(std::move(id), page, size);
@@ -74,11 +83,11 @@ public:
 // 生产 parser、调度和持久化编排配合离线 provider，无网络或数据库依赖。
 class Fixture {
 public:
-    std::shared_ptr<Provider> provider = std::make_shared<Provider>();                                                                                                                                                                                 // 当前场景的分页响应
-    std::shared_ptr<Writer> writer = std::make_shared<Writer>();                                                                                                                                                                                       // 原子 batch 记录器
-    std::shared_ptr<c::tests::MockAlbumSourceRepository> queue = std::make_shared<c::tests::MockAlbumSourceRepository>();                                                                                                                              // 状态适配替身
-    std::shared_ptr<c::infrastructure::music::migu::parser::MiguParser> parser = std::make_shared<c::infrastructure::music::migu::parser::MiguParser>();                                                                                               // 真实平台解析器
-    std::shared_ptr<use::ParserDispatch> dispatch = std::make_shared<use::ParserDispatch>(parser, parser, parser, parser, parser, parser, nullptr, nullptr);                                                                                           // 同步测试调度
+    std::shared_ptr<Provider> provider = std::make_shared<Provider>();                                                                                                                                                                        // 当前场景的分页响应
+    std::shared_ptr<Writer> writer = std::make_shared<Writer>();                                                                                                                                                                              // 原子 batch 记录器
+    std::shared_ptr<c::tests::MockAlbumSourceRepository> queue = std::make_shared<c::tests::MockAlbumSourceRepository>();                                                                                                                     // 状态适配替身
+    std::shared_ptr<c::infrastructure::music::migu::parser::MiguParser> parser = std::make_shared<c::infrastructure::music::migu::parser::MiguParser>();                                                                                      // 真实平台解析器
+    std::shared_ptr<use::ParserDispatch> dispatch = std::make_shared<use::ParserDispatch>(parser, parser, parser, parser, parser, parser, nullptr, nullptr);                                                                                  // 同步测试调度
     std::shared_ptr<use::MetadataPersistenceService> saver = std::make_shared<use::MetadataPersistenceService>(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, use::MetadataIngestionDependencies {writer, nullptr}); // 仅启用原子写入
 
     // 配置详情首段和平台声明总数；数字专辑同时携带明确物料映射。
@@ -163,6 +172,37 @@ int main()
 
         const auto invalid_total = response({{"data", {{"songList", tracks(51, 59)}, {"totalCount", 59.5}}}});
         require(!short_album.parser->parseAlbumSongPage(invalid_total.body).source_song_total, "fractional total was silently truncated");
+
+        // 正常目录入口必须复用同一详情和缺页，不再要求另行触发曲目 backfill。
+        Fixture catalog;
+        catalog.detail(59);
+        catalog.page(2, 59, 51, 59);
+        use::CatalogMetadataCompletion completion({catalog.provider, catalog.provider, nullptr, catalog.dispatch});
+        model::MetadataWriteBatch input;
+        model::AlbumSourceMetadata album;
+        album.source_album_id = "album-fixture";
+        album.title = "分页专辑";
+        input.albums.push_back(album);
+        const auto completed = completion.completeAlbums(input);
+        require(completed.isSuccess() && completed.data()->songs.size() == 59 && completed.data()->albums.front().songs_sync->status == 2, "catalog completion discarded album tracks");
+        require(completed.data()->singers.front().avatar_url == "https://example.test/avatar.webp", "associated singer metadata was discarded");
+        require(completion.completeAlbums(input).isSuccess() && catalog.provider->details == 1 && catalog.provider->page_requests.size() == 1 && std::get<1>(catalog.provider->page_requests.front()) == 2, "cached catalog completion fetched detail or pages again");
+
+        Fixture inline_detail;
+        inline_detail.detail(59, true);
+        inline_detail.page(2, 59, 51, 59, "material-fixture");
+        use::CatalogMetadataCompletion inline_completion({inline_detail.provider, inline_detail.provider, nullptr, inline_detail.dispatch});
+        const auto supplied = inline_completion.completeAlbums(inline_detail.dispatch->parseSources(inline_detail.provider->mock_album_detail_response->body));
+        require(supplied.isSuccess() && supplied.data()->songs.size() == 59 && inline_detail.provider->details == 0 && std::get<0>(inline_detail.provider->page_requests.front()) == "material-fixture", "supplied detail was fetched again or material page identity was lost");
+
+        Fixture retry_catalog;
+        retry_catalog.detail(59);
+        use::CatalogMetadataCompletion retry_completion({retry_catalog.provider, retry_catalog.provider, nullptr, retry_catalog.dispatch});
+        const auto partial = retry_completion.completeAlbums(input);
+        require(partial.isSuccess() && partial.data()->songs.size() == 50 && partial.data()->albums.front().songs_sync->status == 4, "catalog pagination failure discarded available metadata");
+        retry_catalog.page(2, 59, 51, 59);
+        const auto retried = retry_completion.completeAlbums(input);
+        require(retried.isSuccess() && retried.data()->songs.size() == 59 && retried.data()->albums.front().songs_sync->status == 2, "failed page blocked a later complete response");
         std::cout << "PASS: album pages, identity, totals, no-progress bounds and atomic completion\n";
         return 0;
     } catch (const std::exception &error) {

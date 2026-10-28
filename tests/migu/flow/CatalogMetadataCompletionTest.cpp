@@ -1,6 +1,7 @@
 #include "crawler/application/use_cases/CatalogMetadataCompletion.h"
 
 #include <atomic>
+#include <algorithm>
 #include <chrono>
 #include <future>
 #include <iostream>
@@ -67,14 +68,14 @@ public:
     }
 };
 
-// 保持真实平台响应形状，同时给详情放入一首不在本批范围内的曲目。
+// 目标专辑的其他曲目必须入库，其他专辑的推荐内容仍排除。
 std::shared_ptr<Provider> provider()
 {
     auto value = std::make_shared<Provider>();
     value->mock_singer_info_response = response(R"({"data":{"contents":[{"view":"ZJ-SingerDetail-Item","resId":"7","txt":"入口歌手"},{"view":"ZJ-Tab-Scroll","contents":[{"view":"ZJ-Tab-Item","action":"song","txt2":"2"},{"view":"ZJ-Tab-Item","action":"album","txt2":"1"}]}]}})");
     value->mock_singer_albums_response = response(R"({"data":{"contents":[{"view":"ZJ-Album-Item","resId":"a1","resType":"0","txt":"专辑一","txt2":"入口歌手"},{"view":"ZJ-Album-Item","resId":"unselected","resType":"0","txt":"未选专辑"}]}})");
     value->mock_singer_songs_response = response(R"([{"contentId":"c1","songId":"s1","songName":"歌曲一","albumId":"a1","album":"专辑一","singerList":[{"id":"7","name":"入口歌手","nameSpelling":"rukou"}]}])");
-    value->mock_album_detail_response = response(R"({"data":{"albumId":"a1","title":"专辑一","summary":"完整简介","totalCount":"2","resourceType":"2003","publishDate":"2020-01-01","albumPinyin":"zhuanjiyi","songItems":[{"contentId":"c1","songId":"s1","songName":"歌曲一","songPinyin":"gequyi","albumId":"a1","album":"专辑一","singerList":[{"id":"7","name":"入口歌手"}]},{"contentId":"unselected","songName":"不在本批的曲目","albumId":"a1","album":"专辑一","singerList":[{"id":"unknown","name":"推荐歌手"}]}]}})");
+    value->mock_album_detail_response = response(R"({"resource":[{"albumId":"a1","title":"专辑一","summary":"完整简介","totalCount":"2","resourceType":"2003","publishDate":"2020-01-01","albumPinyin":"zhuanjiyi","songItems":[{"contentId":"c1","songId":"s1","songName":"歌曲一","songPinyin":"gequyi","albumId":"a1","album":"专辑一","singerList":[{"id":"7","name":"入口歌手"}]},{"contentId":"c2","songName":"专辑其他曲目","albumId":"a1","album":"专辑一","singerList":[{"id":"8","name":"合唱歌手"}]}]},{"albumId":"other-album","title":"推荐专辑","totalCount":"1","songItems":[{"contentId":"recommendation","songName":"其他专辑曲目","albumId":"other-album","album":"推荐专辑","singerList":[{"id":"unknown","name":"推荐歌手"}]}]}]})");
     return value;
 }
 
@@ -94,14 +95,15 @@ int main()
         const auto albums = workflow.crawlSingerAlbumsAndSaveResult(7, 1, 1);
         require(albums.success && albums.written_count == 1, "album collection did not complete");
         const auto &first = writer->batches.back();
-        require(first.albums.size() == 1 && first.songs.empty(), "album collection expanded into unselected songs");
+        require(first.albums.size() == 1 && first.songs.size() == 2, "album tracks were discarded or recommendations were admitted");
+        require(first.albums.front().songs_sync && first.albums.front().songs_sync->status == 2 && first.albums.front().songs_sync->received_count == 2, "album tracks did not carry their verified completion state");
         require(first.albums.front().summary == "完整简介" && first.albums.front().source_title_pinyin == "zhuanjiyi" && first.albums.front().total_count == "2", "album response fields were not carried");
         require(first.profiles.size() == 1 && first.profiles.front().source_song_total == 2 && first.profiles.front().source_album_total == 1, "profile totals were not committed with albums");
         const auto songs = workflow.crawlSingerSongsAndSaveResult(7, 1, 1);
         require(songs.partial && songs.written_count == 1, "a limited subset was reported as a complete catalog");
         const auto &second = writer->batches.back();
-        require(second.songs.size() == 1 && second.songs.front().source_title_pinyin == "gequyi", "cached album track fields did not enrich the selected song");
-        require(second.singers.size() == 1 && second.singers.front().source_singer_id == "7", "detail introduced an unselected singer");
+        require(second.songs.size() == 2 && second.songs.front().source_title_pinyin == "gequyi", "cached album tracks were lost or the selected song was duplicated");
+        require(second.singers.size() == 2 && std::none_of(second.singers.begin(), second.singers.end(), [](const auto &singer) { return singer.source_singer_id == "unknown"; }), "associated singers were lost or recommendation singers were admitted");
         require(source->profiles == 1 && source->details == 1, "album/song phases requested each metadata field separately");
         (void)workflow.crawlSingerAlbumsAndSaveResult(7, 1, 1);
         (void)workflow.crawlSingerSongsAndSaveResult(7, 1, 1);
@@ -145,6 +147,29 @@ int main()
 
         const auto combined = dispatch->parseSources(source->mock_singer_info_response->body);
         require(combined.profiles.size() == 1 && combined.singers.size() == 1, "single-response profile/identity split failed");
+
+        // 曲目只携带歌手 ID 时，也要保留同响应中独立返回的完整歌手实体。
+        auto attached = batch;
+        attached.albums.front().detail_sync_status = 2;
+        attached.albums.front().total_count = "1";
+        model::SongSourceMetadata track;
+        track.source = "migu";
+        track.source_content_id = "attached-track";
+        track.title = "独立歌手资料曲目";
+        track.source_album_id = "a1";
+        track.source_album_name = "专辑一";
+        model::SongSourceArtistRef artist;
+        artist.source_artist_id = "9";
+        track.artist_refs.push_back(artist);
+        attached.songs.push_back(track);
+        model::SingerSourceMetadata singer;
+        singer.source = "migu";
+        singer.source_singer_id = "9";
+        singer.name = "独立歌手资料";
+        singer.source_country = "中国";
+        attached.singers.push_back(singer);
+        const auto independent = completion->completeAlbums(attached);
+        require(independent.isSuccess() && independent.data()->singers.size() == 1 && independent.data()->singers.front().source_country == "中国", "a referenced standalone singer was discarded");
         std::cout << "[PASS] ordered metadata completion, shared responses, field carry, limits and retries" << std::endl;
         return 0;
     } catch (const std::exception &error) {

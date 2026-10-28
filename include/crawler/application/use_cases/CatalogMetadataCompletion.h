@@ -1,5 +1,6 @@
 #pragma once
 
+#include "crawler/application/model/AlbumSourceMetadata.h"
 #include "crawler/application/model/MetadataWriteBatch.h"
 #include "crawler/application/model/ProviderResponse.h"
 #include "crawler/application/ports/persistence/MusicCatalogQueryRepository.h"
@@ -37,7 +38,7 @@ public:
     // 总数未知或显式 refresh 时获取整份歌手资料，随当前目录批次原子写入。
     application::result::ServiceResult<application::model::SingerSourceProfile> singerContext(std::uint64_t singer_id, std::optional<int> songs, std::optional<int> albums, bool refresh = false);
 
-    // 补齐本批所涉及专辑，并只合并当前已选歌曲；不扩展到详情里的其他曲目或推荐专辑。
+    // 复用目标专辑详情与曲目，缺页按声明总数补齐；关联实体随批次写入，不追踪推荐目录。
     application::result::ServiceResult<application::model::MetadataWriteBatch> completeAlbums(application::model::MetadataWriteBatch batch);
 
 private:
@@ -51,7 +52,9 @@ private:
     };
 
     // 合并同一实体的在途请求；refresh 淘汰已完成缓存，失败允许正常重试。
-    BatchResult response(const std::string &key, const std::function<std::optional<application::model::ProviderResponse>()> &fetch, bool refresh = false);
+    BatchResult response(const std::string &key, const std::function<std::optional<application::model::ProviderResponse>()> &fetch, bool refresh = false, const application::model::AlbumSourceMetadata *album = nullptr);
+    // 曲目缺页与详情共用同一在途请求；部分失败保留数据但不缓存，允许后续重试。
+    bool prepareAlbumResponse(Batch &batch, const application::model::AlbumSourceMetadata &album, std::size_t &bytes);
     // 数据库已完整时，仅重用尚在缓存的响应，不为缺失单字段重复获取详情。
     std::optional<BatchResult> cached(const std::string &key);
     // 不匹配实体的响应不能成为后续重试的缓存。

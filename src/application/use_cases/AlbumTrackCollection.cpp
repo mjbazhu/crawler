@@ -19,7 +19,7 @@ std::string songIdentity(const application::model::SongSourceMetadata &song)
 
 } // namespace
 
-std::string collectRemainingAlbumTracks(const application::model::AlbumSourceMetadata &album, application::model::MetadataWriteBatch &batch, application::ports::AlbumDetailProvider &provider, ParserDispatch &parser)
+std::string collectRemainingAlbumTracks(const application::model::AlbumSourceMetadata &album, application::model::MetadataWriteBatch &batch, application::ports::AlbumDetailProvider &provider, ParserDispatch &parser, std::size_t *response_bytes)
 {
     const auto expected = declaredAlbumSongCount(album.total_count);
     const auto initial = albumSongSyncResult(album, batch.songs);
@@ -35,6 +35,7 @@ std::string collectRemainingAlbumTracks(const application::model::AlbumSourceMet
     for (int number = first_page; seen.size() < static_cast<std::size_t>(*expected) && number <= kMaxPages; ++number) {
         auto response = provider.fetchAlbumSongPage(page_album_id, number, kPageSize);
         if (!response || response->status_code < 200 || response->status_code >= 300) return "album song page " + std::to_string(number) + " fetch failed";
+        if (response_bytes) *response_bytes += response->body.size();
         auto page = parser.parseAlbumSongPage(std::move(response->body));
         if (!page.source_song_total || *page.source_song_total != *expected) return "album song page total missing or changed";
         if (page.returned_count > kPageSize) return "album song page exceeds requested size";
