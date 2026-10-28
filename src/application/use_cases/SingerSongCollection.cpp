@@ -29,13 +29,14 @@ application::model::SingerCollectionResult SingerCatalogWorkflow::crawlSingerSon
     }
 
     const int normalized_limit = normalizeSingerIdsWorkflowLimit(limit);
-    const int window = workflowPageWindow(max_page_concurrency);
+    const auto page_size = singer_catalog_provider_->singerSongPageSize();
     std::size_t stored_count = 0;
     bool stop_paging = false;
     bool fetch_failed = false;
     bool save_failed = false;
 
-    for (int first_page = 1; first_page <= kWorkflowMaxPages && !stop_paging && !reachedWorkflowLimit(stored_count, normalized_limit); first_page += window) {
+    for (int first_page = 1; first_page <= kWorkflowMaxPages && !stop_paging && !reachedWorkflowLimit(stored_count, normalized_limit);) {
+        const int window = singerPageWindow(max_page_concurrency, stored_count, normalized_limit, source_song_total, page_size);
         const int last_page = (std::min)(kWorkflowMaxPages, first_page + window - 1);
         auto pages = collectOrderedPageWindow<SingerSongPageResult>(
             page_runner_,
@@ -102,6 +103,10 @@ application::model::SingerCollectionResult SingerCatalogWorkflow::crawlSingerSon
         if (should_stop) {
             stop_paging = true;
         }
+        if (last_page == kWorkflowMaxPages && !stop_paging && !reachedWorkflowLimit(stored_count, normalized_limit) && completion_error.empty()) {
+            completion_error = "singer song pagination limit reached";
+        }
+        first_page = last_page + 1;
     }
 
     application::model::SingerCollectionResult result;

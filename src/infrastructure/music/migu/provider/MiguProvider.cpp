@@ -1,4 +1,5 @@
 #include "crawler/infrastructure/music/migu/provider/MiguProvider.h"
+#include "crawler/infrastructure/music/migu/MiguPageSizes.h"
 
 #include "crawler/infrastructure/music/migu/provider/MiguRequestFactory.h"
 #include "crawler/infrastructure/music/migu/provider/MiguUrlResolver.h"
@@ -57,6 +58,16 @@ MiguProvider::MiguProvider(
     pacmtoken_store_(std::move(pacmtoken_store))
 {
     headers_ = MiguRequestFactory::defaultHeaders();
+}
+
+std::size_t MiguProvider::singerSongPageSize() const
+{
+    return kSingerSongPageSize;
+}
+
+std::size_t MiguProvider::singerAlbumPageSize() const
+{
+    return kSingerAlbumPageSize;
 }
 
 std::optional<MiguProvider::Response> MiguProvider::fetchSongSearchPage(std::string keyword, int page, int rows)

@@ -3,6 +3,7 @@
 #include "crawler/application/model/ProviderResponse.h"
 
 #include <cstdint>
+#include <cstddef>
 #include <optional>
 #include <string>
 
@@ -14,6 +15,18 @@ public:
     using Response = application::model::ProviderResponse;
 
     virtual ~SingerCatalogProvider() = default;
+
+    // 歌曲每页容量提示；0 表示未知，只用于并发调度，不作为目录结束依据。
+    virtual std::size_t singerSongPageSize() const
+    {
+        return 0;
+    }
+
+    // 专辑每页容量提示；0 表示未知，具体平台独立定义。
+    virtual std::size_t singerAlbumPageSize() const
+    {
+        return 0;
+    }
 
     // 获取歌手歌曲单页原始响应，调用方负责解析分页结束条件。
     virtual std::optional<Response> fetchSingerSongsPage(std::uint64_t singer_id, int page) = 0;

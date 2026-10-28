@@ -98,11 +98,24 @@ inline bool hasSingerSourceProfileCounts(const application::model::SingerSourceP
     return profile.source_song_total || profile.source_album_total;
 }
 
-// 已知声明总数尚未满足时，非空短页不能证明目录结束；空页及既有页数上限仍终止采集。
+// 总数和容量只收缩当前窗口；短页后按实际处理数重新计算，不能硬截整个目录的页数。
+inline int singerPageWindow(int max_page_concurrency, std::size_t collected, int limit, std::optional<int> total, std::size_t page_size)
+{
+    const int window = (std::min)(kWorkflowMaxPages, workflowPageWindow(max_page_concurrency));
+    if (!total || *total <= 0 || page_size == 0 || collected > static_cast<std::size_t>(*total)) return window;
+    std::size_t target = static_cast<std::size_t>(*total);
+    if (limit > 0) target = (std::min)(target, static_cast<std::size_t>(limit));
+    const auto remaining = target > collected ? target - collected : 0;
+    // 满页达到声明总数后仍允许一页探测，兼容总数滞后或尾页恰好填满。
+    const auto pages = remaining == 0 ? 1 : 1 + (remaining - 1) / page_size;
+    return static_cast<int>((std::min)(static_cast<std::size_t>(window), pages));
+}
+
+// 总数未满足或已被实际数量超过时，非空短页不能证明结束；真实空页与页数保护仍有效。
 inline bool shouldStopSingerPage(bool suggested_stop, std::size_t page_count, std::size_t collected, std::optional<int> declared_total)
 {
     if (page_count == 0) return true;
-    if (declared_total && *declared_total > 0 && collected < static_cast<std::size_t>(*declared_total)) return false;
+    if (declared_total && *declared_total > 0 && collected != static_cast<std::size_t>(*declared_total)) return false;
     return suggested_stop;
 }
 

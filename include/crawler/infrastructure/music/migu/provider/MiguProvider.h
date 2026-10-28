@@ -5,6 +5,7 @@
 #include "crawler/infrastructure/http/client/HttpClient.h"
 
 #include <cstdint>
+#include <cstddef>
 #include <memory>
 #include <optional>
 #include <string>
@@ -24,6 +25,12 @@ public:
         std::shared_ptr<application::ports::MiguPacmtokenStore> pacmtoken_store
     );
     ~MiguProvider() override = default;
+
+    // 返回平台既有分页容量，允许编排减少末尾预取。
+    std::size_t singerSongPageSize() const override;
+
+    // 歌手专辑分页容量与歌曲分页独立。
+    std::size_t singerAlbumPageSize() const override;
 
     // 获取歌曲搜索原始响应。
     std::optional<Response> fetchSongSearchPage(std::string keyword, int page, int rows) override;

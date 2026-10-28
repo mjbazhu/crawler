@@ -1,5 +1,6 @@
 #include "crawler/application/use_cases/SingerCatalogWorkflow.h"
 #include "crawler/infrastructure/music/migu/parser/MiguParser.h"
+#include "crawler/infrastructure/music/migu/provider/MiguProvider.h"
 #include "mocks/MockMusicProvider.h"
 
 #include <nlohmann/json.hpp>
@@ -32,6 +33,20 @@ public:
     std::vector<int> song_requests;    // 实际请求的歌曲页
     std::vector<int> album_requests;   // 实际请求的专辑页
     int failed_page = 0;               // 需要返回 HTTP 503 的页
+    std::size_t song_page_size = 50;   // 显式平台分页提示；设为 0 验证未知容量回退
+    std::size_t album_page_size = 10;  // 歌手专辑分页独立提示
+
+    // 与当前 Migu 请求契约一致，允许测试独立关闭容量提示。
+    std::size_t singerSongPageSize() const override
+    {
+        return song_page_size;
+    }
+
+    // 专辑容量不能借用歌曲容量。
+    std::size_t singerAlbumPageSize() const override
+    {
+        return album_page_size;
+    }
 
     // 缺失 fixture 返回明确空页，不能把不存在的分页当成网络错误。
     std::optional<Response> fetchSingerSongsPage(std::uint64_t, int page) override
@@ -91,7 +106,7 @@ std::string page(bool songs, int number, int count)
     for (int index = 0; index < count; ++index) {
         const auto id = std::to_string(number * 100 + index);
         if (songs)
-            entries.push_back({{"songName", "分页歌曲" + id}, {"contentId", id}, {"songId", id}});
+            entries.push_back({{"songItem", {{"songName", "分页歌曲" + id}, {"contentId", id}, {"songId", id}}}});
         else
             entries.push_back({{"view", "ZJ-Album-Item"}, {"resId", id}, {"txt", "分页专辑" + id}, {"resType", "0"}});
     }
@@ -124,10 +139,22 @@ void verifyShortPages()
         Fixture songs;
         const auto result = songs.workflow->crawlSingerSongsAndSaveResult(42, 0, window, 124, 21);
         require(result.success && !result.partial && result.written_count == 124 && songs.writer->songs == 124, "intermediate 49-song page truncated known catalog");
-        require(songs.provider->song_requests.back() == (window == 1 ? 3 : 4), "short-page collection made unnecessary page windows");
+        require(songs.provider->song_requests == std::vector<int> {1, 2, 3}, "short-page collection requested extra pages or skipped a contiguous page");
         Fixture albums;
         const auto album_result = albums.workflow->crawlSingerAlbumsAndSaveResult(42, 0, window, 124, 21);
         require(album_result.success && album_result.written_count == 21 && albums.writer->albums == 21, "intermediate 9-album page truncated known catalog");
+        require(albums.provider->album_requests == std::vector<int> {1, 2, 3}, "album pages used the song capacity or an oversized tail window");
+        std::cout << "REQUEST_COUNTS window=" << window << " song_pages=" << songs.provider->song_requests.size() << " album_pages=" << albums.provider->album_requests.size() << " songs=" << result.written_count << " albums=" << album_result.written_count << '\n';
+        if (window == 4) {
+            Fixture original_songs;
+            original_songs.provider->song_page_size = 0;
+            const auto before_songs = original_songs.workflow->crawlSingerSongsAndSaveResult(42, 0, 4, 124, 21);
+            Fixture original_albums;
+            original_albums.provider->album_page_size = 0;
+            const auto before_albums = original_albums.workflow->crawlSingerAlbumsAndSaveResult(42, 0, 4, 124, 21);
+            require(before_songs.success && before_albums.success && original_songs.writer->unique_songs == songs.writer->unique_songs && original_albums.writer->unique_albums == albums.writer->unique_albums, "tail-window optimization changed persisted source identities");
+            std::cout << "REQUEST_COMPARISON song_pages=" << original_songs.provider->song_requests.size() << "->" << songs.provider->song_requests.size() << " album_pages=" << original_albums.provider->album_requests.size() << "->" << albums.provider->album_requests.size() << " identical_source_sets=true\n";
+        }
     }
 }
 
@@ -179,6 +206,65 @@ void verifyFailureAndRetry()
     require(saved_albums.success && saved_albums.written_count == 21 && rejected_albums.writer->unique_albums.size() == 21, "album retry after rejected write lost its catalog");
 }
 
+// 动态窗口必须在短中间页后连续推进，不能按总数/容量推导一个绝对末页。
+void verifyAdaptiveWindows()
+{
+    c::infrastructure::music::migu::provider::MiguProvider actual(nullptr);
+    require(actual.singerSongPageSize() == 50 && actual.singerAlbumPageSize() == 10, "production provider page-size hints differ from its parser contract");
+    Fixture songs;
+    songs.provider->songs = {{1, page(true, 1, 50)}, {2, page(true, 2, 1)}, {3, page(true, 3, 1)}, {4, page(true, 4, 48)}};
+    const auto result = songs.workflow->crawlSingerSongsAndSaveResult(42, 0, 4, 100);
+    require(result.success && result.written_count == 100 && songs.writer->unique_songs.size() == 100 && songs.provider->song_requests == std::vector<int> {1, 2, 3, 4}, "shrinking song window skipped later short-page data");
+    Fixture albums;
+    albums.provider->albums = {{1, page(false, 1, 10)}, {2, page(false, 2, 1)}, {3, page(false, 3, 1)}, {4, page(false, 4, 8)}};
+    const auto album_result = albums.workflow->crawlSingerAlbumsAndSaveResult(42, 0, 4, {}, 20);
+    require(album_result.success && album_result.written_count == 20 && albums.writer->unique_albums.size() == 20 && albums.provider->album_requests == std::vector<int> {1, 2, 3, 4}, "shrinking album window discarded required pages");
+
+    Fixture exact;
+    exact.provider->songs = {{1, page(true, 1, 50)}, {2, page(true, 2, 50)}};
+    const auto exact_result = exact.workflow->crawlSingerSongsAndSaveResult(42, 0, 4, 100);
+    require(exact_result.success && exact_result.written_count == 100 && exact.provider->song_requests == std::vector<int> {1, 2, 3}, "full tail lost its single confirmation request or fetched an oversized window");
+    Fixture understated;
+    understated.provider->songs = {{1, page(true, 1, 50)}, {2, page(true, 2, 50)}, {3, page(true, 3, 50)}, {4, page(true, 4, 1)}};
+    const auto extra = understated.workflow->crawlSingerSongsAndSaveResult(42, 0, 4, 100);
+    require(extra.success && extra.written_count == 151 && understated.provider->song_requests == std::vector<int> {1, 2, 3, 4, 5, 6, 7}, "stale total did not fall back to empty-page confirmation");
+    Fixture stale_short;
+    stale_short.provider->songs = {{1, page(true, 1, 50)}, {2, page(true, 2, 1)}, {3, page(true, 3, 49)}};
+    const auto stale_short_result = stale_short.workflow->crawlSingerSongsAndSaveResult(42, 0, 4, 50);
+    require(stale_short_result.success && stale_short_result.written_count == 100 && stale_short.writer->unique_songs.size() == 100 && stale_short.provider->song_requests.back() >= 4, "outdated total and a short middle page hid later songs");
+    Fixture limited;
+    const auto limit_result = limited.workflow->crawlSingerSongsAndSaveResult(42, 75, 4, 124);
+    require(limit_result.partial && limit_result.written_count == 75 && limited.provider->song_requests == std::vector<int> {1, 2}, "known selection limit fetched unused pages");
+
+    Fixture unknown_total;
+    const auto unknown = unknown_total.workflow->crawlSingerSongsAndSaveResult(42, 0, 4);
+    require(unknown.written_count == 124 && unknown_total.provider->song_requests == std::vector<int> {1, 2, 3, 4}, "unknown total was guessed from a short page");
+    Fixture unknown_capacity;
+    unknown_capacity.provider->song_page_size = 0;
+    const auto capacity_result = unknown_capacity.workflow->crawlSingerSongsAndSaveResult(42, 0, 4, 124);
+    require(capacity_result.success && capacity_result.written_count == 124 && unknown_capacity.provider->song_requests == std::vector<int> {1, 2, 3, 4}, "unknown provider page size was silently guessed");
+    Fixture unknown_album_total;
+    const auto unknown_albums = unknown_album_total.workflow->crawlSingerAlbumsAndSaveResult(42, 0, 4);
+    require(unknown_albums.written_count == 21 && unknown_album_total.provider->album_requests == std::vector<int> {1, 2, 3, 4}, "unknown album total changed its paging behavior");
+    Fixture unknown_album_capacity;
+    unknown_album_capacity.provider->album_page_size = 0;
+    const auto unknown_album_size = unknown_album_capacity.workflow->crawlSingerAlbumsAndSaveResult(42, 0, 4, {}, 21);
+    require(unknown_album_size.success && unknown_album_size.written_count == 21 && unknown_album_capacity.provider->album_requests == std::vector<int> {1, 2, 3, 4}, "unknown album capacity was guessed");
+
+    Fixture bounded;
+    bounded.provider->songs.clear();
+    for (int number = 1; number <= 50; ++number) bounded.provider->songs.emplace(number, page(true, number, 50));
+    const auto capped = bounded.workflow->crawlSingerSongsAndSaveResult(42, 0, 4, 2501);
+    require(capped.partial && !capped.success && capped.written_count == 2500 && bounded.provider->song_requests.size() == 50 && bounded.provider->song_requests.back() == 50, "adaptive windows bypassed the global pagination guard");
+    const auto stale_capped = bounded.workflow->crawlSingerSongsAndSaveResult(42, 0, 4, 100);
+    require(stale_capped.partial && !stale_capped.success && stale_capped.written_count == 2500 && stale_capped.error == "singer song pagination limit reached", "page cap falsely completed a catalog with an outdated total");
+    Fixture capped_albums;
+    capped_albums.provider->albums.clear();
+    for (int number = 1; number <= 50; ++number) capped_albums.provider->albums.emplace(number, page(false, number, 10));
+    const auto capped_album_result = capped_albums.workflow->crawlSingerAlbumsAndSaveResult(42, 0, 4, {}, 10);
+    require(capped_album_result.partial && !capped_album_result.success && capped_album_result.written_count == 500 && capped_album_result.error == "singer album pagination limit reached", "album page cap became a false complete result");
+}
+
 } // namespace
 
 int main()
@@ -187,6 +273,7 @@ int main()
         verifyShortPages();
         verifyIncompleteAndLimit();
         verifyFailureAndRetry();
+        verifyAdaptiveWindows();
         std::cout << "PASS: short middle pages, empty termination, known incomplete counts, explicit limits and HTTP failures\n";
         return 0;
     } catch (const std::exception &error) {

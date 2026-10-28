@@ -29,7 +29,7 @@ application::model::SingerCollectionResult SingerCatalogWorkflow::crawlSingerAlb
     }
 
     const int normalized_limit = normalizeSingerIdsWorkflowLimit(limit);
-    const int window = workflowPageWindow(max_page_concurrency);
+    const auto page_size = singer_catalog_provider_->singerAlbumPageSize();
     const std::string source_artist_id = std::to_string(singer_id);
     application::model::MetadataWriteBatch batch;
     auto &collected = batch.albums;
@@ -37,7 +37,8 @@ application::model::SingerCollectionResult SingerCatalogWorkflow::crawlSingerAlb
     bool stop_paging = false;
     bool fetch_failed = false;
 
-    for (int first_page = 1; first_page <= kWorkflowMaxPages && !stop_paging && !reachedWorkflowLimit(collected.size(), normalized_limit); first_page += window) {
+    for (int first_page = 1; first_page <= kWorkflowMaxPages && !stop_paging && !reachedWorkflowLimit(collected.size(), normalized_limit);) {
+        const int window = singerPageWindow(max_page_concurrency, collected.size(), normalized_limit, source_album_total, page_size);
         const int last_page = (std::min)(kWorkflowMaxPages, first_page + window - 1);
         auto pages = collectOrderedPageWindow<SingerAlbumPageResult>(
             page_runner_,
@@ -98,6 +99,10 @@ application::model::SingerCollectionResult SingerCatalogWorkflow::crawlSingerAlb
         if (should_stop) {
             stop_paging = true;
         }
+        if (last_page == kWorkflowMaxPages && !stop_paging && !reachedWorkflowLimit(collected.size(), normalized_limit) && completion_error.empty()) {
+            completion_error = "singer album pagination limit reached";
+        }
+        first_page = last_page + 1;
     }
 
     application::model::SingerCollectionResult result;
