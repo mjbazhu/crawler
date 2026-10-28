@@ -35,7 +35,7 @@ application::model::SingerCollectionResult SingerCatalogWorkflow::crawlSingerInd
     }
 
     auto response = singer_catalog_provider_->fetchSingerIndexPage(tab);
-    if (!response) {
+    if (!response || response->status_code < 200 || response->status_code >= 300) {
         return {false, false, 0, "failed to fetch singer index page"};
     }
 
