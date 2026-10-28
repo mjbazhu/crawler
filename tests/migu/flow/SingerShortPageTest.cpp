@@ -7,6 +7,7 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -64,12 +65,21 @@ class Writer final : public c::application::ports::MetadataBatchWriter {
 public:
     std::size_t songs = 0;  // 实际交给 writer 的歌曲数
     std::size_t albums = 0; // 实际交给 writer 的专辑数
+    bool fail_next = false; // 在提交前返回可恢复的写入失败
+    std::set<std::string> unique_songs;  // 已成功提交的歌曲来源集合
+    std::set<std::string> unique_albums; // 已成功提交的专辑来源集合
 
     // 入库失败路径已有独立事务测试，本测试专注分页完整度与请求上限。
     c::application::result::ServiceResult<model::MetadataWriteResult> saveBatch(const model::MetadataWriteBatch &batch) override
     {
+        if (fail_next) {
+            fail_next = false;
+            return c::application::result::ServiceResult<model::MetadataWriteResult>::failure(c::application::result::ServiceErrorType::InternalError, "injected metadata write failure");
+        }
         songs += batch.songs.size();
         albums += batch.albums.size();
+        for (const auto &song : batch.songs) unique_songs.insert(song.source_content_id);
+        for (const auto &album : batch.albums) unique_albums.insert(album.source_album_id);
         return c::application::result::ServiceResult<model::MetadataWriteResult>::success({});
     }
 };
@@ -136,6 +146,39 @@ void verifyIncompleteAndLimit()
     require(!failed_result.success && failed_result.partial && failed_result.error == "failed to fetch singer song page", "HTTP failure was mistaken for a valid short page");
 }
 
+// 中间页和写入失败后重新驱动同一 workflow，失败响应不能成为后续重试的完成依据。
+void verifyFailureAndRetry()
+{
+    Fixture songs;
+    songs.provider->failed_page = 2;
+    const auto partial = songs.workflow->crawlSingerSongsAndSaveResult(42, 0, 1, 124, 21);
+    require(!partial.success && partial.partial && partial.written_count == 50 && songs.writer->unique_songs.size() == 50, "failed song page did not preserve the committed prefix");
+    songs.provider->failed_page = 0;
+    const auto recovered = songs.workflow->crawlSingerSongsAndSaveResult(42, 0, 1, 124, 21);
+    require(recovered.success && !recovered.partial && recovered.written_count == 124 && songs.writer->unique_songs.size() == 124, "song-page retry did not replay all expected source identities");
+
+    Fixture albums;
+    albums.provider->failed_page = 2;
+    const auto partial_albums = albums.workflow->crawlSingerAlbumsAndSaveResult(42, 0, 1, 124, 21);
+    require(!partial_albums.success && partial_albums.partial && partial_albums.written_count == 10 && albums.writer->unique_albums.size() == 10, "failed album page lost its available prefix or became complete");
+    albums.provider->failed_page = 0;
+    const auto recovered_albums = albums.workflow->crawlSingerAlbumsAndSaveResult(42, 0, 1, 124, 21);
+    require(recovered_albums.success && recovered_albums.written_count == 21 && albums.writer->unique_albums.size() == 21, "album-page retry did not replay the complete catalog");
+
+    Fixture rejected;
+    rejected.writer->fail_next = true;
+    const auto failed = rejected.workflow->crawlSingerSongsAndSaveResult(42, 0, 1, 124, 21);
+    require(!failed.success && failed.written_count == 0 && rejected.writer->unique_songs.empty(), "failed write was counted as persisted metadata");
+    const auto saved = rejected.workflow->crawlSingerSongsAndSaveResult(42, 0, 1, 124, 21);
+    require(saved.success && saved.written_count == 124 && rejected.writer->unique_songs.size() == 124, "retry after rejected write lost catalog data");
+    Fixture rejected_albums;
+    rejected_albums.writer->fail_next = true;
+    const auto failed_albums = rejected_albums.workflow->crawlSingerAlbumsAndSaveResult(42, 0, 1, 124, 21);
+    require(!failed_albums.success && failed_albums.written_count == 0 && rejected_albums.writer->unique_albums.empty(), "rejected album batch was counted as committed");
+    const auto saved_albums = rejected_albums.workflow->crawlSingerAlbumsAndSaveResult(42, 0, 1, 124, 21);
+    require(saved_albums.success && saved_albums.written_count == 21 && rejected_albums.writer->unique_albums.size() == 21, "album retry after rejected write lost its catalog");
+}
+
 } // namespace
 
 int main()
@@ -143,6 +186,7 @@ int main()
     try {
         verifyShortPages();
         verifyIncompleteAndLimit();
+        verifyFailureAndRetry();
         std::cout << "PASS: short middle pages, empty termination, known incomplete counts, explicit limits and HTTP failures\n";
         return 0;
     } catch (const std::exception &error) {

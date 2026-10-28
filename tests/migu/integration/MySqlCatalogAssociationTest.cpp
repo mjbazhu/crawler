@@ -343,7 +343,30 @@ int main()
         require(scalar(pool, "SELECT id FROM song_source_refs WHERE source_content_id='" + prefix + "0'") == first_id, "real album backfill replaced an existing song identity");
         require(scalar(pool, "SELECT COUNT(*) FROM song_source_refs WHERE source_content_id='" + prefix + "backfill-new-content'") == 1, "real album backfill duplicated its new track");
         require(scalar(pool, "SELECT COUNT(*) FROM album_song_refs r JOIN album_source_refs a ON a.id=r.album_source_ref_id WHERE a.source='migu' AND a.source_album_id='1'") == 2, "backfill widened or removed carried shared archive relations");
-        std::cout << "PASS: real album completion, shared archive response scope, identity, relations, deduplication and response reuse\n";
+        // 新实体已经写入后故意让歌手端点缺失，必须连同已有字段更新一起回滚。
+        auto changed_song = tracks.front();
+        changed_song["songPinyin"] = "rollback-probe";
+        auto rollback_song = changed_song;
+        rollback_song["songId"] = prefix + "rollback-song";
+        rollback_song["contentId"] = prefix + "rollback-content";
+        rollback_song["songName"] = prefix + "回滚歌曲";
+        rollback_song["albumId"] = prefix + "rollback-album";
+        rollback_song["album"] = prefix + "回滚专辑";
+        rollback_song["singerList"] = Json::array({{{"id", prefix + "missing-artist"}}});
+        const auto broken_batch = dispatch->parseSources(response(Json::array({changed_song, rollback_song})).body);
+        require(!saver->saveSources(broken_batch, 0), "relation failure did not reject the metadata transaction");
+        require(scalar(pool, "SELECT COUNT(*) FROM song_source_refs WHERE source_content_id='" + prefix + "rollback-content'") == 0, "failed relation left a partial song source");
+        require(scalar(pool, "SELECT COUNT(*) FROM songs WHERE normalized_title='" + prefix + "回滚歌曲'") == 0, "failed relation left a partial public song");
+        require(scalar(pool, "SELECT COUNT(*) FROM album_source_refs WHERE source_album_id='" + prefix + "rollback-album'") == 0, "failed relation left a partial album source");
+        require(scalar(pool, "SELECT COUNT(*) FROM song_source_refs WHERE id=" + std::to_string(first_id) + " AND source_title_pinyin='gequ0'") == 1, "rolled-back batch changed an existing nonempty field");
+        rollback_song["singerList"][0]["name"] = prefix + "恢复歌手";
+        const auto restored_batch = dispatch->parseSources(response(Json::array({changed_song, rollback_song})).body);
+        require(saver->saveSources(restored_batch, 0) && saver->saveSources(restored_batch, 0), "metadata retry after corrected relation did not succeed");
+        require(scalar(pool, "SELECT COUNT(*) FROM song_source_refs WHERE source_content_id='" + prefix + "rollback-content'") == 1, "retry duplicated the recovered song source");
+        require(scalar(pool, "SELECT COUNT(*) FROM song_artist_refs r JOIN song_source_refs s ON s.id=r.song_source_ref_id JOIN singer_source_refs a ON a.id=r.singer_source_ref_id WHERE s.source_content_id='" + prefix + "rollback-content' AND a.source_singer_id='" + prefix + "missing-artist'") == 1, "recovered artist relation was missing or duplicated");
+        require(scalar(pool, "SELECT COUNT(*) FROM album_song_refs r JOIN song_source_refs s ON s.id=r.song_source_ref_id JOIN album_source_refs a ON a.id=r.album_source_ref_id WHERE s.source_content_id='" + prefix + "rollback-content' AND a.source_album_id='" + prefix + "rollback-album'") == 1, "recovered album relation was missing or duplicated");
+        require(scalar(pool, "SELECT id FROM song_source_refs WHERE source_content_id='" + prefix + "0'") == first_id, "recovery replaced the existing source identity");
+        std::cout << "PASS: catalog identity/relations, metadata rollback, corrected replay and idempotent recovery\n";
         return 0;
     } catch (const std::exception &error) {
         std::cerr << "FAIL: " << error.what() << '\n';
