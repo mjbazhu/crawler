@@ -12,7 +12,6 @@ SELECT
     r.source_country,
     r.source_gender AS gender,
     '' AS avatar_url,
-    r.metadata_status,
     r.songs_sync_status,
     r.songs_synced_at,
     r.songs_sync_count,

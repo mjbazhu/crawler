@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <string_view>
+#include <utility>
 
 namespace orchestrator::modules::crawler::infrastructure::music::migu::parser::detail {
 
@@ -115,6 +117,19 @@ std::string normalizeMiguResourceUrl(std::string resource_url)
         return std::string(kMiguResourcePrefix) + "/" + resource_url;
     }
     return resource_url;
+}
+
+std::string normalizeMiguSingerAvatarUrl(std::string resource_url)
+{
+    auto normalized = normalizeMiguResourceUrl(std::move(resource_url));
+    // 此资源已通过全量实采和图像核验确认为通用人像；仅匹配该资源路径。
+    constexpr std::string_view default_avatar_path = "/prod/file-service/file-down/bcb5ddaf77828caee4eddc172edaa105/33f90367b2251b76a025d9dadf2c6467/31e311fd0affc0ae0809011e265f79a5";
+    std::string_view url = normalized;
+    url = url.substr(0, url.find_first_of("?#"));
+    const auto scheme = url.find("://");
+    const auto path = scheme == std::string_view::npos ? 0 : url.find('/', scheme + 3);
+    if (path != std::string_view::npos && url.substr(path) == default_avatar_path) return {};
+    return normalized;
 }
 
 bool hasValidSongItem(const nlohmann::json &item)

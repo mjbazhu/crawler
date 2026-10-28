@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | `songs` | 公共歌曲标题、标准化标题、公共标识 | `normalized_title` |
 | `song_source_refs` | 平台歌曲身份、内容 ID、资源类型、歌曲拼音、时长、版权 ID | 来源业务键，关联 `songs` |
-| `singers` | 公共歌手名称、标准化名称、性别 | `normalized_name` |
+| `singers` | 公共歌手名称、标准化名称 | `normalized_name` |
 | `singer_source_refs` | 平台歌手身份、拼音、地区、声明总数及采集状态 | 平台与歌手 ID，关联 `singers` |
 | `singer_index_memberships` | 分类 tab、标签、顺序和指标 | 歌手来源主键与 tab |
 | `albums` | 专辑标题、标准化标题、发行日期、稳定身份 hash | `SHA256(source + '|' + source_album_id)` |
@@ -62,6 +62,8 @@
 迁移先保存旧拼音和关系端点、建立专辑歌手关系，再删除旧列。已有本地文件路径、云端路径和完成状态保留，不清空音乐表或资源表。DDL 阶段具备存在性判断，可以在中断后重试；执行整个文件必须使用同一连接。
 
 已有大库首次升级时，可设置 `CRAWLER_MYSQL_STARTUP_TIMEOUT_MS=600000`，为数据迁移和索引创建预留时间。后续启动根据 migration 记录跳过已完成版本。
+
+`V2026102801__singer_profile_field_cleanup.sql` 删除公共名称池的 `gender/status`、对应无效状态索引和歌手来源的 `metadata_status`；来源类型、地区及目录生命周期原样保留，重建来源查询视图。独立资料刷新复用事务 writer，只更新响应已有的资料与声明总数。
 
 各表 `create.sql` 是当前结构快照，用于查阅与独立建表；正式升级仍走 migration。`transactions/` 放事务控制，`schema/` 放跨表 schema/完整性检查，`tests/` 仅用于校验。
 

@@ -435,6 +435,12 @@ void testCatalogRoutes()
 {
     auto controller = makeController();
 
+    // 错误参数必须在选取来源前拒绝，不能退回默认全库筛选。
+    for (const auto *body : {"[]", R"({"source":"qq"})", R"({"force":"true"})", R"({"limit":-1})", R"({"limit":501})", R"({"limit":"all"})", R"({"source_singer_ids":["7"]})", R"({"source_ids":[]})", R"({"source_ids":"7"})", R"({"source_ids":[7]})", R"({"source_ids":["0"]})", R"({"source_ids":["007"]})", R"({"source_ids":["18446744073709551616"]})", R"({"filter":{"gender":4}})", R"({"filter":[]})"}) {
+        require(controller->handleRefreshMiguSingerProfilesFromDb(request("POST", "/api/migu/singers/profile/refresh-from-db", {}, body)).status_code == 400, "invalid profile refresh input was accepted");
+    }
+    require(controller->handleRefreshMiguSingerProfilesFromDb(request("POST", "/api/migu/singers/profile/refresh-from-db", {}, "{}")).status_code == 503, "unconfigured profile refresh should return 503");
+
     const auto singer_index_zero_limit = controller->handleStartMiguSingerIndexCrawl(request("POST", "/api/migu/singers/crawl", {}, R"({"tabs":["huayu-nan"],"limit":0})"));
     require(singer_index_zero_limit.status_code == 202, "singer index crawl should accept limit 0");
     require(parseBody(singer_index_zero_limit)["limit"].get<int>() == 0, "singer index crawl should preserve limit 0");

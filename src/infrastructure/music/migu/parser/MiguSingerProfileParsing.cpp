@@ -53,7 +53,7 @@ void collectSingerProfileIdentity(const nlohmann::json &item, application::model
         singer.name = name;
         singer.normalized_name = name;
         singer.source_name_pinyin = firstNonEmpty({JsonUtils::getString(item, "nameSpelling"), JsonUtils::getString(item, "namePinyin")});
-        singer.avatar_url = normalizeMiguResourceUrl(JsonUtils::getString(item, "img"));
+        singer.avatar_url = normalizeMiguSingerAvatarUrl(JsonUtils::getString(item, "img"));
         profile.metadata = std::move(singer);
     }
 }
@@ -123,6 +123,8 @@ application::model::SingerSourceProfile parseSingerSourceProfileRaw(const std::v
 application::model::SingerSourceProfile parseSingerSourceProfileObject(const nlohmann::json &root, bool complete_profile)
 {
     application::model::SingerSourceProfile profile;
+    // 错误业务码即使携带可解析的资料，也不能成为成功刷新依据。
+    if (root.contains("code") && JsonUtils::getString(root, "code") != "000000") return profile;
     SingerProfileParseState state;
     collectSingerProfile(root, profile, state);
     if ((complete_profile || profile.metadata) && state.saw_tab_scroll) {

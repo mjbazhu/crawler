@@ -310,9 +310,11 @@ void assertCorsOptions()
     CapturingRouteSink sink;
     routing::CrawlerRoutes routes(makeController());
     routes.registerRoutes(sink);
-    for (const auto *path : {"/api/migu/singer-songs/crawl", "/api/migu/singer-albums/crawl", "/api/migu/singers/profile/refresh-from-db", "/api/migu/album-details/crawl", "/api/migu/album-songs/crawl"}) {
+    for (const auto *path : {"/api/migu/singer-songs/crawl", "/api/migu/singer-albums/crawl", "/api/migu/album-details/crawl", "/api/migu/album-songs/crawl"}) {
         require(!sink.contains("POST", path) && !sink.contains("OPTIONS", path), std::string("removed route still registered: ") + path);
     }
+    require(sink.contains("POST", "/api/migu/singers/profile/refresh-from-db"), "profile refresh POST route missing");
+    require(sink.invoke("OPTIONS", "/api/migu/singers/profile/refresh-from-db").status_code == 204, "profile refresh CORS missing");
     const auto response = sink.invoke("OPTIONS", "/api/migu/backfill/{1}/queue");
     require(response.status_code == 204, "OPTIONS route should return 204");
     const auto it = response.headers.find("Access-Control-Allow-Origin");
@@ -394,10 +396,11 @@ int main()
 
         http_client::AsioHttpClient client;
         const std::string base_url = "http://127.0.0.1:" + std::to_string(kPort);
-        for (const auto *path : {"/api/migu/singer-songs/crawl", "/api/migu/singer-albums/crawl", "/api/migu/singers/profile/refresh-from-db", "/api/migu/album-details/crawl", "/api/migu/album-songs/crawl"}) {
+        for (const auto *path : {"/api/migu/singer-songs/crawl", "/api/migu/singer-albums/crawl", "/api/migu/album-details/crawl", "/api/migu/album-songs/crawl"}) {
             requireStatus(client.post(base_url + path, "{}", {"Content-Type: application/json"}), 404, std::string("POST removed route ") + path);
         }
 
+        requireStatus(client.post(base_url + "/api/migu/singers/profile/refresh-from-db", R"({"force":"yes"})", {"Content-Type: application/json"}), 400, "POST invalid singer profile refresh");
         auto singer_songs = client.get(base_url + "/api/migu/singers/112/songs?page=1&page_size=20");
         requireStatus(singer_songs, 200, "GET singer songs route");
         require(bodyString(*singer_songs).find("\"items\"") != std::string::npos, "singer songs response should be a page: " + responseDescription(*singer_songs));

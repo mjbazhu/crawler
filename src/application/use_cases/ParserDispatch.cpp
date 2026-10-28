@@ -45,6 +45,15 @@ application::model::MetadataWriteBatch ParserDispatch::parseSources(std::vector<
     return batch;
 }
 
+application::result::ServiceResult<application::model::MetadataWriteBatch> ParserDispatch::parseSourcesResult(std::vector<char> body)
+{
+    using Result = application::result::ServiceResult<application::model::MetadataWriteBatch>;
+    if (!batch_parser_) return Result::success(parseSources(std::move(body)));
+    return parse_runner_.run<Result>([parser = batch_parser_, body = std::move(body)] {
+        return parser->parseMetadataResponse(body);
+    }, Result::failure(application::result::ServiceErrorType::ExternalApiError, "metadata parser interrupted"), "parse metadata response");
+}
+
 std::vector<domain::ParseResult> ParserDispatch::parse(std::vector<char> body)
 {
     if (!parse_result_parser_) {

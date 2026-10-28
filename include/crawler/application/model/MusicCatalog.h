@@ -114,7 +114,6 @@ struct MiguSingerCatalogRecord {
     std::string name;                      // 公共歌手名
     std::string normalized_name;           // 标准化歌手名
     int gender = 0;                        // 来源歌手类型，不从公共名称池推断
-    int status = 0;                        // 公共歌手状态
     std::uint64_t source_ref_id = 0;       // singer_source_refs.id
     std::string source = "migu";           // 音乐平台标识
     std::string source_item_key;           // 平台来源唯一键

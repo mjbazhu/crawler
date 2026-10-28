@@ -52,11 +52,12 @@ FROM (
     SELECT 2026102501, _utf8mb4'normalize_music_table_ownership' COLLATE utf8mb4_unicode_ci, _utf8mb4'7852e56e1bffd18dbd6785882018cf39' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102502, _utf8mb4'optimize_normalized_catalog_queries' COLLATE utf8mb4_unicode_ci, _utf8mb4'55b4ebb3fd1a1787ed75a0e4ec8e912b' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102601, _utf8mb4'source_identity_and_album_count_semantics' COLLATE utf8mb4_unicode_ci, _utf8mb4'247abb66a7e3c100b1c6c56ed0d9b5c4' COLLATE utf8mb4_unicode_ci UNION ALL
-    SELECT 2026102602, _utf8mb4'resource_claim_generation' COLLATE utf8mb4_unicode_ci, _utf8mb4'b633fca210d1b102062ef69f292f9c66' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT 2026102602, _utf8mb4'resource_claim_generation' COLLATE utf8mb4_unicode_ci, _utf8mb4'348b0d48b63c5d4b3e114ac16516a16f' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102603, _utf8mb4'lyric_resource_artifacts' COLLATE utf8mb4_unicode_ci, _utf8mb4'8e66529109a6db265864b5563f957e8a' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102701, _utf8mb4'migu_album_material_lookup' COLLATE utf8mb4_unicode_ci, _utf8mb4'b830cb1af262e73ec4669f5f39ae4312' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102702, _utf8mb4'singer_source_gender_ownership' COLLATE utf8mb4_unicode_ci, _utf8mb4'c920c30b5f4fd81c1c9dff0fb7167f00' COLLATE utf8mb4_unicode_ci UNION ALL
-    SELECT 2026102703, _utf8mb4'metadata_cover_remote_urls' COLLATE utf8mb4_unicode_ci, _utf8mb4'75da4ef101026533d80bf7e8830b391f' COLLATE utf8mb4_unicode_ci
+    SELECT 2026102703, _utf8mb4'metadata_cover_remote_urls' COLLATE utf8mb4_unicode_ci, _utf8mb4'75da4ef101026533d80bf7e8830b391f' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT 2026102801, _utf8mb4'singer_profile_field_cleanup' COLLATE utf8mb4_unicode_ci, _utf8mb4'0a9119000b834016660cc8601db77fba' COLLATE utf8mb4_unicode_ci
 ) expected
 LEFT JOIN schema_migrations m ON m.version = expected.version
 UNION ALL
@@ -91,11 +92,12 @@ FROM (
     SELECT 2026102501, _utf8mb4'7852e56e1bffd18dbd6785882018cf39' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102502, _utf8mb4'55b4ebb3fd1a1787ed75a0e4ec8e912b' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102601, _utf8mb4'247abb66a7e3c100b1c6c56ed0d9b5c4' COLLATE utf8mb4_unicode_ci UNION ALL
-    SELECT 2026102602, _utf8mb4'b633fca210d1b102062ef69f292f9c66' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT 2026102602, _utf8mb4'348b0d48b63c5d4b3e114ac16516a16f' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102603, _utf8mb4'8e66529109a6db265864b5563f957e8a' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102701, _utf8mb4'b830cb1af262e73ec4669f5f39ae4312' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102702, _utf8mb4'c920c30b5f4fd81c1c9dff0fb7167f00' COLLATE utf8mb4_unicode_ci UNION ALL
-    SELECT 2026102703, _utf8mb4'75da4ef101026533d80bf7e8830b391f' COLLATE utf8mb4_unicode_ci
+    SELECT 2026102703, _utf8mb4'75da4ef101026533d80bf7e8830b391f' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT 2026102801, _utf8mb4'0a9119000b834016660cc8601db77fba' COLLATE utf8mb4_unicode_ci
 ) expected
 LEFT JOIN schema_migrations m ON m.version = expected.version
 UNION ALL

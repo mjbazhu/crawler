@@ -23,6 +23,8 @@ public:
     // 处理 Migu 歌手分类采集请求，创建后台任务后立即返回任务 ID。
     http::HttpResponse handleStartMiguSingerIndexCrawl(http::HttpRequest req);
 
+    // 从库选择来源并独立刷新整份歌手资料，不抓取目录或下载图片。
+    http::HttpResponse handleRefreshMiguSingerProfilesFromDb(http::HttpRequest req);
 
     // 处理 Migu 从库认领歌手并采集歌曲请求，返回批量任务 ID。
     http::HttpResponse handleStartMiguSingerSongsCrawlFromDb(http::HttpRequest req);

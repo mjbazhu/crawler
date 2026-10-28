@@ -242,8 +242,8 @@ public:
     // 重置指定补池，返回更新数量。
     int resetMiguBackfill(std::string backfill_type, application::model::MiguBackfillTargetQuery query) const;
 
-    // 刷新库内歌手主要信息总数，并在成功后按真实关系数量校准歌曲/专辑同步状态。
-    application::model::MiguBackfillRetryResult refreshMiguSingerProfiles(application::model::MiguBackfillTargetQuery query, bool force, std::string request_params);
+    // 独立刷新库内歌手整份资料，不修改歌曲或专辑目录生命周期。
+    application::result::ServiceResult<application::model::MiguBackfillRetryResult> refreshMiguSingerProfiles(application::model::MiguBackfillTargetQuery query, bool force, std::string request_params);
 
     // 恢复 Migu 元数据和批次中超时停留在 running 的记录。
     application::model::MiguStaleRecoveryResult recoverMiguStale(application::model::MiguStaleRecoveryRequest request) const;
@@ -275,7 +275,8 @@ private:
         std::string request_params,
         BatchTaskManager::TargetHandler handler,
         std::string parent_batch_id = {},
-        bool allow_empty = false // 仅已校验的数据库队列允许零目标正常结束
+        bool allow_empty = false, // 仅已校验的数据库队列允许零目标正常结束
+        int max_retries = 0 // 由具体用例显式启用有限重试
     );
 
     // 按显式或查询结果启动专辑详情补齐批次。
@@ -311,6 +312,7 @@ private:
     std::unique_ptr<BatchTaskManager> batch_task_manager_;                                // 批量任务服务
     std::unique_ptr<CrawlerBatchQueryService> batch_query_service_;                       // 批次查询服务
     std::unique_ptr<MusicCatalogQueryService> catalog_query_service_;                     // 音乐目录查询服务
+    bool singer_profile_refresh_configured_ = false;                                      // 装配时确认资料请求、解析、查询和原子写入均可用
     std::shared_ptr<application::ports::DiagnosticsSink> diagnostics_;                    // 诊断输出 port
 
     // 运行设置由 mutex 保护，允许前端在任务之间调整并发、重试和超时。

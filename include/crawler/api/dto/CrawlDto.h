@@ -4,6 +4,7 @@
 #include "crawler/application/model/CrawlerRuntimeSettings.h"
 #include "crawler/application/model/MiguPacmtoken.h"
 #include "crawler/application/model/SingerSourceSync.h"
+#include "crawler/application/model/MusicCatalog.h"
 
 #include <cstdint>
 #include <optional>
@@ -39,6 +40,16 @@ struct MiguSingerFromDbCrawlRequestDto {
     static std::optional<MiguSingerFromDbCrawlRequestDto> fromRequest(const http::HttpRequest &req);
 
     // 校验 source、状态、筛选条件和 limit。
+    std::optional<std::string> validate() const;
+};
+
+// 独立歌手资料刷新，只选择来源，不改变歌曲或专辑目录状态。
+struct MiguSingerProfileRefreshRequestDto {
+    application::model::MiguBackfillTargetQuery query; // 来源、限量、force 和可选分类筛选
+
+    // 严格读取 JSON 类型，避免错误参数退回全库默认值。
+    static std::optional<MiguSingerProfileRefreshRequestDto> fromRequest(const http::HttpRequest &req);
+    // 约束平台、来源 ID、目标数量和筛选范围。
     std::optional<std::string> validate() const;
 };
 

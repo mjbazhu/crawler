@@ -169,9 +169,8 @@ domain::Singer MySqlSingerRepository::mapRow(boost::mysql::row_view row)
     domain::Singer singer;
     singer.singer_id = MySqlValueReader::int64At(row, 0);
     singer.name = MySqlValueReader::stringAt(row, 1);
-    singer.gender = static_cast<domain::Gender>(MySqlValueReader::intAt(row, 3));
-    singer.created_at = MySqlValueReader::uint64At(row, 4);
-    singer.updated_at = MySqlValueReader::uint64At(row, 5);
+    singer.created_at = MySqlValueReader::uint64At(row, 3);
+    singer.updated_at = MySqlValueReader::uint64At(row, 4);
     return singer;
 }
 
