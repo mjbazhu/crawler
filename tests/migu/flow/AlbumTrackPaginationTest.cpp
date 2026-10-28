@@ -170,6 +170,22 @@ int main()
         short_album.run();
         require(short_album.provider->page_requests.empty(), "complete small album fetched extra pages");
 
+        // 真实响应中的多个不同 songId 共用占位内容 ID，必须全部进入同一最终 batch。
+        Fixture placeholder;
+        placeholder.detail(3);
+        auto placeholder_detail = Json::parse(placeholder.provider->mock_album_detail_response->body);
+        for (int index = 0; index < 3; ++index) {
+            auto &song = placeholder_detail["resource"][0]["songItems"][index];
+            song["songId"] = "placeholder-song-" + std::to_string(index);
+            song["contentId"] = "600000000000000000";
+        }
+        placeholder.provider->mock_album_detail_response = response(placeholder_detail);
+        placeholder.run();
+        const auto &placeholder_batch = placeholder.writer->batches.front();
+        require(placeholder_batch.songs.size() == 3 && placeholder_batch.albums.front().songs_sync->status == 2 && placeholder_batch.albums.front().songs_sync->received_count == 3, "placeholder content ID merged distinct album tracks or left false partial status");
+        require(placeholder.provider->page_requests.empty(), "complete placeholder album fetched unnecessary pages");
+        require(placeholder_batch.songs.front().source_content_id.empty() && placeholder_batch.songs.back().source_song_id == "placeholder-song-2", "placeholder identities were reintroduced by batch merging");
+
         const auto invalid_total = response({{"data", {{"songList", tracks(51, 59)}, {"totalCount", 59.5}}}});
         require(!short_album.parser->parseAlbumSongPage(invalid_total.body).source_song_total, "fractional total was silently truncated");
 

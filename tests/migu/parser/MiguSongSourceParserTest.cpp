@@ -99,6 +99,25 @@ void testDelimitedSongArtists()
     require(songs[2].artist_refs.size() == 2 && songs[2].artist_refs[0].source_artist_name.empty() && songs[2].artist_refs[1].source_artist_name.empty(), "ambiguous display name was assigned to an individual artist");
 }
 
+// 共享占位值不能成为歌曲身份；没有真实歌曲或内容 ID 的条目不入库。
+void testPlaceholderContentIdentity()
+{
+    migu_parser::MiguParser parser;
+    const auto songs = parser.parseSongSources(toBytes(R"([
+        {"songId":"1140823207","contentId":"600000000000000000","songName":"Players And Losers"},
+        {"songId":"1140328044","contentId":"600000000000000000","songName":"Man I Am"},
+        {"songId":"1140420018","contentId":"600000000000000000","songName":"Orion"},
+        {"contentId":"600000000000000000","songName":"Missing identity"},
+        {"contentId":"600000000000000000","refId":"valid-content","songName":"Valid fallback"},
+        {"resId":"600000000000000000","action":"mgmusic://song-player?id=600000000000000000","songItem":{"songId":"wrapper-song","contentId":"600000000000000000","songName":"Wrapper placeholder"}},
+        {"contentId":"ordinary-content","songName":"Ordinary song"}
+    ])"));
+    require(songs.size() == 6, "placeholder-only identity was accepted or a real song was lost");
+    require(songs[0].source_song_id == "1140823207" && songs[1].source_song_id == "1140328044" && songs[2].source_song_id == "1140420018", "distinct placeholder songs lost their real song IDs");
+    require(songs[0].source_content_id.empty() && songs[1].source_content_id.empty() && songs[2].source_content_id.empty() && songs[4].source_content_id.empty(), "shared placeholder survived parsing");
+    require(songs[3].source_content_id == "valid-content" && songs[5].source_content_id == "ordinary-content", "valid content IDs or fallbacks were discarded");
+}
+
 } // namespace
 
 int main()
@@ -107,6 +126,7 @@ int main()
         testSingerSongCoverPrefersSongItemImg3();
         testSongAlbumCanonicalIdentity();
         testDelimitedSongArtists();
+        testPlaceholderContentIdentity();
         std::cout << "MiguSongSourceParserTest passed." << std::endl;
         return 0;
     } catch (const std::exception &e) {

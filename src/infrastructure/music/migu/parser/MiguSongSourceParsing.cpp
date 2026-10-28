@@ -43,12 +43,18 @@ std::optional<application::model::SongSourceMetadata> parseSongSourceFromSongObj
     application::model::SongSourceMetadata metadata;
     metadata.source = "migu";
     metadata.source_song_id = JsonUtils::getString(song_item, "songId");
-    metadata.source_content_id = firstNonEmpty({
+    // 平台给不同歌曲返回同一占位内容 ID 时，身份应回退到各自真实 songId。
+    for (const auto &content_id : {
         JsonUtils::getString(song_item, "contentId"),
         JsonUtils::getString(song_item, "refId"),
         wrapper ? JsonUtils::getString(*wrapper, "resId") : std::string {},
         wrapper ? extractActionId(JsonUtils::getString(*wrapper, "action")) : std::string {},
-    });
+    }) {
+        if (!content_id.empty() && content_id != "600000000000000000") {
+            metadata.source_content_id = content_id;
+            break;
+        }
+    }
     metadata.source_resource_type = JsonUtils::getString(song_item, "resourceType");
 
     metadata.title = firstNonEmpty({
