@@ -118,6 +118,21 @@ void testPlaceholderContentIdentity()
     require(songs[3].source_content_id == "valid-content" && songs[5].source_content_id == "ordinary-content", "valid content IDs or fallbacks were discarded");
 }
 
+// i18 第 2 页的实测字段：歌曲身份和专辑都存在，singerList 为空且没有其他歌手字段。
+void testAlbumTrackMissingArtist()
+{
+    migu_parser::MiguParser parser;
+    const auto page = parser.parseAlbumSongPage(toBytes(R"json({"code":"000000","data":{"totalCount":80,"songList":[
+        {"contentId":"600913000001316566","songId":"1114037273","songName":"围城(i18版)","songPinyin":"weicheng","albumId":"1114072945","album":"i18","singerList":[]},
+        {"contentId":"artist-control","songId":"artist-control-id","songName":"有明确歌手的对照曲目","albumId":"1114072945","album":"i18","singerList":[{"id":"explicit-singer","name":"明确歌手"}]}
+    ]}})json"));
+    require(page.songs.size() == 2 && page.source_song_total == 80, "missing-artist track lost its source or album context");
+    const auto &song = page.songs.front();
+    require(song.source_song_id == "1114037273" && song.source_album_id == "1114072945" && song.source_album_name == "i18", "i18 track identity or album was discarded");
+    require(song.artist_refs.empty() && song.source_primary_artist_id.empty(), "missing upstream artist was replaced by a guessed identity");
+    require(page.songs.back().artist_refs.size() == 1 && page.songs.back().artist_refs.front().source_artist_id == "explicit-singer", "explicit artist was dropped with its missing-artist neighbor");
+}
+
 } // namespace
 
 int main()
@@ -127,6 +142,7 @@ int main()
         testSongAlbumCanonicalIdentity();
         testDelimitedSongArtists();
         testPlaceholderContentIdentity();
+        testAlbumTrackMissingArtist();
         std::cout << "MiguSongSourceParserTest passed." << std::endl;
         return 0;
     } catch (const std::exception &e) {
