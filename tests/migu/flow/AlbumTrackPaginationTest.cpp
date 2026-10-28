@@ -105,10 +105,10 @@ public:
     }
 
     // 执行单个详情入口，分页结果与详情只提交一次。
-    void run()
+    void run(std::string album_id = "album-fixture")
     {
         model::AlbumSourceMetadata album;
-        album.source_album_id = "album-fixture";
+        album.source_album_id = std::move(album_id);
         use::AlbumDetailBackfillWorkflow workflow(provider, queue, dispatch, saver, nullptr, nullptr);
         require(workflow.crawlAlbumDetailAndSave(album), "pagination metadata save failed");
         require(writer->batches.size() == 1, "pagination did not use one final transaction");
@@ -185,6 +185,24 @@ int main()
         require(placeholder_batch.songs.size() == 3 && placeholder_batch.albums.front().songs_sync->status == 2 && placeholder_batch.albums.front().songs_sync->received_count == 3, "placeholder content ID merged distinct album tracks or left false partial status");
         require(placeholder.provider->page_requests.empty(), "complete placeholder album fetched unnecessary pages");
         require(placeholder_batch.songs.front().source_content_id.empty() && placeholder_batch.songs.back().source_song_id == "placeholder-song-2", "placeholder identities were reintroduced by batch merging");
+
+        // 显式详情已经返回的归档曲目仍入库，但不能自动取得剩余的公共集合。
+        Fixture archive;
+        archive.detail(59);
+        auto archive_detail = Json::parse(archive.provider->mock_album_detail_response->body);
+        auto &archive_album = archive_detail["resource"][0];
+        archive_album["albumId"] = "1";
+        archive_album["title"] = "单曲发行";
+        for (auto &song : archive_album["songItems"]) {
+            song["albumId"] = "1";
+            song["album"] = "单曲发行";
+        }
+        archive.provider->mock_album_detail_response = response(archive_detail);
+        archive.page(2, 59, 51, 59, "1");
+        archive.run("1");
+        const auto &archive_batch = archive.writer->batches.front();
+        require(archive_batch.songs.size() == 50 && archive.provider->page_requests.empty(), "shared archive fetched missing pages or discarded supplied tracks");
+        require(archive_batch.albums.front().songs_sync->status == 4 && archive_batch.albums.front().songs_sync->received_count == 50, "shared archive partial response was incorrectly marked complete");
 
         const auto invalid_total = response({{"data", {{"songList", tracks(51, 59)}, {"totalCount", 59.5}}}});
         require(!short_album.parser->parseAlbumSongPage(invalid_total.body).source_song_total, "fractional total was silently truncated");

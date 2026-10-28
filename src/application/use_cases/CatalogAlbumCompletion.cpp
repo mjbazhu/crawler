@@ -67,6 +67,8 @@ application::result::ServiceResult<application::model::MetadataWriteBatch> Catal
     std::set<std::pair<std::string, std::string>> reused;                 // 复用旧详情不能冒充一次资料刷新
     std::map<std::pair<std::string, std::string>, std::string> canonical; // 只接受明确的来源身份映射
     for (const auto &album : requested) {
+        // 共享归档先于缓存和旧库复用判断，避免把其他歌手的曲目带入本批次。
+        if (isSharedReleaseArchive(album)) continue;
         std::optional<BatchResult> fetched;
         if (album.detail_sync_status == 2) {
             // 上游已返回详情时直接复用，只有曲目缺页才发请求。

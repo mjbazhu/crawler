@@ -41,6 +41,7 @@ class Provider final : public c::tests::MockMusicProvider {
 public:
     std::atomic<int> profiles {0}; // 歌手资料请求数
     std::atomic<int> details {0};  // 专辑详情请求数
+    std::atomic<int> pages {0};    // 曲目补页请求数
     // 同一份资料同时包含歌手实体及两个声明总数。
     std::optional<Response> fetchSingerInfo(std::uint64_t id) override
     {
@@ -53,6 +54,12 @@ public:
     {
         ++details;
         return MockMusicProvider::fetchAlbumDetail(std::move(id), std::move(type));
+    }
+    // 共享归档不能自动补页；本测试的真实专辑详情已经完整。
+    std::optional<Response> fetchAlbumSongPage(std::string, int, int) override
+    {
+        ++pages;
+        return std::nullopt;
     }
 };
 
@@ -170,6 +177,55 @@ int main()
         attached.singers.push_back(singer);
         const auto independent = completion->completeAlbums(attached);
         require(independent.isSuccess() && independent.data()->singers.size() == 1 && independent.data()->singers.front().source_country == "中国", "a referenced standalone singer was discarded");
+
+        // 公共归档只保存当前响应；即使没有详情 provider 也能正常完成歌曲元数据批次。
+        const auto shared_input = dispatch->parseSources(response(R"([
+            {"songId":"shared-song-1","contentId":"shared-content-1","songName":"当前单曲一","albumId":"1","album":"单曲发行","singerList":[{"id":"7","name":"入口歌手"}]},
+            {"songId":"shared-song-2","contentId":"shared-content-2","songName":"当前单曲二","albumId":"1","album":"单曲发行","singerList":[{"id":"7","name":"入口歌手"}]}
+        ])").body);
+        use::CatalogMetadataCompletion shared_only({nullptr, nullptr, nullptr, dispatch});
+        const auto kept = shared_only.completeAlbums(shared_input);
+        require(kept.isSuccess() && kept.data()->songs.size() == 2 && kept.data()->albums.size() == 1 && kept.data()->albums.front().source_album_id == "1", "shared archive discarded current songs or required a detail request");
+        require(!kept.data()->albums.front().songs_sync && kept.data()->albums.front().detail_sync_status == 0, "shared summary incorrectly claimed a full collection");
+
+        auto shared_provider = provider();
+        use::CatalogMetadataCompletion mixed_completion({shared_provider, shared_provider, nullptr, dispatch});
+        auto mixed = shared_input;
+        auto ordinary = dispatch->parseSources(shared_provider->mock_singer_songs_response->body).songs.front();
+        ordinary.source_album_name = "单曲发行"; // 同名但 ID 不同的真实专辑仍补齐全部曲目。
+        mixed.songs.push_back(ordinary);
+        for (int repeat = 0; repeat < 2; ++repeat) {
+            const auto result = mixed_completion.completeAlbums(mixed);
+            require(result.isSuccess() && result.data()->songs.size() == 4 && result.data()->albums.size() == 2, "mixed response expanded shared archive or truncated real album");
+            require(shared_provider->details == 1 && shared_provider->pages == 0, "shared archive triggered detail or page requests");
+        }
+
+        // 已携带的归档详情也不能因声明 1100 首而补齐整个集合。
+        auto supplied_shared = *kept.data();
+        supplied_shared.albums.front().detail_sync_status = 2;
+        supplied_shared.albums.front().total_count = "1100";
+        const auto supplied_result = mixed_completion.completeAlbums(supplied_shared);
+        require(supplied_result.isSuccess() && supplied_result.data()->songs.size() == 2 && shared_provider->details == 1 && shared_provider->pages == 0, "supplied shared archive details expanded the response");
+
+        // 同一 ID 在其他平台或数字专辑中不代表这个公共归档。
+        const auto real_same_id = [&](const std::string &platform, bool digital) {
+            auto input = *kept.data();
+            auto &item = input.albums.front();
+            item.source = platform;
+            item.detail_sync_status = 2;
+            item.total_count = "2";
+            if (digital) {
+                item.source_album_kind = 2;
+                item.source_res_type = "1";
+                item.source_resource_type = "5";
+                item.source_material_id = "real-material";
+            }
+            for (auto &song : input.songs) song.source = platform;
+            const auto result = shared_only.completeAlbums(input);
+            require(result.isSuccess() && result.data()->albums.front().songs_sync && result.data()->albums.front().songs_sync->status == 2, "shared archive policy suppressed another platform or digital album");
+        };
+        real_same_id("other-platform", false);
+        real_same_id("migu", true);
         std::cout << "[PASS] ordered metadata completion, shared responses, field carry, limits and retries" << std::endl;
         return 0;
     } catch (const std::exception &error) {

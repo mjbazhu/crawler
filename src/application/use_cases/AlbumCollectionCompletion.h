@@ -10,6 +10,15 @@
 
 namespace orchestrator::modules::crawler::application::use_cases {
 
+// Migu 的普通单曲归档由不同歌手共用，只保存当前响应，不自动展开整个集合。
+inline bool isSharedReleaseArchive(const application::model::AlbumSourceMetadata &album)
+{
+    return album.source == "migu" && album.source_album_id == "1"
+           && (album.title.empty() || album.title == "单曲发行")
+           && album.source_album_kind != 2 && album.source_res_type != "1" && album.source_resource_type != "5"
+           && (album.source_material_id.empty() || album.source_material_id == album.source_album_id);
+}
+
 // 声明总数必须为非负整数，缺失或非法值保持未知。
 inline std::optional<int> declaredAlbumSongCount(const std::string &text)
 {

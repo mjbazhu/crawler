@@ -21,6 +21,7 @@ std::string songIdentity(const application::model::SongSourceMetadata &song)
 
 std::string collectRemainingAlbumTracks(const application::model::AlbumSourceMetadata &album, application::model::MetadataWriteBatch &batch, application::ports::AlbumDetailProvider &provider, ParserDispatch &parser, std::size_t *response_bytes)
 {
+    if (isSharedReleaseArchive(album)) return {};
     const auto expected = declaredAlbumSongCount(album.total_count);
     const auto initial = albumSongSyncResult(album, batch.songs);
     if (!expected || initial.received_count >= *expected) return {};

@@ -231,7 +231,24 @@ int main()
         require(saver->saveSources(placeholder_batch, 0) && saver->saveSources(placeholder_batch, 0), "placeholder album replay failed");
         require(scalar(pool, "SELECT COUNT(*) FROM song_source_refs WHERE source_song_id LIKE '" + prefix + "placeholder-song-%' AND source_content_id IS NULL") == 7, "placeholder tracks were merged or duplicated in MySQL");
         require(scalar(pool, "SELECT COUNT(*) FROM album_song_refs r JOIN album_source_refs a ON a.id=r.album_source_ref_id JOIN song_source_refs s ON s.id=r.song_source_ref_id WHERE a.source_album_id LIKE '" + prefix + "placeholder-album-%' AND s.source_song_id LIKE CONCAT(REPLACE(a.source_album_id,'placeholder-album-','placeholder-song-'),'-%')") == 7, "placeholder tracks were linked to a different album's song");
-        std::cout << "PASS: 8 existing + 2 new tracks, fields, artist/album relations, deduplication, response reuse and restart; no downloads\n";
+        // 公共归档保留本次歌曲及关系，不读取旧库中的完整集合，也不发起详情或补页。
+        Json shared_songs = Json::array();
+        for (int track = 0; track < 2; ++track) {
+            shared_songs.push_back({{"songId", prefix + "shared-song-" + std::to_string(track)}, {"contentId", prefix + "shared-content-" + std::to_string(track)}, {"songName", prefix + "当前单曲" + std::to_string(track)}, {"albumId", "1"}, {"album", "单曲发行"}, {"singerList", {{{"id", "777001"}, {"name", "入口歌手"}}}}});
+        }
+        provider->mock_singer_songs_response = response(shared_songs);
+        const int details_before_shared = provider->details;
+        for (int repeat = 0; repeat < 2; ++repeat) {
+            auto shared_completion = std::make_shared<use::CatalogMetadataCompletion>(use::CatalogMetadataCompletionDependencies {provider, provider, catalog, dispatch});
+            use::SingerCatalogWorkflow shared_workflow({provider, dispatch, saver, nullptr, nullptr, shared_completion});
+            require(shared_workflow.crawlSingerSongsAndSaveResult(777001, 0, 1, 2, 2).success, "shared archive song collection failed");
+        }
+        require(provider->details == details_before_shared && provider->pages == 0, "shared archive triggered implicit detail or page requests");
+        require(scalar(pool, "SELECT COUNT(*) FROM song_source_refs WHERE source_song_id LIKE '" + prefix + "shared-song-%'") == 2, "shared song replay lost or duplicated sources");
+        require(scalar(pool, "SELECT COUNT(*) FROM album_source_refs WHERE source='migu' AND source_album_id='1' AND detail_sync_status=0 AND songs_sync_status=0 AND source_song_total IS NULL") == 1, "shared summary falsely completed an archive sync");
+        require(scalar(pool, "SELECT COUNT(*) FROM album_song_refs r JOIN album_source_refs a ON a.id=r.album_source_ref_id JOIN song_source_refs s ON s.id=r.song_source_ref_id WHERE a.source='migu' AND a.source_album_id='1' AND s.source_song_id LIKE '" + prefix + "shared-song-%'") == 2, "shared archive current-response relations were lost or duplicated");
+        require(scalar(pool, "SELECT COUNT(*) FROM song_artist_refs r JOIN song_source_refs s ON s.id=r.song_source_ref_id JOIN singer_source_refs a ON a.id=r.singer_source_ref_id WHERE s.source_song_id LIKE '" + prefix + "shared-song-%' AND a.source_singer_id='777001' AND r.is_seed=1") == 2, "shared archive lost singer relations");
+        std::cout << "PASS: real album completion, shared archive response scope, identity, relations, deduplication and response reuse\n";
         return 0;
     } catch (const std::exception &error) {
         std::cerr << "FAIL: " << error.what() << '\n';
