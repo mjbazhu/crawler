@@ -41,6 +41,7 @@ struct MiguAlbumCatalogQuery : CatalogPageQuery {
     std::vector<int> songs_sync_statuses;  // 专辑歌曲同步状态过滤
     std::optional<int> min_songs_count;    // 最小已关联专辑歌曲数，空表示不限
     std::optional<int> max_songs_count;    // 最大已关联专辑歌曲数，空表示不限
+    bool exclude_shared_release_archives = false; // 回补排除公共归档，普通目录仍展示其摘要
 };
 
 // Migu 歌曲目录查询参数。
@@ -151,6 +152,7 @@ struct MiguAlbumCatalogRecord {
     std::string source = "migu";         // 音乐平台标识
     std::string source_item_key;         // 平台来源唯一键
     std::string source_album_id;         // 平台专辑 ID
+    std::string source_material_id;      // 明确的数字专辑物料身份，供回补策略判断
     std::string source_resource_type;    // 详情资源类型
     std::string source_res_type;         // 列表资源类型
     int source_album_kind = 0;           // 平台专辑类型

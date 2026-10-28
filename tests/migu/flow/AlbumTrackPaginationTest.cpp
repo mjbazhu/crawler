@@ -186,7 +186,7 @@ int main()
         require(placeholder.provider->page_requests.empty(), "complete placeholder album fetched unnecessary pages");
         require(placeholder_batch.songs.front().source_content_id.empty() && placeholder_batch.songs.back().source_song_id == "placeholder-song-2", "placeholder identities were reintroduced by batch merging");
 
-        // 显式详情已经返回的归档曲目仍入库，但不能自动取得剩余的公共集合。
+        // 回补公共归档在请求详情前直接跳过，不能先引入跨歌手首段再停止分页。
         Fixture archive;
         archive.detail(59);
         auto archive_detail = Json::parse(archive.provider->mock_album_detail_response->body);
@@ -199,10 +199,23 @@ int main()
         }
         archive.provider->mock_album_detail_response = response(archive_detail);
         archive.page(2, 59, 51, 59, "1");
-        archive.run("1");
-        const auto &archive_batch = archive.writer->batches.front();
-        require(archive_batch.songs.size() == 50 && archive.provider->page_requests.empty(), "shared archive fetched missing pages or discarded supplied tracks");
-        require(archive_batch.albums.front().songs_sync->status == 4 && archive_batch.albums.front().songs_sync->received_count == 50, "shared archive partial response was incorrectly marked complete");
+        model::AlbumSourceMetadata archive_source;
+        archive_source.source_album_id = "1";
+        archive_source.title = "单曲发行";
+        use::AlbumDetailBackfillWorkflow archive_workflow(archive.provider, archive.queue, archive.dispatch, archive.saver, nullptr, nullptr);
+        require(archive_workflow.crawlAlbumDetailAndSave(archive_source) && archive_workflow.crawlAlbumSongsAndSave(archive_source), "shared archive no-op failed");
+        require(archive.provider->details == 0 && archive.provider->page_requests.empty() && archive.writer->batches.empty(), "shared archive backfill fetched or saved unrelated tracks");
+        require(archive.queue->update_detail_calls == 0 && archive.queue->update_songs_calls == 0, "shared archive no-op modified persisted completion state");
+
+        // 同名真实专辑仍必须保存详情首段及全部缺页。
+        Fixture same_name;
+        same_name.detail(59);
+        auto same_name_detail = Json::parse(same_name.provider->mock_album_detail_response->body);
+        same_name_detail["resource"][0]["title"] = "单曲发行";
+        same_name.provider->mock_album_detail_response = response(same_name_detail);
+        same_name.page(2, 59, 51, 59);
+        same_name.run();
+        require(same_name.writer->batches.front().songs.size() == 59 && same_name.provider->details == 1, "same-name real album lost its full catalog");
 
         const auto invalid_total = response({{"data", {{"songList", tracks(51, 59)}, {"totalCount", 59.5}}}});
         require(!short_album.parser->parseAlbumSongPage(invalid_total.body).source_song_total, "fractional total was silently truncated");

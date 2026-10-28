@@ -50,7 +50,8 @@ SELECT
     r.updated_at,
     (SELECT COUNT(*) FROM album_song_refs relation_rows WHERE relation_rows.album_source_ref_id=r.id) AS album_songs_count,
     COALESCE(r.source_title_pinyin,''),
-    COALESCE(r.summary,'')
+    COALESCE(r.summary,''),
+    COALESCE((SELECT d.source_material_id FROM migu_dalbum_details d WHERE d.album_source_ref_id=r.id),'')
 FROM page p
 JOIN album_source_refs r ON r.id=p.id
 JOIN albums a ON a.id=r.album_db_id

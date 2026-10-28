@@ -1,9 +1,11 @@
 #include "crawler/application/use_cases/CatalogMetadataCompletion.h"
+#include "crawler/api/controllers/CrawlerController.h"
 #include "crawler/application/use_cases/CrawlerService.h"
 #include "crawler/application/use_cases/MetadataPersistenceService.h"
 #include "crawler/application/use_cases/SingerCatalogWorkflow.h"
 #include "crawler/infrastructure/music/migu/parser/MiguParser.h"
 #include "crawler/infrastructure/music/persistence/mysql/MySqlMetadataBatchWriter.h"
+#include "crawler/infrastructure/music/persistence/mysql/MySqlAlbumSourceSyncQueue.h"
 #include "crawler/infrastructure/music/persistence/mysql/MySqlMusicCatalogQueryRepository.h"
 #include "crawler/infrastructure/music/persistence/mysql/MySqlSingerSourceSyncQueue.h"
 #include "migu/support/MetadataTestDiagnostics.h"
@@ -13,6 +15,7 @@
 #include <nlohmann/json.hpp>
 
 #include <chrono>
+#include <algorithm>
 #include <functional>
 #include <iostream>
 #include <memory>
@@ -203,17 +206,19 @@ int main()
         dependencies.persistence.metadata_batch_writer = writer;
         dependencies.persistence.catalog_query_repository = catalog;
         dependencies.persistence.singer_source_sync_queue = queue;
+        auto album_queue = std::make_shared<mysql::MySqlAlbumSourceSyncQueue>(pool);
+        dependencies.persistence.album_source_sync_queue = album_queue;
         dependencies.executors.batch_executor = executor;
         dependencies.options.runtime_settings.max_retries = 0;
-        use::CrawlerService service(std::move(dependencies));
+        auto service = std::make_shared<use::CrawlerService>(std::move(dependencies));
         support::runOnExecutor(pool->executor(), pool->coExecute("UPDATE singer_source_refs SET source_song_total=10,source_album_total=2,songs_sync_status=0,songs_sync_error=NULL,albums_sync_status=0,albums_sync_error=NULL WHERE source='migu' AND source_singer_id='777001'"), "prepare uncollected directory states");
         model::SingerSourceSyncQuery query;
         query.keyword = "777001";
         query.limit = 1;
-        require(!service.startSingerSongsFromDbAsync(query, 1, "{}").empty(), "song directory batch was not created");
+        require(!service->startSingerSongsFromDbAsync(query, 1, "{}").empty(), "song directory batch was not created");
         executor->runAll();
         require(scalar(pool, "SELECT COUNT(*) FROM singer_source_refs WHERE source_singer_id='777001' AND songs_sync_status=4 AND songs_sync_count=1") == 1, "associated songs incorrectly completed a limited directory run");
-        require(!service.startSingerAlbumsFromDbAsync(query, 1, "{}").empty(), "album directory batch was not created");
+        require(!service->startSingerAlbumsFromDbAsync(query, 1, "{}").empty(), "album directory batch was not created");
         executor->runAll();
         require(scalar(pool, "SELECT COUNT(*) FROM singer_source_refs WHERE source_singer_id='777001' AND albums_sync_status=4 AND albums_sync_count=1") == 1, "associated albums incorrectly completed a limited directory run");
 
@@ -248,6 +253,96 @@ int main()
         require(scalar(pool, "SELECT COUNT(*) FROM album_source_refs WHERE source='migu' AND source_album_id='1' AND detail_sync_status=0 AND songs_sync_status=0 AND source_song_total IS NULL") == 1, "shared summary falsely completed an archive sync");
         require(scalar(pool, "SELECT COUNT(*) FROM album_song_refs r JOIN album_source_refs a ON a.id=r.album_source_ref_id JOIN song_source_refs s ON s.id=r.song_source_ref_id WHERE a.source='migu' AND a.source_album_id='1' AND s.source_song_id LIKE '" + prefix + "shared-song-%'") == 2, "shared archive current-response relations were lost or duplicated");
         require(scalar(pool, "SELECT COUNT(*) FROM song_artist_refs r JOIN song_source_refs s ON s.id=r.song_source_ref_id JOIN singer_source_refs a ON a.id=r.singer_source_ref_id WHERE s.source_song_id LIKE '" + prefix + "shared-song-%' AND a.source_singer_id='777001' AND r.is_seed=1") == 2, "shared archive lost singer relations");
+
+        // 公共归档在普通目录仍可见；回补队列、预览、认领和重置使用相同规则。
+        c::api::controllers::CrawlerController controller(service);
+        const auto call = [&](const std::string &type, const std::string &action, const Json &body) {
+            c::api::http::HttpRequest request;
+            request.method = "POST";
+            request.path = "/api/migu/backfill/" + type + "/" + action;
+            request.body = body.dump();
+            const auto result = action == "preview" ? controller.handlePreviewMiguBackfill(request) : (action == "retry" ? controller.handleRetryMiguBackfill(request) : controller.handleResetMiguBackfill(request));
+            require(result.status_code == (action == "retry" ? 202 : 200), "metadata backfill HTTP result failed");
+            return Json::parse(result.body);
+        };
+        model::MetadataWriteBatch same_name_batch;
+        model::AlbumSourceMetadata same_name;
+        same_name.source_album_id = prefix + "same-name";
+        same_name.title = "单曲发行";
+        same_name_batch.albums.push_back(same_name);
+        require(saver->saveSources(std::move(same_name_batch), 0), "same-name real album fixture failed");
+        model::MiguAlbumCatalogQuery archive_query;
+        archive_query.keyword = "单曲发行";
+        require(catalog->listAlbums(archive_query).total == 2, "normal catalog hid the shared summary");
+        archive_query.exclude_shared_release_archives = true;
+        const auto filtered = catalog->listAlbums(archive_query);
+        require(filtered.total == 1 && filtered.items.front().source_album_id == same_name.source_album_id, "backfill filtering hid a same-name real album");
+        c::api::http::HttpRequest queue_request;
+        queue_request.method = "GET";
+        queue_request.path = "/api/migu/backfill/album-details/queue";
+        queue_request.query_params["q"] = "单曲发行";
+        const auto queue_body = Json::parse(controller.handleListMiguBackfillQueue(queue_request).body);
+        require(queue_body["total"] == 1 && queue_body["items"][0]["target_id"] == same_name.source_album_id, "HTTP queue included the shared archive");
+        const auto bulk_preview = call("album-details", "preview", {{"filter", {{"keyword", "单曲发行"}}}, {"force", true}});
+        require(bulk_preview["matched_count"] == 2 && bulk_preview["eligible_count"] == 1, "bulk preview and claim filtering disagree");
+        for (int status : {0, 2, 3, 4, 1}) {
+            support::runOnExecutor(pool->executor(), pool->coExecute("UPDATE album_source_refs SET detail_sync_status=" + std::to_string(status) + ",songs_sync_status=" + std::to_string(status) + " WHERE source='migu' AND source_album_id='1'"), "prepare shared archive state");
+            for (const std::string type : {"album-details", "album-songs"}) {
+                for (bool force : {false, true}) {
+                    const Json body = {{"source_ids", {"1"}}, {"force", force}};
+                    const auto preview = call(type, "preview", body);
+                    require(preview["eligible_count"] == 0 && preview["items"][0]["reason"] == "shared_release_archive", "force re-enabled the shared archive in preview");
+                    const auto retry = call(type, "retry", body);
+                    require(retry["claimed_count"] == 0 && retry["items"][0]["reason"] == "shared_release_archive", "shared archive was claimed or lost its skip reason");
+                    executor->runAll();
+                }
+                const auto reset = call(type, "reset", {{"source_ids", {"1"}}, {"filter", {{"status", {status}}}}});
+                require(reset["updated_count"] == 0 && reset["items"][0]["reason"] == "shared_release_archive", "shared archive was reset into backfill");
+            }
+            require(scalar(pool, "SELECT COUNT(*) FROM album_source_refs WHERE source='migu' AND source_album_id='1' AND detail_sync_status=" + std::to_string(status) + " AND songs_sync_status=" + std::to_string(status)) == 1, "skipping shared archive changed its state");
+        }
+        require(provider->details == details_before_shared && provider->pages == 0, "shared backfill issued metadata requests");
+        support::runOnExecutor(pool->executor(), pool->coExecute("UPDATE album_source_refs SET detail_sync_status=0,songs_sync_status=0 WHERE source='migu' AND source_album_id='1'"), "restore shared summary");
+        const auto pending = album_queue->findPendingDetails("migu", 1000, 0);
+        require(std::none_of(pending.begin(), pending.end(), [](const auto &album) { return album.source_album_id == "1"; }), "legacy pending queue included shared archive");
+        support::runOnExecutor(pool->executor(), pool->coExecute("UPDATE album_source_refs SET detail_sync_status=2 WHERE source='migu' AND source_album_id='1'"), "prepare legacy archive track queue");
+        const auto pending_songs = album_queue->findPendingSongs("migu", 1000, 0);
+        require(std::none_of(pending_songs.begin(), pending_songs.end(), [](const auto &album) { return album.source_album_id == "1"; }), "legacy track queue included shared archive");
+        support::runOnExecutor(pool->executor(), pool->coExecute("UPDATE album_source_refs SET detail_sync_status=0 WHERE source='migu' AND source_album_id='1'"), "restore archive detail state");
+
+        // 有明确物料映射的 ID=1 是独立数字身份，不能按普通归档跳过。
+        support::runOnExecutor(pool->executor(), pool->coExecute("INSERT INTO migu_dalbum_details(album_source_ref_id,source_material_id) SELECT id,'explicit-material' FROM album_source_refs WHERE source='migu' AND source_album_id='1'"), "prepare explicit material exception");
+        require(call("album-details", "preview", {{"source_ids", {"1"}}})["eligible_count"] == 1, "explicit material identity was treated as shared archive");
+        const auto material_sources = catalog->findAlbumSourcesByIds("migu", {"1"});
+        require(material_sources.size() == 1 && material_sources.front().source_material_id == "explicit-material", "explicit source lookup lost material identity");
+        const auto material_pending = album_queue->findPendingDetails("migu", 1000, 0);
+        const auto material_target = std::find_if(material_pending.begin(), material_pending.end(), [](const auto &album) { return album.source_album_id == "1"; });
+        require(material_target != material_pending.end() && material_target->source_material_id == "explicit-material", "legacy queue lost material identity");
+        model::MiguBackfillTargetQuery material_claim;
+        material_claim.source_ids = {"1"};
+        const auto claimed_material = catalog->claimAlbumDetails(material_claim);
+        require(claimed_material.claimed_count == 1 && claimed_material.albums.front().source_material_id == "explicit-material", "material identity was lost in claim mapping");
+        support::runOnExecutor(pool->executor(), pool->coExecute("DELETE d FROM migu_dalbum_details d JOIN album_source_refs a ON a.id=d.album_source_ref_id WHERE a.source='migu' AND a.source_album_id='1'"), "remove material exception fixture");
+        support::runOnExecutor(pool->executor(), pool->coExecute("UPDATE album_source_refs SET detail_sync_status=0,detail_claim_token='',detail_claim_owner='',detail_claimed_at=0 WHERE source='migu' AND source_album_id='1'"), "restore shared archive after material check");
+
+        // 真实专辑回补仍接收原响应之外的新歌曲，并保留已有来源主键。
+        Json backfill_detail = target;
+        auto extra_track = tracks.front();
+        extra_track["contentId"] = prefix + "backfill-new-content";
+        extra_track["songId"] = prefix + "backfill-new-song";
+        backfill_detail["songItems"] = tracks;
+        backfill_detail["songItems"].push_back(extra_track);
+        backfill_detail["totalCount"] = 11;
+        provider->mock_album_detail_response = response({{"resource", Json::array({backfill_detail})}});
+        for (int repeat = 0; repeat < 2; ++repeat) {
+            const auto retry = call("album-details", "retry", {{"source_ids", {album_id}}, {"force", true}});
+            require(retry["claimed_count"] == 1, "real completed album was excluded from forced backfill");
+            executor->runAll();
+        }
+        require(scalar(pool, "SELECT COUNT(*) FROM album_song_refs r JOIN album_source_refs a ON a.id=r.album_source_ref_id WHERE a.source_album_id='" + album_id + "'") == 11, "real album backfill discarded newly returned tracks");
+        require(scalar(pool, "SELECT id FROM song_source_refs WHERE source_content_id='" + prefix + "0'") == first_id, "real album backfill replaced an existing song identity");
+        require(scalar(pool, "SELECT COUNT(*) FROM song_source_refs WHERE source_content_id='" + prefix + "backfill-new-content'") == 1, "real album backfill duplicated its new track");
+        require(scalar(pool, "SELECT COUNT(*) FROM album_song_refs r JOIN album_source_refs a ON a.id=r.album_source_ref_id WHERE a.source='migu' AND a.source_album_id='1'") == 2, "backfill widened or removed carried shared archive relations");
         std::cout << "PASS: real album completion, shared archive response scope, identity, relations, deduplication and response reuse\n";
         return 0;
     } catch (const std::exception &error) {

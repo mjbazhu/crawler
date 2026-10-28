@@ -274,6 +274,8 @@ GET /api/migu/backfill/album-songs/queue?status=3&min_album_songs_count=1
 
 补池队列的数量过滤同内容列表一致：歌手队列支持 `min_songs_count`、`max_songs_count`、`min_albums_count`、`max_albums_count`；专辑队列支持 `min_songs_count`、`max_songs_count`，也兼容 `min_album_songs_count`、`max_album_songs_count`。
 
+普通 `albumId=1`“单曲发行”公共归档保留在内容列表，不进入 `album-details` 或 `album-songs` 回补队列。显式指定该 ID 时，预览、重试和重置以 `shared_release_archive` 说明跳过原因，`force` 不改变此规则。已有归档歌曲及关系保持原样；其他 ID 的同名真实专辑和有明确数字类型或物料身份的专辑仍完整采集曲目。
+
 ```json
 {
   "items": [

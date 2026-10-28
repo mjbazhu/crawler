@@ -1,4 +1,5 @@
 #include "crawler/application/use_cases/CrawlerService.h"
+#include "crawler/application/model/AlbumCollectionPolicy.h"
 
 #include "crawler/application/use_cases/AsyncResourcePortAdapters.h"
 #include "CollectionWorkflowAssembly.h"
@@ -998,6 +999,7 @@ application::model::AlbumSourceMetadata albumSourceFromRecord(const application:
     application::model::AlbumSourceMetadata album;
     album.source = record.source;
     album.source_album_id = record.source_album_id;
+    album.source_material_id = record.source_material_id;
     album.source_resource_type = record.source_resource_type;
     album.source_res_type = record.source_res_type;
     album.source_album_kind = record.source_album_kind;
@@ -2633,6 +2635,9 @@ application::model::MiguBackfillRetryResult CrawlerService::retryMiguBackfill(st
                     auto album = catalog_query_service_->findAlbum(source_id);
                     if (!album) {
                         retry.items.push_back({source_id, {}, 0, "not_found"});
+                    } else if (application::model::isSharedReleaseArchive(*album)) {
+                        const int status = backfill_type == "album-details" ? album->detail_sync_status : album->songs_sync_status;
+                        retry.items.push_back({source_id, album->title, status, "shared_release_archive"});
                     } else if (backfill_type == "album-songs" && album->detail_sync_status != 2) {
                         retry.items.push_back({source_id, album->source_title.empty() ? album->title : album->source_title, album->songs_sync_status, "album_detail_not_completed"});
                     } else {

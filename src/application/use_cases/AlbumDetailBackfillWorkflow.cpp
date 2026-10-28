@@ -88,6 +88,8 @@ bool AlbumDetailBackfillWorkflow::collectAlbumResponse(application::model::Album
     if (!album_detail_provider_ || !album_source_sync_queue_ || !parser_ || !persistence_ || source_metadata.source_album_id.empty()) {
         return false;
     }
+    // 旧批次或直接调用也不能展开公共归档；无操作不修改实体同步状态。
+    if (application::model::isSharedReleaseArchive(source_metadata)) return true;
 
     const auto fail = [&](const std::string &message) {
         if (songs_only)

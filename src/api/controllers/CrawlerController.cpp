@@ -1,4 +1,5 @@
 #include "crawler/api/controllers/CrawlerController.h"
+#include "crawler/application/model/AlbumCollectionPolicy.h"
 
 #include "crawler/api/controllers/OpenApiDocumentFactory.h"
 #include "crawler/api/dto/CrawlDto.h"
@@ -642,7 +643,8 @@ std::string ineligibleReason(bool eligible, int status, std::string extra_reason
 json withPreviewEligibility(json item, const std::vector<int> &statuses, bool force = false)
 {
     const bool complete = item["sync_status"].is_number_integer() && item["sync_status"].get<int>() == 2;
-    const bool base_eligible = item.value("eligible", false) || (force && complete && item.value("reason", "") != "album_detail_not_completed");
+    const auto reason = item.value("reason", "");
+    const bool base_eligible = item.value("eligible", false) || (force && complete && reason != "album_detail_not_completed" && reason != "shared_release_archive");
     const bool status_matched = (force && complete) || (item["sync_status"].is_number_integer() && matchesRequestedStatus(item["sync_status"].get<int>(), statuses));
     const bool eligible = base_eligible && status_matched;
     const int status = item["sync_status"].is_number_integer() ? item["sync_status"].get<int>() : -1;
@@ -699,7 +701,7 @@ json albumQueueTargetToJson(const application::model::MiguAlbumCatalogRecord &al
     const std::string error = detail_type ? album.detail_sync_error : album.songs_sync_error;
     const std::string last_batch_id = detail_type ? album.detail_last_batch_id : album.songs_last_batch_id;
     const std::string running_batch_id = detail_type ? album.detail_running_batch_id : album.songs_running_batch_id;
-    const std::string prerequisite_reason = type == "album-songs" && album.detail_sync_status != 2 ? "album_detail_not_completed" : "";
+    const std::string prerequisite_reason = application::model::isSharedReleaseArchive(album) ? "shared_release_archive" : (type == "album-songs" && album.detail_sync_status != 2 ? "album_detail_not_completed" : "");
     const bool eligible = prerequisite_reason.empty() && isClaimableStatus(status);
 
     return {
@@ -2125,6 +2127,7 @@ http::HttpResponse CrawlerController::handleListMiguBackfillQueue(http::HttpRequ
 
     if (type == "album-details" || type == "album-songs") {
         auto query = albumCatalogQueryFromRequest(req);
+        query.exclude_shared_release_archives = true;
         if (type == "album-details") {
             query.detail_sync_statuses = defaultBackfillStatuses(statusQuery(req, {"status", "sync_status"}));
         } else {
@@ -2238,6 +2241,7 @@ http::HttpResponse CrawlerController::handlePreviewMiguBackfill(http::HttpReques
             }
 
             application::model::MiguAlbumCatalogQuery eligible_query = base;
+            eligible_query.exclude_shared_release_archives = true;
             eligible_query.page_size = 1;
             if (type == "album-details") {
                 eligible_query.detail_sync_statuses = previewRetryStatuses(query->statuses, query->force);
@@ -2338,6 +2342,7 @@ http::HttpResponse CrawlerController::handleResetMiguBackfill(http::HttpRequest 
             preview.keyword = query->keyword;
             preview.artist = query->artist;
             preview.album_kind = query->album_kind;
+            preview.exclude_shared_release_archives = true;
             if (type == "album-details") {
                 preview.detail_sync_statuses = defaultBackfillStatuses(query->statuses);
             } else {

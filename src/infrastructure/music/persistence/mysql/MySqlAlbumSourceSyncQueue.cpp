@@ -65,6 +65,7 @@ application::model::AlbumSourceMetadata mapPendingDetailRow(boost::mysql::row_vi
     album.artist_name = album.source_artist_name;
     album.cover_url = MySqlValueReader::stringAt(row, 12);
     album.detail_sync_status = MySqlValueReader::intAt(row, 13);
+    album.source_material_id = MySqlValueReader::stringAt(row, 17);
     return album;
 }
 
@@ -86,6 +87,7 @@ application::model::AlbumSourceMetadata mapPendingSongsRow(boost::mysql::row_vie
     album.cover_url = MySqlValueReader::stringAt(row, 12);
     album.total_count = MySqlValueReader::stringAt(row, 13);
     album.detail_sync_status = MySqlValueReader::intAt(row, 14);
+    album.source_material_id = MySqlValueReader::stringAt(row, 20);
     return album;
 }
 
