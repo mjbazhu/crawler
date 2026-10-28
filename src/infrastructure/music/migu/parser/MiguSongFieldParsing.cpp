@@ -62,7 +62,7 @@ void appendArtistArray(const nlohmann::json *artists, std::vector<application::m
         if (ref.source_artist_id.empty() || ref.source_artist_id.find('|') != std::string::npos) continue;
         ref.source_artist_name = json::JsonUtils::getString(artist, "name");
         ref.source_artist_name_pinyin = json::JsonUtils::getString(artist, "nameSpelling");
-        ref.source_artist_image = normalizeMiguResourceUrl(json::JsonUtils::getString(artist, "img"));
+        ref.source_artist_image = normalizeMiguSingerAvatarUrl(json::JsonUtils::getString(artist, "img"));
         ref.artist_order = static_cast<std::uint32_t>(result.size()) + 1;
         ref.is_primary = result.empty();
         result.push_back(std::move(ref));
@@ -75,7 +75,7 @@ void fillSingleArtistImage(const nlohmann::json &item, std::vector<application::
     if (artists.size() != 1 || !artists.front().source_artist_image.empty()) return;
     const auto identities = splitArtistField(json::JsonUtils::getString(item, "singerId"));
     if (identities.size() != 1 || identities.front() != artists.front().source_artist_id) return;
-    artists.front().source_artist_image = normalizeMiguResourceUrl(selectImageUrl(json::JsonUtils::getArray(item, "singerImgs")));
+    artists.front().source_artist_image = normalizeMiguSingerAvatarUrl(selectImageUrl(json::JsonUtils::getArray(item, "singerImgs")));
 }
 
 } // namespace

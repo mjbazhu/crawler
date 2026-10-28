@@ -9,13 +9,15 @@ namespace orchestrator::modules::crawler::application::result {
 
 // 业务错误枚举（不直接对应 HTTP Code）
 enum class ServiceErrorType {
-    None,             // 成功
-    InvalidParam,     // 参数错误 (对应 400)
-    NotFound,         // 资源未找到 (对应 404)
-    CommitUncertain,  // 提交响应丢失，需按实际存储核对
-    Conflict,         // 状态冲突 (对应 409)
-    ExternalApiError, // 外部依赖失败 (对应 502/500)
-    InternalError     // 内部错误 (对应 500)
+    None,                      // 成功
+    InvalidParam,              // 参数错误 (对应 400)
+    NotFound,                  // 资源未找到 (对应 404)
+    CommitUncertain,           // 提交响应丢失，需按实际存储核对
+    Conflict,                  // 状态冲突 (对应 409)
+    ExternalApiError,          // 外部依赖失败 (对应 502/500)
+    InternalError,             // 内部错误 (对应 500)
+    TransientExternalApiError, // 网络、临时空实体或平台服务故障，可有限重试
+    ExternalRateLimited        // 外部平台明确限流，重试前需等待
 };
 
 // 业务层通用返回结果

@@ -43,7 +43,7 @@ struct Singer {
     std::string artwork;
     std::string country;
     std::string genre; // 歌手类型
-    Gender gender;     // 0-未知，1-男，2-女，3-组合
+    Gender gender = Gender::Unknown; // 0-未知，1-男，2-女，3-组合
     uint64_t created_at = 0;
     uint64_t updated_at = 0;
 };

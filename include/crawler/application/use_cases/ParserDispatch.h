@@ -4,6 +4,7 @@
 #include "crawler/application/model/AlbumSongPage.h"
 #include "crawler/application/model/SingerSourceMetadata.h"
 #include "crawler/application/model/SongSourceMetadata.h"
+#include "crawler/application/result/ServiceResult.h"
 #include "crawler/application/ports/diagnostics/DiagnosticsSink.h"
 #include "crawler/application/ports/execution/TaskExecutor.h"
 #include "crawler/application/ports/parsing/AlbumSourceParser.h"
@@ -19,6 +20,7 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace orchestrator::modules::crawler::application::use_cases {
@@ -40,6 +42,8 @@ public:
 
     // 同一响应分流各实体；旧 parser 无批次能力时使用兼容委托。
     application::model::MetadataWriteBatch parseSources(std::vector<char> body);
+    // 保留解析错误语义，避免明确业务拒绝进入重试。
+    application::result::ServiceResult<application::model::MetadataWriteBatch> parseSourcesResult(std::vector<char> body);
 
     // 解析领域结果。
     std::vector<domain::ParseResult> parse(std::vector<char> body);

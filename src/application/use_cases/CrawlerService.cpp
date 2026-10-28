@@ -1345,6 +1345,7 @@ CrawlerService::CrawlerService(CrawlerServiceDependencies dependencies) : runtim
     );
 
     workflow_ = assembleCollectionWorkflows(dependencies, persistence_, diagnostics_);
+    singer_profile_refresh_configured_ = dependencies.providers.singer_catalog_provider && dependencies.parsers.singer_profile_parser && dependencies.persistence.metadata_batch_writer && dependencies.persistence.catalog_query_repository;
 
     batch_task_repository_ = dependencies.persistence.batch_task_repository;
     resource_process_runner_ = TaskRunner(dependencies.executors.batch_executor, diagnostics_);
@@ -1907,7 +1908,8 @@ std::string CrawlerService::startBatchItemsAsync(
     std::string request_params,
     BatchTaskManager::TargetHandler handler,
     std::string parent_batch_id,
-    bool allow_empty
+    bool allow_empty,
+    int max_retries
 )
 {
     if (!batch_task_manager_) {
@@ -1925,7 +1927,8 @@ std::string CrawlerService::startBatchItemsAsync(
         runtimeSettingsJson(),
         std::move(parent_batch_id),
         std::move(handler),
-        allow_empty
+        allow_empty,
+        max_retries
     );
 }
 
@@ -2667,16 +2670,18 @@ application::model::MiguBackfillRetryResult CrawlerService::retryMiguBackfill(st
     return retry;
 }
 
-application::model::MiguBackfillRetryResult CrawlerService::refreshMiguSingerProfiles(application::model::MiguBackfillTargetQuery query, bool force, std::string request_params)
+application::result::ServiceResult<application::model::MiguBackfillRetryResult> CrawlerService::refreshMiguSingerProfiles(application::model::MiguBackfillTargetQuery query, bool force, std::string request_params)
 {
+    using Result = application::result::ServiceResult<application::model::MiguBackfillRetryResult>;
     application::model::MiguBackfillRetryResult result;
-    if (!batch_task_manager_ || !workflow_ || !catalog_query_service_) {
-        return result;
+    if (!singer_profile_refresh_configured_ || !batch_task_manager_ || !workflow_ || !catalog_query_service_) {
+        return Result::failure(application::result::ServiceErrorType::InternalError, "singer profile refresh is not configured");
     }
 
     query.source = query.source.empty() ? "migu" : std::move(query.source);
+    if (query.source != "migu" || query.limit < 0 || query.limit > 500) return Result::failure(application::result::ServiceErrorType::InvalidParam, "invalid singer profile source or limit");
     const bool explicit_source_ids = !query.source_ids.empty();
-    const bool run_all = !explicit_source_ids && query.limit == 0;
+    const bool run_all = query.limit == 0;
     const std::size_t target_limit = run_all ? std::numeric_limits<std::size_t>::max() : normalizeTargetLimit(static_cast<std::size_t>(query.limit));
 
     std::vector<application::model::MiguSingerCatalogRecord> targets;
@@ -2688,7 +2693,10 @@ application::model::MiguBackfillRetryResult CrawlerService::refreshMiguSingerPro
     };
 
     if (explicit_source_ids) {
+        std::set<std::string> selected_ids; // 显式 ID 去重，避免重复刷新同一来源
         for (const auto &source_id : query.source_ids) {
+            if (!selected_ids.emplace(source_id).second) continue;
+            if (targets.size() >= target_limit) break;
             auto singer = catalog_query_service_->findSinger(source_id);
             if (!singer) {
                 result.items.push_back({source_id, {}, 0, "not_found"});
@@ -2734,7 +2742,7 @@ application::model::MiguBackfillRetryResult CrawlerService::refreshMiguSingerPro
 
     result.claimed_count = static_cast<int>(targets.size());
     if (targets.empty()) {
-        return result;
+        return Result::success(std::move(result));
     }
 
     std::unordered_map<std::string, application::model::MiguSingerCatalogRecord> by_key;
@@ -2758,13 +2766,12 @@ application::model::MiguBackfillRetryResult CrawlerService::refreshMiguSingerPro
         items.push_back(std::move(item));
     }
 
-    auto queue = singer_source_sync_queue_;
     result.batch_id = startBatchItemsAsync(
         std::move(items),
         1,
         "singerProfileRefresh",
         std::move(request_params),
-        [this, queue, by_key = std::move(by_key)](std::string target, int) {
+        [this, by_key = std::move(by_key)](std::string target, int) {
             auto it = by_key.find(target);
             if (it == by_key.end()) {
                 return BatchTaskManager::TargetResult {false, 0, "singer profile target not found", "invalid_target", "invalid_target"};
@@ -2776,29 +2783,28 @@ application::model::MiguBackfillRetryResult CrawlerService::refreshMiguSingerPro
                 return BatchTaskManager::TargetResult {false, 0, "invalid singer id", "invalid_target", "invalid_target"};
             }
 
-            application::model::SingerSourceProfile profile;
             try {
-                profile = workflow_->fetchAndSaveSingerSourceProfile(singer_id);
+                const auto refreshed = workflow_->fetchAndSaveSingerSourceProfile(singer_id);
+                if (!refreshed.isSuccess()) {
+                    auto failed = failureTargetResult(refreshed.message());
+                    const auto error = refreshed.error();
+                    failed.retryable = error == application::result::ServiceErrorType::TransientExternalApiError || error == application::result::ServiceErrorType::ExternalRateLimited;
+                    if (error == application::result::ServiceErrorType::ExternalRateLimited) failed.retry_delay = std::chrono::seconds(20);
+                    return failed;
+                }
             } catch (const std::exception &e) {
                 return failureTargetResult(e.what());
             } catch (...) {
                 return failureTargetResult("unknown singer profile refresh error");
             }
-            const bool refreshed = profile.source_song_total || profile.source_album_total;
-            if (!refreshed) {
-                return BatchTaskManager::TargetResult {false, 0, "singer profile did not contain declared totals", "parse", "parse_failed"};
-            }
-
-            if (queue && catalog_query_service_) {
-                if (auto singer = catalog_query_service_->findSinger(source.source_singer_id)) {
-                    (void)queue->updateSongsSyncStatus(singer->source, singer->source_singer_id, singer->songs_sync_status, singer->songs_sync_count, singer->songs_sync_error);
-                    (void)queue->updateAlbumsSyncStatus(singer->source, singer->source_singer_id, singer->albums_sync_status, singer->albums_sync_count, singer->albums_sync_error);
-                }
-            }
+            // 资料与目录生命周期独立，不回写目录完成时间或清除其他任务的认领。
             return BatchTaskManager::TargetResult {true, 1, {}, {}, "ok"};
-        }
+        },
+        {},
+        false,
+        maxRetries()
     );
-    return result;
+    return Result::success(std::move(result));
 }
 
 int CrawlerService::resetMiguBackfill(std::string backfill_type, application::model::MiguBackfillTargetQuery query) const

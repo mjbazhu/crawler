@@ -21,6 +21,8 @@
 #include "crawler/application/use_cases/SingerCatalogWorkflow.h"
 #include "crawler/application/use_cases/UrlIngestionWorkflow.h"
 
+#include "crawler/application/result/ServiceResult.h"
+
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -78,7 +80,7 @@ public:
     application::model::SingerCollectionResult crawlSingerAlbumsAndSaveResult(std::uint64_t singer_id, int limit, int max_page_concurrency, std::optional<int> source_song_total = std::nullopt, std::optional<int> source_album_total = std::nullopt, bool refresh_profile = false);
 
     // 刷新并保存歌手主要信息中的平台声明歌曲/专辑总数。
-    application::model::SingerSourceProfile fetchAndSaveSingerSourceProfile(std::uint64_t singer_id);
+    application::result::ServiceResult<application::model::SingerSourceProfile> fetchAndSaveSingerSourceProfile(std::uint64_t singer_id);
 
     // 获取待补齐专辑详情并保存详情与歌曲来源参数。
     bool crawlPendingAlbumDetailsAndSave(std::string source, int limit, int max_page_concurrency);

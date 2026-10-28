@@ -10,6 +10,8 @@
 #include "crawler/application/use_cases/TaskRunner.h"
 #include "crawler/application/use_cases/CatalogMetadataCompletion.h"
 
+#include "crawler/application/result/ServiceResult.h"
+
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -59,8 +61,8 @@ public:
     // 获取指定歌手专辑分页并返回写入数量，供同步队列更新状态。
     application::model::SingerCollectionResult crawlSingerAlbumsAndSaveResult(std::uint64_t singer_id, int limit, int max_page_concurrency, std::optional<int> source_song_total = std::nullopt, std::optional<int> source_album_total = std::nullopt, bool refresh_profile = false);
 
-    // 获取并保存歌手主要信息中的平台声明总数；失败时返回空概览。
-    application::model::SingerSourceProfile fetchAndSaveSingerSourceProfile(std::uint64_t singer_id);
+    // 独立刷新整份歌手资料并原子保存；失败保留请求、身份或持久化错误。
+    application::result::ServiceResult<application::model::SingerSourceProfile> fetchAndSaveSingerSourceProfile(std::uint64_t singer_id);
 
 private:
     std::shared_ptr<application::ports::SingerCatalogProvider> singer_catalog_provider_; // 歌手目录 port

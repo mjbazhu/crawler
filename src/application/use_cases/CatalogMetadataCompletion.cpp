@@ -56,19 +56,31 @@ CatalogMetadataCompletion::BatchResult CatalogMetadataCompletion::response(const
     }
     if (!owner) return pending.get();
     using Error = application::result::ServiceErrorType;
-    auto result = BatchResult::failure(Error::ExternalApiError, "metadata response fetch failed: " + key);
+    auto result = BatchResult::failure(Error::TransientExternalApiError, "metadata HTTP request failed: " + key);
     std::size_t bytes = 0;
     bool cacheable = true; // 分页失败保留已解析数据，但不能固定成后续调用的完整缓存。
+    bool parsing = false; // 解析器自身异常不按网络瞬时故障重试。
     try {
         const auto fetched = fetch();
+        if (fetched && (fetched->status_code < 200 || fetched->status_code >= 300)) {
+            const auto error = fetched->status_code == 429 ? Error::ExternalRateLimited : (fetched->status_code >= 500 ? Error::TransientExternalApiError : Error::ExternalApiError);
+            result = BatchResult::failure(error, "metadata HTTP " + std::to_string(fetched->status_code) + " request failed: " + key);
+        }
         if (fetched && fetched->status_code >= 200 && fetched->status_code < 300 && dependencies_.parser) {
+            result = BatchResult::failure(Error::TransientExternalApiError, "metadata parse returned no valid entity: " + key);
             bytes = fetched->body.size();
-            auto batch = dependencies_.parser->parseSources(fetched->body);
-            if (album) cacheable = prepareAlbumResponse(batch, *album, bytes);
-            if (!batch.singers.empty() || !batch.albums.empty() || !batch.songs.empty() || !batch.profiles.empty()) result = BatchResult::success(std::make_shared<const Batch>(std::move(batch)));
+            parsing = true;
+            const auto parsed = dependencies_.parser->parseSourcesResult(fetched->body);
+            if (!parsed.isSuccess()) {
+                result = BatchResult::failure(parsed.error(), parsed.message() + ": " + key);
+            } else {
+                auto batch = *parsed.data();
+                if (album) cacheable = prepareAlbumResponse(batch, *album, bytes);
+                if (!batch.singers.empty() || !batch.albums.empty() || !batch.songs.empty() || !batch.profiles.empty()) result = BatchResult::success(std::make_shared<const Batch>(std::move(batch)));
+            }
         }
     } catch (...) {
-        result = BatchResult::failure(Error::ExternalApiError, "metadata response interrupted: " + key);
+        result = BatchResult::failure(parsing ? Error::ExternalApiError : Error::TransientExternalApiError, "metadata response interrupted: " + key);
     }
     {
         std::lock_guard lock(mutex_);
@@ -114,7 +126,7 @@ application::result::ServiceResult<application::model::SingerSourceProfile> Cata
     const auto found = std::find_if(profiles.begin(), profiles.end(), [&](const auto &item) { return item.source == "migu" && item.source_singer_id == profile.source_singer_id; });
     if (found == profiles.end()) {
         forget("singer:migu:" + profile.source_singer_id, *fetched.data());
-        return Result::failure(application::result::ServiceErrorType::ExternalApiError, "singer profile identity missing or mismatched");
+        return Result::failure(application::result::ServiceErrorType::ExternalApiError, "singer profile parse identity missing or mismatched");
     }
     if (found->source_song_total) profile.source_song_total = found->source_song_total;
     if (found->source_album_total) profile.source_album_total = found->source_album_total;

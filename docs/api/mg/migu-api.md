@@ -35,6 +35,7 @@ OpenAPI：
 | API | 用途 | 入库重点 |
 | --- | --- | --- |
 | `POST /api/migu/singers/crawl` | 获取歌手分类列表 | `singers`、`singer_source_refs` |
+| `POST /api/migu/singers/profile/refresh-from-db` | 独立补齐或刷新库内歌手整份资料 | 来源声明总数、有效资料及头像 URL，不改变目录生命周期 |
 | `POST /api/migu/singer-songs/crawl-from-db` | 从库中认领未同步歌曲的歌手并批量获取歌曲 | `singer_source_refs.songs_sync_status`、歌曲来源表、批次表 |
 | `POST /api/migu/singer-albums/crawl-from-db` | 从库中认领未同步专辑的歌手并批量获取专辑 | `singer_source_refs.albums_sync_status`、专辑来源表、批次表 |
 | `GET /api/migu/overview` | 控制台总览 | 从 `singers`、`songs`、`albums`、来源表和同步状态聚合 |
@@ -769,13 +770,33 @@ POST /api/migu/backfill/singer-songs/retry
 
 `force` 不抢占 `1 同步中` 的任务。主入口已有的 `include_stale_running` 仅用于明确回收超时任务；backfill 通过维护接口先恢复超时状态。`/preview` 与 retry 使用相同强制重采资格；`reset` 拒绝 `force: true`，因为 reset 只负责重置状态。
 
-下列五条旧路径及其 OPTIONS 已移除，调用方需迁移：
+独立补齐歌手资料使用 `POST /api/migu/singers/profile/refresh-from-db`：
+
+```json
+{
+  "source": "migu",
+  "limit": 50,
+  "force": false,
+  "filter": {}
+}
+```
+
+- 默认选择 `source_song_total` 或 `source_album_total` 为 NULL 的来源；数值 0 表示已知，不重复补查。`limit=0` 选择全部匹配来源，正数范围为 1..500，默认 50。
+- 可传 `source_ids` 数组精确选择平台歌手 ID（1..500 个，不使用本地主键）；重复 ID 去重，`limit` 限制实际选择数量。`filter` 支持 `q/country/gender`，默认不过滤未知分类。显式 ID 选择以 ID 为准。仅接受上述规范字段，未知字段或显式空 ID 数组返回 400，避免拼错参数后意外扩大选取范围。
+- `force=true` 重新获取已知资料。一次资料响应同时保存有效名称、两个声明总数、拼音和头像 URL；空字段不覆盖已知值，未知类型和地区不推断。资料有效但仍缺可选字段不等于可以编造填充。
+- 已核验的平台默认歌手头像按缺失处理，不登记为新增有效头像，也不覆盖已有地址；索引、资料及歌曲/专辑带入的歌手共用此规则。历史默认头像仍应作为真实头像缺口单独核查。
+- 资料批次采用启动时 `settings.max_retries` 的有限重试，范围 0..10，0 表示禁用。网络故障、HTTP 5xx、临时无效 JSON 或空实体响应可重取；HTTP 429 重试前至少等待 20 秒。身份错配、明确业务拒绝、其他 HTTP 4xx、解析器异常及写入错误不自动重试。等待期间响应取消和超时。
+- 每个目标的 `retry_count` 记录实际追加尝试，`itemRetryScheduled` 事件记录重试上下文；中途失败不增加最终失败计数，重试成功会清除旧错误。其他批次继续使用各自原有策略。
+- 只请求整份歌手资料，不采集歌曲或专辑目录，不下载头像。目录同步状态、完成数量、时间及正在执行任务的认领信息保持不变。
+- 有候选时返回 202 与 `batch_id/claimed_count/skipped_count/items`；没有候选时返回 200、`batch_id=null`。失败从任务明细查看，可再次按失败来源 ID 调用本接口。HTTP 错误、业务错误、身份错配和写入失败均不得记录为成功。
+- 歌手查询的 `gender` 来自 `singer_source_refs.source_gender`；删除无业务作用的公共 `status` 返回字段。数据库不再保存 `singers.gender/singers.status/singer_source_refs.metadata_status`，目录状态及资源状态不受影响。
+
+下列四条旧目录路径及其 OPTIONS 已移除，调用方需迁移：
 
 | 原路径 | 替代路径 |
 |---|---|
 | `/api/migu/singer-songs/crawl` | `/api/migu/singer-songs/crawl-from-db`；精确 ID 使用 `backfill/singer-songs/retry` |
 | `/api/migu/singer-albums/crawl` | `/api/migu/singer-albums/crawl-from-db`；精确 ID 使用 `backfill/singer-albums/retry` |
-| `/api/migu/singers/profile/refresh-from-db` | 歌手目录主入口或歌手 backfill retry 的 `force: true` |
 | `/api/migu/album-details/crawl` | `/api/migu/backfill/album-details/retry` |
 | `/api/migu/album-songs/crawl` | `/api/migu/backfill/album-songs/retry` |
 
@@ -1068,6 +1089,6 @@ GET /api/migu/governance/events?page=1&page_size=20&target_type=batch&batch_id=b
 
 ### 元数据与二进制下载分离
 
-歌手索引、歌手资料、专辑列表和专辑详情响应中的图片地址，分别保存到 `singer_resources.remote_url`、`album_resources.remote_url`，与本批实体、关系在同一事务提交。新资源只登记为 `status=0`，不生成本地文件，也不把已完成资源重置为待下载。空地址不清除已有地址，列表缩略图不覆盖已采集详情的封面地址。
+歌手索引、歌手资料、专辑列表和专辑详情响应中的有效图片地址，分别保存到 `singer_resources.remote_url`、`album_resources.remote_url`，与本批实体、关系在同一事务提交。新资源只登记为 `status=0`，不生成本地文件，也不把已完成资源重置为待下载。空地址及已核验的默认歌手头像不清除已有地址，列表缩略图不覆盖已采集详情的封面地址。
 
 元数据采集完成后不再自动下载歌手头像、专辑封面、歌曲封面或 `lrc/mrc/trc`。歌曲资源任务仍正常生成，音频、歌曲封面及歌词继续由现有 `POST /api/migu/resources/process` 获取，歌曲远端地址仍由 listen 提供，不新增歌曲 URL 持久字段。该接口本轮不增加歌手或专辑资源处理能力，两者的下载接入后续单独完成。

@@ -1,12 +1,15 @@
 #pragma once
 
 #include "crawler/application/model/AlbumSongPage.h"
+#include "crawler/application/result/ServiceResult.h"
 
 #include "crawler/application/ports/parsing/MetadataParser.h"
 
 #include "crawler/application/ports/parsing/MetadataBatchParser.h"
 
 #include <memory>
+#include <string_view>
+#include <vector>
 
 namespace orchestrator::modules::crawler::infrastructure::music::migu::parser {
 
@@ -26,6 +29,8 @@ public:
 
     // 一次解码响应，供生产入库路径分流实体。
     application::model::MetadataWriteBatch parseMetadataBatch(const std::vector<char> &body) const override;
+    // 委托批次 parser 保留平台明确拒绝的结果。
+    application::result::ServiceResult<application::model::MetadataWriteBatch> parseMetadataResponse(const std::vector<char> &body) const override;
 
     // 解析 Migu 平台响应为领域结果。
     std::vector<domain::ParseResult> parse(const std::vector<char> &raw_data) const override;

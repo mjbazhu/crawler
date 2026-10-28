@@ -23,11 +23,13 @@ class BatchTaskManager {
 public:
     // 单个批次目标处理结果，供持久化 item 写入准确数量和错误。
     struct TargetResult {
-        bool success = false;       // 是否成功
-        int written_count = 0;      // 写入或解析数量
-        std::string error;          // 失败原因
-        std::string error_category; // 失败分类，空表示无失败
-        std::string result_code;    // 结果编码，成功时默认为 ok
+        bool success = false;                         // 是否成功
+        int written_count = 0;                        // 写入或解析数量
+        std::string error;                            // 失败原因
+        std::string error_category;                   // 失败分类，空表示无失败
+        std::string result_code;                      // 结果编码，成功时默认为 ok
+        bool retryable = false;                       // 仅明确允许重取的外部响应失败可重试
+        std::chrono::milliseconds retry_delay {1000}; // 首次重试等待时间，限流至少等待 20 秒
     };
 
     using TargetHandler = std::function<TargetResult(std::string, int)>;
@@ -52,7 +54,8 @@ public:
         std::string settings_snapshot,
         std::string parent_batch_id,
         TargetHandler handler,
-        bool allow_empty = false // 已校验的队列查询可正常完成零目标任务
+        bool allow_empty = false, // 已校验的队列查询可正常完成零目标任务
+        int max_retries = 0       // 额外尝试次数，默认保持其他批次原有执行策略
     );
 
     // 请求取消批量任务；已开始的单个处理会在当前步骤结束后协作退出。

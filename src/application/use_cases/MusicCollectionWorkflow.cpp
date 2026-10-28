@@ -107,9 +107,10 @@ application::model::SingerCollectionResult MusicCollectionWorkflow::crawlSingerA
     return singer_workflow_ ? singer_workflow_->crawlSingerAlbumsAndSaveResult(singer_id, limit, max_page_concurrency, source_song_total, source_album_total, refresh_profile) : application::model::SingerCollectionResult {false, false, 0, "singer workflow is not configured"};
 }
 
-application::model::SingerSourceProfile MusicCollectionWorkflow::fetchAndSaveSingerSourceProfile(std::uint64_t singer_id)
+application::result::ServiceResult<application::model::SingerSourceProfile> MusicCollectionWorkflow::fetchAndSaveSingerSourceProfile(std::uint64_t singer_id)
 {
-    return singer_workflow_ ? singer_workflow_->fetchAndSaveSingerSourceProfile(singer_id) : application::model::SingerSourceProfile {};
+    using Result = application::result::ServiceResult<application::model::SingerSourceProfile>;
+    return singer_workflow_ ? singer_workflow_->fetchAndSaveSingerSourceProfile(singer_id) : Result::failure(application::result::ServiceErrorType::InternalError, "singer profile workflow is not configured");
 }
 
 bool MusicCollectionWorkflow::crawlPendingAlbumDetailsAndSave(std::string source, int limit, int max_page_concurrency)

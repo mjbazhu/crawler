@@ -128,7 +128,7 @@ boost::asio::awaitable<void> seedSingerSource(const std::shared_ptr<mysql::MySql
     boost::mysql::results result;
 
     co_await connection->async_execute(
-        "INSERT INTO singers (name, normalized_name, gender, status, created_at, updated_at) VALUES ('" + artist_name + "', 'codex_relation_artist_" + suffix + "', 1, 1, " + std::to_string(now) + ", " + std::to_string(now) + ")",
+        "INSERT INTO singers (name, normalized_name, created_at, updated_at) VALUES ('" + artist_name + "', 'codex_relation_artist_" + suffix + "', " + std::to_string(now) + ", " + std::to_string(now) + ")",
         result,
         boost::asio::use_awaitable
     );
@@ -145,7 +145,7 @@ boost::asio::awaitable<void> seedSingerSource(const std::shared_ptr<mysql::MySql
     const std::string guest_id = "artist-guest-" + suffix;
     const std::string guest_name = "Codex Guest Artist " + suffix;
     co_await connection->async_execute(
-        "INSERT INTO singers (name, normalized_name, gender, status, created_at, updated_at) VALUES ('" + guest_name + "', 'codex_relation_guest_artist_" + suffix + "', 1, 1, " + std::to_string(now) + ", " + std::to_string(now) + ")",
+        "INSERT INTO singers (name, normalized_name, created_at, updated_at) VALUES ('" + guest_name + "', 'codex_relation_guest_artist_" + suffix + "', " + std::to_string(now) + ", " + std::to_string(now) + ")",
         result,
         boost::asio::use_awaitable
     );
