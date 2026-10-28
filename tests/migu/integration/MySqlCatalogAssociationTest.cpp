@@ -62,6 +62,18 @@ public:
     int profiles = 0; // 整份歌手资料请求数
     int details = 0;  // 整份专辑详情请求数
     int pages = 0;    // 缺页请求数，本用例详情已返回完整曲目
+    int album_pages = 0; // 歌手专辑目录请求数
+    // 提供与生产 Migu 相同的容量提示，验证真实 writer 前的窗口收缩。
+    std::size_t singerAlbumPageSize() const override
+    {
+        return 10;
+    }
+    // 目录会重新获取当前列表，不能因资料复用而跳过入口。
+    std::optional<Response> fetchSingerAlbumsPage(std::uint64_t id, int page) override
+    {
+        ++album_pages;
+        return MockMusicProvider::fetchSingerAlbumsPage(id, page);
+    }
 
     // 只有目录入口允许获取歌手资料，关联歌手直接使用响应字段。
     std::optional<Response> fetchSingerInfo(std::uint64_t id) override
@@ -156,7 +168,7 @@ int main()
         provider->mock_singer_songs_response = response(Json::array({tracks[0]}));
         auto completion = std::make_shared<use::CatalogMetadataCompletion>(use::CatalogMetadataCompletionDependencies {provider, provider, catalog, dispatch});
         use::SingerCatalogWorkflow workflow({provider, dispatch, saver, nullptr, nullptr, completion});
-        require(workflow.crawlSingerAlbumsAndSaveResult(777001, 1, 1).success, "album collection failed");
+        require(workflow.crawlSingerAlbumsAndSaveResult(777001, 1, 4).success, "album collection failed");
         require(scalar(pool, "SELECT COUNT(*) FROM song_source_refs WHERE source_content_id LIKE '" + prefix + "%'") == 10, "album tracks were discarded or duplicated");
         require(scalar(pool, "SELECT id FROM song_source_refs WHERE source_content_id='" + prefix + "0'") == first_id, "existing song source was recreated");
         require(scalar(pool, "SELECT COUNT(*) FROM song_source_refs WHERE source_content_id='" + prefix + "0' AND source_title_pinyin='gequ0'") == 1, "existing song fields were not completed");
@@ -164,9 +176,11 @@ int main()
         require(scalar(pool, "SELECT COUNT(*) FROM album_artist_refs r JOIN album_source_refs a ON a.id=r.album_source_ref_id JOIN singer_source_refs s ON s.id=r.singer_source_ref_id WHERE a.source_album_id='" + album_id + "' AND s.source_singer_id='777001'") == 1, "album artist relation was lost");
         require(scalar(pool, "SELECT COUNT(*) FROM song_artist_refs r JOIN song_source_refs s ON s.id=r.song_source_ref_id JOIN singer_source_refs a ON a.id=r.singer_source_ref_id WHERE s.source_content_id='" + prefix + "9' AND a.source_singer_id='777002'") == 1, "associated singer was not persisted with its song");
         require(scalar(pool, "SELECT COUNT(*) FROM album_source_refs WHERE source_album_id='" + album_id + "' AND detail_sync_status=2 AND songs_sync_status=2 AND songs_sync_count=10 AND source_song_total=10 AND summary='完整简介'") == 1, "detail and track completion were not saved together");
-        require(workflow.crawlSingerAlbumsAndSaveResult(777001, 1, 1).success, "repeat album collection failed");
+        require(workflow.crawlSingerAlbumsAndSaveResult(777001, 1, 4).success, "repeat album collection failed");
         (void)workflow.crawlSingerSongsAndSaveResult(777001, 1, 1);
         require(provider->details == 1 && provider->profiles == 1 && provider->pages == 0, "complete responses triggered duplicate metadata requests");
+        require(provider->album_pages == 2, "limited catalogs fetched unused directory pages");
+        std::cout << "NORMAL_INTEGRATION_REQUEST_COUNTS profiles=" << provider->profiles << " details=" << provider->details << " album_pages=" << provider->album_pages << " track_pages=" << provider->pages << '\n';
 
         auto restarted = std::make_shared<use::CatalogMetadataCompletion>(use::CatalogMetadataCompletionDependencies {provider, provider, catalog, dispatch});
         use::SingerCatalogWorkflow after_restart({provider, dispatch, saver, nullptr, nullptr, restarted});

@@ -362,3 +362,15 @@ API 覆盖与数据完整性还存在以下缺口：
 - 本次 `MiguSingerIndexIngestionFlowTest`、`SingerShortPageTest`、`CatalogMetadataCompletionTest`、`AlbumTrackPaginationTest` 四项离线回归通过。
 - `MySqlCatalogAssociationTest`、`MiguMetadataRecoveryIntegrationTest` 在独立库 `crawler_ownership_test_metadata_faults_20261028_115908` 通过；相关实现 clangd 检查 0 errors。
 - 快照、字段级 CSV、分类结果、修复前失败记录及回归日志位于 `D:/codex-runs/crawler-metadata-quality-recovery/20261028_115414/`。本轮没有资源测试、资源 API 或平台采集请求，没有修复历史运行库；恢复验证使用持久化 fixture 和重建对象，没有强杀真实采集进程。
+
+## 元数据请求复用与分页预取收尾（2026-10-28）
+
+在 `2e25813` 基础上对普通采集做请求计数。两轮“歌手专辑、歌手歌曲”fixture 中，目录各请求 2 次，整份歌手资料与专辑详情各请求 1 次，完整详情的曲目补页为 0；强制刷新仍另按显式请求计数，未作为普通重复请求处理。MySQL 用例也确认两轮目录请求 2 次，资料和详情各 1 次，保留来源身份、字段及全部关系。
+
+实际冗余来自固定并发窗口。用相同的生产卡片结构分别开启/关闭容量提示，窗口为 4 时歌曲 124 首和专辑 21 张均从 4 次请求降到 3 次，来源集合完全一致。当前 Migu 歌曲/专辑默认容量 50/10 由 provider 和 parser 共用；高层只依赖窄 port 的容量提示，其他实现默认 0 表示未知，无需猜测页大小。
+
+编排按当前剩余数量缩小窗口，按实际末页推进游标，不设置推测出的绝对末页。短中间页后仍可追加页，满页恰好达到总数时保留一次探测；实际数量超过声明总数时回退原窗口并等待空页。未知总数或容量、显式 limit、失败重试和 50 页保护均保留；到达保护上限但未证明结束时返回部分完成，避免过期总数导致误报成功。此处只减少目录预取，真实专辑详情内的全部曲目及必要缺页规则不变。
+
+- `demo` 和所选 target 构建通过；四项离线通过：`SingerShortPageTest`、`CatalogMetadataCompletionTest`、`AlbumTrackPaginationTest`、`MiguSingerIndexIngestionFlowTest`。
+- `MySqlCatalogAssociationTest` 在新库 `crawler_ownership_test_request_efficiency_20261028_124121` 通过，包含并发窗口 4 下的实际目录计数、完整专辑、新曲目、关系、重复写入、重建实例后的详情复用及事务回滚。
+- 两项 clangd 检查 0 errors；证据位于 `D:/codex-runs/crawler-metadata-request-efficiency/20261028_124121/`。减少请求的计数来自离线对照与 MySQL fixture，不是本轮真实平台实采降幅；本次没有真实平台请求、资源 API 或资源下载。

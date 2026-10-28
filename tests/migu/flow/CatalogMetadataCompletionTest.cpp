@@ -42,6 +42,20 @@ public:
     std::atomic<int> profiles {0}; // 歌手资料请求数
     std::atomic<int> details {0};  // 专辑详情请求数
     std::atomic<int> pages {0};    // 曲目补页请求数
+    std::atomic<int> song_pages {0};  // 歌手歌曲目录请求数
+    std::atomic<int> album_pages {0}; // 歌手专辑目录请求数
+    // 目录必须重取时仍统计实际分页，不把详情缓存复用当成目录未执行。
+    std::optional<Response> fetchSingerSongsPage(std::uint64_t id, int page) override
+    {
+        ++song_pages;
+        return MockMusicProvider::fetchSingerSongsPage(id, page);
+    }
+    // 普通专辑目录与歌曲目录共用整份资料，但各自获取当前列表。
+    std::optional<Response> fetchSingerAlbumsPage(std::uint64_t id, int page) override
+    {
+        ++album_pages;
+        return MockMusicProvider::fetchSingerAlbumsPage(id, page);
+    }
     // 同一份资料同时包含歌手实体及两个声明总数。
     std::optional<Response> fetchSingerInfo(std::uint64_t id) override
     {
@@ -115,6 +129,8 @@ int main()
         (void)workflow.crawlSingerAlbumsAndSaveResult(7, 1, 1);
         (void)workflow.crawlSingerSongsAndSaveResult(7, 1, 1);
         require(source->profiles == 1 && source->details == 1, "repeated collection repeated complete entity requests");
+        require(source->song_pages == 2 && source->album_pages == 2 && source->pages == 0, "normal catalogs or complete album track requests were unexpectedly repeated");
+        std::cout << "NORMAL_REQUEST_COUNTS profiles=" << source->profiles << " details=" << source->details << " song_pages=" << source->song_pages << " album_pages=" << source->album_pages << " track_pages=" << source->pages << '\n';
 
         const auto refreshed = completion->singerContext(7, 99, 99, true);
         require(refreshed.isSuccess() && refreshed.data()->source_song_total == 2 && refreshed.data()->source_album_total == 1, "forced singer refresh reused stale totals");
