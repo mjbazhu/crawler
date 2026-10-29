@@ -30,6 +30,8 @@ Invoke-RestMethod "$taskBase/api/migu/tasks/$taskBatchId/events?page=1&page_size
 
 `tasks/progress` 和 `tasks/stop` 依赖内存任务，重启后可能返回 404；持久化历史通过 tasks 详情、items、events 查询。没有 HTTP 全服务 shutdown 路由。
 
+封面服务释放时请求协作取消，已排队及在途 worker 持有独立的进度、停止标记和所需 port，不再访问已析构的批次管理器。该生命周期保护不构成全服务排空协议，也不保证 MySQL 池取消前所有目标已经完成回写；维护窗口仍按上述顺序等待静止。
+
 ## 中断后的状态恢复
 
 先确认旧进程已停止或原认领确已超时，选择大于正常最长任务耗时的阈值。恢复使旧代次失效，但不会撤销正在进行的外部副作用；不应为了快速解锁而把仍正常执行的任务批量置失败。

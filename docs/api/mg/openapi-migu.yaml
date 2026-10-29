@@ -1552,7 +1552,8 @@ components:
             "description": "Download state: pending, running, complete, failed. A previous committed file may remain available while refreshing."
           },
           "available": {
-            "type": "boolean"
+            "type": "boolean",
+            "description": "Queue and catalog availability is a lightweight path, existence and size check. Process reuse and content reads additionally verify the image and SHA-256; missing or corrupt local content fails processing while preserving the saved receipt."
           },
           "local_url": {
             "type": "string",

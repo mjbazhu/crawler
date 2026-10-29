@@ -47,7 +47,7 @@ SQL 测试配置从 [MySqlTestSupport.h](../../tests/migu/support/MySqlTestSuppo
 | MySQL writer、migration、关系或 catalog | `MySqlMetadataOwnershipTest`、`MiguSongRelationIntegrationTest`、`MiguCatalogQueryIntegrationTest` 中受影响者 | 独立 MySQL；写入/升级选 ownership，关系选 relation，事实计数/查询/资源治理选 catalog |
 | 歌手资料刷新真实 adapter 与字段清理迁移 | `MySqlSingerProfileRefreshTest`；运行期 SQL prepare 另选 `MySqlMetadataOwnershipTest --check-sql-only` | 独立 MySQL；前者要求空库且库名以 `crawler_ownership_test_singer_profile_` 开头，使用离线平台响应；验证旧结构升级及重复迁移、资料/头像保存、重试、错误清理及目录生命周期隔离 |
 | 资源 workflow 与资源解析 | `SongResourceDownloadWorkflowTest`、`AsyncSongResourceDownloadWorkflowTest`，解析变化加 `MiguSongResourceParserTest` | workflow 使用替身端口，不要求真实下载；同步与异步实现都受影响时都检查 |
-| 歌手/专辑封面本地下载 | `MetadataCoverDownloadWorkflowTest`、`MetadataCoverStoreTest`、`MetadataCoverApiTest`；持久化另选 `MySqlMetadataCoverQueueTest` | 前三项分别覆盖文件回执编排、回环 HTTP/图片内容及接口/后台任务；MySQL 测试仅访问 `crawler_ownership_test_*` 独立库。API/共享文件设施变化继续选相应行 |
+| 歌手/专辑封面本地下载 | `MetadataCoverDownloadWorkflowTest`、`MetadataCoverStoreTest`、`MetadataCoverApiTest`；持久化另选 `MySqlMetadataCoverQueueTest` | 覆盖完整内容复用、同大小损坏/缺失的失败计数及旧回执保留、旧代次快照、排队/在途析构；MySQL 用 `crawler_ownership_test_*` 验证含真实 SQL 写入故障的确认边界。共享设施变化继续选对应行 |
 | 歌手/专辑封面云端存储 | `MetadataCoverCloudWorkflowTest`、`CloudFileStoresTest`、`ProcessRunnerTest`；持久化另选 `MySqlMetadataCoverCloudTest` | 共用流程、百度回读、Google RC multipart/摘要、真实本机进程超时/取消；MySQL 用独立库验证云端代次、快照和别名。真实云端另需有效登录态/RC，不能把替身结果计作真实上传 |
 | 流式传输、完整文件提交或异步运行时 | `AsyncHttpStreamTest`、`AsyncFileBlobStoreTest`、`SongResourceDownloadStorageTest`、`AsyncTaskTest` 中受影响者 | 本机 I/O；分别覆盖回环 HTTP、文件存储或异步调度，不能互相替代 |
 | 批次事件、认领与恢复 | `CrawlerServiceResourceBatchEventTest`；持久化认领/恢复选 `MiguBackfillClaimIntegrationTest` / `MiguMetadataRecoveryIntegrationTest` | 事件测试使用替身及本地日志；后两者使用独立 MySQL 并写 fixture |

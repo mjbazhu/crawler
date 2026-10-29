@@ -86,7 +86,9 @@
 - 使用既有存储根，目录为 `migu/singers/{平台歌手ID}/cover/`、`migu/albums/{规范专辑ID}/cover/`，实际文件名包含独占后缀。单图上限 8 MiB，默认总超时 15 秒，最多三次 HTTP 跳转；按内容判断格式，并校验传输、大小与 SHA-256。图片读取重新核对 checksum。
 - HTTPS 保持证书链和主机名校验，Windows OpenSSL 客户端同时装载系统 ROOT。CDN 自动返回 WebP 时按实际格式保存与响应，HTTP adapter 使用自定义 Content-Type 保留图片 MIME。
 - 已完成资源默认复用；`refresh=true` 需要显式 `resource_ids`，用于换图或修复本地文件丢失。刷新过程与失败均保留旧成功文件回执，`available` 与当前任务 `status` 分别表达可用性和下载状态。
+- queue/catalog 的 `available` 只做根边界、存在性和大小检查；content 和实际复用额外验证图片及 SHA-256。同大小损坏或文件缺失不能算成功跳过，process 计失败并保留旧 DB 回执，显式 refresh 用于修复。默认队列不遍历已完成资源做全盘校验。
 - DB 明确拒绝时清理本次独占文件；无法确认提交时返回 `writeback_uncertain`，保留新文件和日志。文件日志携带 `song|singer|album` 类型，恢复时检查正确资源表；专辑别名归一迁移后的回执仍受引用保护。
+- 写入响应报错后的普通重读只能确认已看到的匹配成功，不能用未命中或不同快照证明未提交；未证实的结果继续保留未知。条件失败及成功刷新后重读当前记录，操作错误与持久化文件快照分别表达，旧 worker 不返回已经过期的云端状态或文件回执。
 - 长任务默认 `async=true`，返回 `202 + batch_id`，进度、明细、事件和取消复用现有任务路由。同步模式顺序处理有界小批次；`concurrency` 控制后台 worker 数量，范围 `1..32`。
 - 歌手/专辑列表和详情的 `cover` 对象返回本地回执与 `local_url`，原 `avatar_url/cover_url` 仍为平台地址。内容路由按资源身份解析已提交文件，支持 MIME、ETag 和 304；未知、缺失或损坏文件返回 404，不接受用户指定路径。
 - 开启 `CRAWLER_RESOURCE_CLOUD_UPLOAD_ENABLED` 后，同一 process 在本地成功后调用共用云端用例。配置后端 `baidupcs` 或 `rclone`，分别接百度与 Google；已有本地文件仅补传。远端内容核验通过后独立认领、条件回写 `cloud_*`，失败保留本地 `status=2` 和图片，未知状态可重新核对。云端回执、认领和错误独立于本地状态，刷新和专辑别名归一需与本地文件成套处理。

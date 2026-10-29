@@ -1,26 +1,32 @@
 # 当前任务与会话交接
 
-更新日期：2026-10-29。工作区：`C:/Users/nidie/.codex/worktrees/artist-album-cover-storage/crawler`，分支：`codex/artist-album-cover-storage`，初始基线 `21b19a5`，已集成 main `69a157f`，本轮文档核对的源码为 `967bc67`。本地封面、指定 main20 克隆库和两家云端实测已完成；本轮只补文档与本机启动演练。原 main 工作区不作修改。
+更新日期：2026-10-29。工作区：`C:/Users/nidie/.codex/worktrees/artist-album-cover-storage/crawler`，分支：`codex/artist-album-cover-storage`，初始基线 `21b19a5`，已集成 main `69a157f`。当前 PR 全量复核起点为 `e9f35b1`；本地封面、指定 main20 克隆库、两家云端实测及三份运行指南均已交付，历史范围见下方。原 main 工作区不作修改。
 
-当前交付指示：用户已授权更新现有文档、补齐配置/快速启动/服务恢复三份指南，检查后提交推送 PR #7，暂不合并。主分支已通过 PR #5/#6 合入的歌手资料清理和长期验收已在本功能分支保留并完成组合验证。下一阶段[统一云端回执重构](../roadmap/resource-cloud-receipts.md)方案已确认但尚未实施，不在当前交付时新增回执表或删云端列。
+当前交付指示：用户要求完整复核 PR #7 的封面下载、云端上传、数据库回写和文档一致性，发现问题直接修复并测试，继续推送原 PR，暂不合并。主分支已通过 PR #5/#6 合入的歌手资料清理和长期验收继续保留。下一阶段[统一云端回执重构](../roadmap/resource-cloud-receipts.md)方案已确认但尚未实施，不在当前交付时新增回执表或删云端列。
 
-## 本轮文档校准与指南
+## 当前 PR 复核
+
+已修复同大小损坏文件误复用、缺失文件计数及回执丢失、下载刷新响应的旧云端状态、百度数字路径误判缺失、SQL 报错重读不匹配被误判确定未提交，以及后台封面 worker 对管理器生命周期的依赖。实现复用既有 reader、队列和持久化日志；API/两份 OpenAPI、资源/SQL/架构及运行说明同步校准。完整场景、测试库和证据固定在[全量复核与修复](../roadmap/metadata-cover-cloud-storage.md#pr-7-全量复核与修复2026-10-29)。
+
+23 项离线/本机回归、7 项新独立 MySQL 和 186 份 SQL prepare 通过；两个 clangd 检查均为 0 errors。原克隆库 40 张目录/内容 HTTP 核对再次通过，测试服务已停止。百度仅做真实只读元信息探测，没有重新上传；历史两家各 40 张实测范围不变。实际提交与 PR 状态以 Git 核对为准，完成后保持 Draft/open、未合并。
+
+## 已交付文档校准与指南
 
 以 `967bc67` 为源码基线更新架构及当前封面数据流、历史持久化入口、封面/总路线、API 的歌曲上传示例、运行说明、SQL 表职责和智能体读取/验证入口。新增[配置说明](../configuration.md)、[快速启动](../getting-started.md)和[服务运行与恢复](../operations/service-lifecycle.md)；总索引同步导航及覆盖状态，统一回执表仍待实施。
 
 更新 Markdown 与静态/运行期 OpenAPI 说明文字，运行期工厂仅改 description 字符串，不改业务逻辑、协议字段结构、SQL 或本机私有配置。最终重编工厂、demo 和三项 API target 并通过 3 项 API CTest；运行期 JSON 前后只有 6 处 description 不同，其余值完全一致。新库 `crawler_ownership_test_quickstart_20261029_102348` 两轮 22 次 HTTP 检查通过，首启 33 份迁移、重启不重执行，业务/批次均为 0，两个自建服务已停止。完整结果固定在[指南验收](../operations/service-lifecycle.md#文档校准与指南验收2026-10-29)，未演练的备份还原、真实进程中断及多实例恢复保留边界。最终检查后精确暂存并推送原分支到 PR #7，不执行 PR 合并。
 
-## 本轮 main 集成
+## 已完成 main 集成
 
 已按用户授权在本功能分支纳入 main `69a157f`，解决全部 7 处冲突，保留 main 的歌手资料刷新、字段清理、默认头像保护、有限重试和[长期验收原文](../migu/singer-profile-validation.md)。本轮仅集成功能基线，统一云端回执方案仍未实施。
 
 ## PR 交付与接续入口
 
-[PR #7](https://github.com/mjbazhu/crawler/pull/7) 继续保持 Draft/open、未合并。原实现/文档提交为 3335716、524ac68、de96bf2；main 集成提交为 `70f4909`，全量路由核对为 `967bc67`，本轮 API 文案校准为 `a9d4127`。指南随原功能分支提交推送，不执行 PR 合并或改动 main 工作区。
+[PR #7](https://github.com/mjbazhu/crawler/pull/7) 继续保持 Draft/open、未合并。原实现/文档提交为 3335716、524ac68、de96bf2；main 集成提交为 `70f4909`，全量路由核对为 `967bc67`，API 文案校准为 `a9d4127`，运行指南为 `e9f35b1`。当前复核修复继续沿原功能分支提交推送，不执行 PR 合并或改动 main 工作区。
 
-本轮 demo/受影响 target 构建、17 项离线/本机回归、7 项全新隔离 MySQL 回归及 186 份 SQL prepare 通过；原克隆库的 20 位歌手/20 张专辑完成目录、详情、本地封面与 SHA-256 联调，历史歌手详情 404 缺口已消除，已删除字段未恢复。49 个 main 歌手 SQL/源码/长期记录及资料刷新 OpenAPI 已核对保留。完整库名、日志和验证边界见[组合验收](../roadmap/metadata-cover-cloud-storage.md#pr-7-与-main-的组合验收2026-10-29)。
+前序 main 集成的 demo/受影响 target 构建、17 项离线/本机回归、7 项全新隔离 MySQL 回归及 186 份 SQL prepare 通过；原克隆库的 20 位歌手/20 张专辑完成目录、详情、本地封面与 SHA-256 联调，历史歌手详情 404 缺口已消除，已删除字段未恢复。49 个 main 歌手 SQL/源码/长期记录及资料刷新 OpenAPI 已核对保留。完整库名、日志和验证边界见[组合验收](../roadmap/metadata-cover-cloud-storage.md#pr-7-与-main-的组合验收2026-10-29)。
 
-本轮自建服务已停止，真实云端未重传，未写运行库或原来源库；历史百度/Google 上传验收仍保留原范围。下一步先按用户指示审阅 PR，合并需另有明确指令。后续统一回执 SQL 重构从当时最新 main 的独立分支开始。
+此前自建服务已停止，真实云端未重传，未写运行库或原来源库；历史百度/Google 上传验收仍保留原范围。本轮 PR 复核结果见顶部，完成后继续保持未合并，合并需另有明确指令。后续统一回执 SQL 重构从当时最新 main 的独立分支开始。
 
 ## 全量路由文档核对（2026-10-29）
 

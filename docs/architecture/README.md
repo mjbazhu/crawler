@@ -13,7 +13,7 @@
 | 歌曲资源存储 | 默认 filesystem，保留显式选择的 rclone 远端 copyurl；正式装配不挂本地成功后的歌曲 uploader | [ServerApplication.cpp](../../src/infrastructure/app/ServerApplication.cpp) |
 | 歌手/专辑封面 | 独立服务与本地/云端 workflow；先保存本地，按配置选百度或 rclone 上传核验，独立条件回写 | [MetadataCoverComposition.cpp](../../src/infrastructure/app/MetadataCoverComposition.cpp)、[CloudFileStoreComposition.cpp](../../src/infrastructure/app/CloudFileStoreComposition.cpp) |
 
-现状核对日期为 2026-10-29，源码基线 `967bc67`，已包含 main `69a157f` 的歌手资料改动及本分支封面实现。元数据关系见[数据模型](../migu/metadata.md)，资源规则见[资源流程](../migu/resources.md)，配置与运行从[配置说明](../configuration.md)、[快速启动](../getting-started.md)和[恢复指南](../operations/service-lifecycle.md)进入；实际验证范围另见各主题验收记录。
+现状核对日期为 2026-10-29，PR 复核起点 `e9f35b1`，已包含 main `69a157f` 的歌手资料改动及本分支封面实现；后续边界修复见[PR #7 复核记录](../roadmap/metadata-cover-cloud-storage.md#pr-7-全量复核与修复2026-10-29)。元数据关系见[数据模型](../migu/metadata.md)，资源规则见[资源流程](../migu/resources.md)，配置与运行从[配置说明](../configuration.md)、[快速启动](../getting-started.md)和[恢复指南](../operations/service-lifecycle.md)进入；实际验证范围另见各主题验收记录。
 
 ### 当前封面数据流
 
@@ -38,6 +38,8 @@ flowchart TD
 ```
 
 网络及文件 I/O 不持有认领事务。用例依赖队列、保存/读取和云端窄 port，厂商选择只在组合根；API 不接触 SQL、文件系统或客户端。图片读取另经受控 content 路由，不把云端路径当公开 URL。
+
+封面后台 worker 拥有独立上下文和必要 port，批次管理器销毁时通过共享停止标记请求取消；worker 不捕获管理器裸地址。该机制保证局部生命周期安全，全服务关闭及恢复仍按运行指南处理，不等同于分布式持久队列或完整排空。
 
 本地和云端成功状态独立，云端失败保留可读本地图片；刷新、取消、stale 恢复和专辑别名归一保留代次及快照保护。当前两张封面资源表各保存一组最后确认的 `cloud_*`；一张多平台回执表是[待实施方案](../roadmap/resource-cloud-receipts.md)，不属于本图现状。逐项状态和验收以[封面云端专项](../roadmap/metadata-cover-cloud-storage.md)维护，避免在架构页复制接口和 SQL 全文。
 

@@ -1143,6 +1143,8 @@ GET /api/migu/governance/events?page=1&page_size=20&target_type=batch&batch_id=b
 
 后台返回 `202` 和 `batch_id`，复用既有进度、任务明细、事件与停止接口。任务类型为 `metadataCovers`，明细类型为 `singerCover/albumCover`，payload 包含 `owner_type/resource_id/source_ref_id`，不包含远端图片 URL。同步返回 `200`、`items` 及 `success_count/failed_count/skipped_count`，单项失败由明细表达。
 
+实际处理到已下载的候选时，复用前完整核对图片内容和 SHA-256；缺失或损坏返回 `success=false`、`skipped=false`、`result_code=local_file_missing`，计入 `failed_count`。保留数据库中的旧 `status/local_path/size_bytes/checksum`，以显式 `refresh=true` 和资源 ID 修复；不能把不可读的旧图当作成功跳过。默认 process 只选择队列候选，不扫描所有已完成文件。
+
 对已完成封面换图或修复本地丢失文件时，必须显式指定资源：
 
 ```json
@@ -1156,9 +1158,13 @@ GET /api/migu/governance/events?page=1&page_size=20&target_type=batch&batch_id=b
 
 刷新期间及失败后保留旧成功文件，队列状态和 `available` 分别表达任务进展与图片是否可用。请求开始后 URL 已更新或代次已改变时，旧下载不能覆盖新结果；提交不确定返回 `writeback_uncertain`，新文件及日志保留待核对。失败项可直接再次 process，无需先 reset。
 
+条件回写及失败收尾后尽可能重读当前数据库快照，避免旧 worker 返回旧文件或过期云端状态；item 顶层错误表示本次操作，不等于将旧文件回执改成失败。写入响应报错时，只有重读到完整匹配的成功回执才确认成功；未读到成功或原资源已被别名归一，继续保留未知，不能据此认定未提交并删除新文件。
+
 超时恢复示例：`{"owner_type":"album","stale_after_seconds":1800}`。阈值范围 `1..604800` 秒，使用独立认领时间；普通元数据更新时间不延长认领。恢复后待处理/失败项可以重新下载，已有图片继续可用。
 
 歌手和专辑列表、详情增加可空的 `cover` 对象，包含 `owner_type/resource_id/source_ref_id/status/available/local_url/local_path/size_bytes/checksum` 及脱敏错误。`local_url` 在已提交文件存在时返回内容路由，否则为 null。原 `avatar_url/cover_url` 保持平台远端地址含义，`local_path` 是模块相对路径，绝对存储根不返回。
+
+queue/catalog 的 `available` 是路径边界、文件存在及长度的轻量检查，content 读取和实际复用处理另外核对图片与摘要。轻量检查不能证明同大小文件未损坏；最终内容校验失败时 content 返回 404，process 明细返回失败和 `available=false`。
 
 本地内容接口按实际图片返回 MIME 和 SHA-256 ETag，缓存策略要求重新验证；`If-None-Match` 匹配时返回 304。两类所有者中相同的数字资源 ID 始终分别查询，不能跨所有者取图。
 
@@ -1169,3 +1175,5 @@ HTTPS 默认校验证书链及主机名，Windows 额外只读加载系统 ROOT 
 响应的 `cloud` 对象包含 `enabled/status/current/backend/path/size_bytes/checksum/uploaded_at` 及脱敏错误。云端状态独立为 `0 待上传、1 运行中、2 已确认、3 失败、4 待核对`。`current=true` 表示回执匹配当前文件及已启用的目标配置。百度回读完整文件比对 SHA-256；Google RC 核对远端大小与完整 SHA-256 或 MD5。只有核验和条件 DB 回写均成功才把 item 计为成功。
 
 云端失败时本地 `status=2`、文件和 `local_url` 保留，item 的 `success=false`、顶层错误与 `cloud` 错误描述云端阶段。再次 process 仅补云端。云端 `path` 保存最后一次确认的对象，刷新或后端切换时可能暂时过期，应同时检查 `current`；该路径不是公开图片 URL。`cloud_status` 请求数组最多 5 项，值域 `0..4`。stale 恢复开启云端时合计本地和云端恢复数；两类认领代次独立。
+
+本地成功刷新使当前云端任务置待确认，返回的 `cloud.status` 同步为 0，并保留最后确认的对象路径；关闭上传时也不会返回旧的“当前已确认”状态。云端写入响应不确定且未读到成功回执时继续保留未知；数据库无法写入收尾状态时，通过后续重读及 stale 恢复核对，不能保证断库期间立即持久化为 4。

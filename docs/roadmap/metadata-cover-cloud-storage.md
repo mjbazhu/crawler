@@ -2,7 +2,7 @@
 
 更新日期：2026-10-29。分支 `codex/artist-album-cover-storage`。百度与 Google 已接入同一封面流程，各自 40 张真实图片验收完成。用户要求开启配置后自动上传并正常回写，既有关闭自动上传的约定不限制这两类封面。
 
-本文件记录当前已实现的单份云端回执基线。后续已确认将实际存储平台与上传工具区分、把三类 resources 的云端结果迁入统一回执表，方案见[统一云端回执重构](resource-cloud-receipts.md)；该方案尚未实施。本次先整理并提交当前实现、创建 PR，按用户最新指示暂不合并。
+本文件记录当前已实现的单份云端回执基线。后续已确认将实际存储平台与上传工具区分、把三类 resources 的云端结果迁入统一回执表，方案见[统一云端回执重构](resource-cloud-receipts.md)；该方案尚未实施。当前实现已进入 PR，继续在同一分支复核修复，按用户指示暂不合并。
 
 交付位于[草稿 PR #7](https://github.com/mjbazhu/crawler/pull/7)，保持未合并。本轮已在功能分支纳入 main `69a157f`，解决 7 处冲突并完成下方组合验收；歌手资料长期记录和字段清理保留。接续顺序见[当前交接](../agents/current.md#pr-交付与接续入口)。
 
@@ -56,7 +56,7 @@ Google 不依赖 RC 和 crawler 共用磁盘。协议依据为 [rclone 官方 RC
 
 本地成功刷新使旧云端认领失效并置待上传；失败刷新保留原图和最后确认的云端回执。专辑别名归一迁移所选本地文件及其云端回执，不继承旧 worker 的运行态。stale 恢复独立推进云端代次并置待核对，不删除可能仍被引用的对象。
 
-EOF、超时、无效元信息或缺少可靠摘要均不当作不存在或成功。百度按实际客户端 `类型 文件/目录` 与旧 `文件类型` 输出识别对象；Google 远端大小相同但摘要不同仍报错。目标同名内容不符时不盲目覆盖。
+EOF、超时、无效元信息或缺少可靠摘要均不当作不存在或成功。百度按实际客户端 `类型 文件/目录` 与旧 `文件类型` 输出识别对象；缺失必须匹配明确错误码字段，文件名或目录中的 `31066` 不代表对象缺失。Google 远端大小相同但摘要不同仍报错。目标同名内容不符时不盲目覆盖。
 
 ## API 契约
 
@@ -109,3 +109,48 @@ EOF、超时、无效元信息或缺少可靠摘要均不当作不存在或成�
 - `MySqlAlbumIdentityTest`：`crawler_ownership_test_pr7_identity_20261029_095039`。
 
 证据根仍为 D:/codex-runs/crawler-cover-local/20261028/。PR #7 保持 Draft/open、未合并；组合结果随功能分支推送后，以 GitHub 冲突状态复核为准。原 main 工作区保持原提交和干净状态。
+
+## PR #7 全量复核与修复（2026-10-29）
+
+本轮以 PR head `e9f35b1` 为审查起点，复核下载、云端适配、条件回写、恢复、API 及文档。用户授权直接修复和测试，继续提交原功能分支，暂不合并；main `69a157f` 的歌手资料改动仍保留。没有实施统一云端回执方案，没有修改 migration、SQL 模板或本机私有配置。
+
+### 问题与修复
+
+| 场景 | 原问题 | 当前行为与验证入口 |
+| --- | --- | --- |
+| 已完成本地文件复用 | 只检查存在与大小，同大小损坏也成功；文件丢失计作跳过，操作错误覆盖返回的文件回执 | 下载复用及云端已确认分支读取并核对图片和 SHA-256；缺失/损坏返回 `local_file_missing`、计为失败，保留数据库文件回执。见 `MetadataCoverDownloadWorkflowTest`、`MetadataCoverCloudWorkflowTest`、`MetadataCoverApiTest` |
+| 本地刷新与并发快照 | 成功响应可能仍带旧云端状态，旧 worker 失败后仍返回自己的旧文件 | 下载条件确认后重读数据库；刷新成功返回待上传状态和最后云端回执，失败返回当前赢家的文件快照，操作错误独立表达。见本地 workflow、MySQL 封面及 API 测试 |
+| 百度元信息 | 任意输出包含 `31066` 都可能被判为缺失，正常路径或 EOF 错误存在误上传风险 | 优先识别成功元信息；只有明确错误码字段才确认缺失，其他输出保持未知，不盲目上传。见 `CloudFileStoresTest`；真实只读探测也识别到 `代码: 31066,` |
+| 数据库响应不确定 | 成功 SQL 报错后，重读不匹配被视为确定未提交，可能提前清理仍被引用或尚在提交的文件 | 只有匹配的当前回执能补充确认成功；其他重读结果保留未知，文件交给持久化日志恢复。明确成功且零影响行仍表示条件拒绝。两项独立 MySQL 测试用触发器注入 SQL 失败验证该边界 |
+| 后台服务释放 | detached worker 捕获管理器地址，排队或执行中释放服务可能访问已释放对象 | worker 持有独立共享上下文和停止标志；管理器释放时协作取消，不再通过管理器地址读状态。API 回归覆盖排队释放及下载回调内释放，不把它等同于全局优雅停机/数据库排空 |
+
+队列和目录的 `available` 仍是路径边界、存在及大小的轻量判断，避免列表逐项读取文件。内容接口与处理复用执行完整读取及摘要校验，因此同大小损坏可能在列表中显示可用，但内容读取返回 404、显式处理返回失败。默认候选查询不会扫描所有已完成文件；修复需显式资源 ID 与 `refresh=true`。这些语义已同步 [API](../api/mg/migu-api.md#歌手头像与专辑封面本地下载)、两份 OpenAPI、[资源流程](../migu/resources.md#歌手头像与专辑封面本地下载)、[SQL 职责](../../sql/mysql/README.md)和[运行恢复](../operations/service-lifecycle.md)。API 保持兼容版本 `1.9.0`。
+
+复用现有 reader、队列及恢复日志完成修复，避免新增重复的校验或云端编排；操作结果与持久化事实分开，分别承担职责。没有增加多目标配置、资源上传标志或新回执表。
+
+### 本轮验证与边界
+
+证据根：`D:/codex-runs/crawler-cover-local/20261028/pr7-review-20261029/`。修复前新增回归复现同大小损坏、百度数字路径和两类 SQL 错误判定问题，见 `repro-local.txt`、`repro-mysql.json`；这些失败与修复后结果分别保留。
+
+- `demo`、23 项离线/本机 target 及 7 项 MySQL target 构建成功，见 `fix-build.txt`；末次 API 与文档调整构建见 `final-api-build.txt`，读取 helper 参数整理后重编及 5 项受影响回归见 `final-workflow-build.txt`、`final-workflow-tests.txt`。
+- 23 项离线/本机回归通过，见 `local-final.txt`；包括封面本地/云端流程、两家 adapter、存储恢复、进程/流式边界、API/实际路由、批次和旧歌曲/歌手流程。
+- 7 项全新隔离 MySQL 回归及 186 份运行期 SQL prepare 通过，见 `mysql-verified.json`、`sql-prepare.txt`。五项旧测试首轮因漏建空库导致初始化失败，补建其独立库后通过，首轮日志与重跑日志均保留；不是将初始化失败当作业务通过。
+- `BatchTaskManager.cpp` 和 `MetadataCoverApiTest.cpp` 的 clangd 检查均退出 0、`0 errors`，使用 `--tweaks=none` 排除历史编辑器 tweak 自检影响，见对应 `clangd-*.txt`。
+- 百度真实客户端只做不存在对象的 `meta` 只读核对，见 `baidu-readonly-probe.json`；本轮没有重新向百度或 Google 上传，前文各 40 张上传结论仍属于初始实测范围。
+- 原克隆库 `crawler_ownership_test_cover_main20_20261028_235106` 再次通过 20 位歌手、20 张专辑的目录/详情/本地内容及 SHA-256 HTTP 核对，最后云端回执保留、删除的歌手字段未恢复；测试服务关闭云端且已停止。见 `clone-http.txt`、`clone-integration/result.json`，运行期文档另存为 `clone-integration/served-openapi.json`。
+- 路由/API 清单/静态及运行期 OpenAPI 的 54 项注册操作、展开后 66 项操作与 85 个静态组件引用核对通过；11 份封面 path/schema 及 2 个目录属性完全一致。25 份 Markdown 的 363 个本地链接、69 个标题引用、指南的 2 个 JSON 片段和 54 个启动变量检查通过，见 `docs-final.txt`、`guide-docs-check.json`。
+- 49 个 main 歌手 SQL/源码/长期验收文件及资料刷新 OpenAPI 保持一致，三份已执行 migration 字节与 checksum 未变，见 `main-preserved.json`。26 个修改文件的 UTF-8 无 BOM、相关本地链接、改动行格式及 `git diff --check` 均通过，没有新增生产文件。
+
+本轮独立测试库：
+
+| 测试 | 数据库 |
+| --- | --- |
+| `MySqlMetadataCoverQueueTest` | `crawler_ownership_test_review_local_20261029_110741` |
+| `MySqlMetadataCoverCloudTest` | `crawler_ownership_test_review_cloud_20261029_110741` |
+| `MySqlMetadataOwnershipTest` / SQL prepare | `crawler_ownership_test_review_owner_20261029_110741` |
+| `MySqlAlbumIdentityTest` | `crawler_ownership_test_review_identity_20261029_110741` |
+| `MySqlMetadataCoverUrlTest` | `crawler_ownership_test_review_url_20261029_110741` |
+| `MiguCatalogQueryIntegrationTest` | `crawler_ownership_test_review_catalog_20261029_110741` |
+| `MySqlSingerProfileRefreshTest` | `crawler_ownership_test_singer_profile_review_20261029_110741` |
+
+上述为本机验证，不代表 GitHub CI。备份还原、强杀真实进程、多实例文件根协调及跨云双写仍不在本轮验收范围；没有写运行库或原来源库。PR #7 按用户要求保持未合并。
