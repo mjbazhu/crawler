@@ -72,6 +72,8 @@ std::string itemEventPayload(const application::model::CrawlBatchItemRecord &ite
     const std::string target_id = !item.source_singer_id.empty() ? item.source_singer_id : (!item.source_album_id.empty() ? item.source_album_id : item.item_key);
     std::stringstream payload;
     payload << "{\"target_id\":\"" << escapeJson(target_id)
+            << "\",\"item_type\":\"" << escapeJson(item.item_type)
+            << "\",\"item_key\":\"" << escapeJson(item.item_key)
             << "\",\"stage\":\"" << escapeJson(stage)
             << "\",\"written_count\":" << (std::max)(0, written_count);
     if (!error.empty()) {
@@ -112,6 +114,16 @@ std::string BatchTaskManager::start(
     bool allow_empty
 )
 {
+    return startImpl(items, normalized_limit, std::move(task_type), std::move(request_params), std::move(settings_snapshot), std::move(parent_batch_id), [handler = std::move(handler)](std::string key, int limit, const std::string &, const std::function<bool()> &) { return handler ? handler(std::move(key), limit) : TargetResult {}; }, allow_empty, 0);
+}
+
+std::string BatchTaskManager::startWithContext(const std::vector<application::model::CrawlBatchItemRecord> &items, int normalized_limit, std::string task_type, std::string request_params, std::string settings_snapshot, ContextualTargetHandler handler, int concurrency, bool allow_empty)
+{
+    return startImpl(items, normalized_limit, std::move(task_type), std::move(request_params), std::move(settings_snapshot), {}, std::move(handler), allow_empty, concurrency);
+}
+
+std::string BatchTaskManager::startImpl(const std::vector<application::model::CrawlBatchItemRecord> &items, int normalized_limit, std::string task_type, std::string request_params, std::string settings_snapshot, std::string parent_batch_id, ContextualTargetHandler handler, bool allow_empty, int concurrency)
+{
     cleanupFinishedTasks();
 
     const std::string batch_id = generateBatchId();
@@ -148,7 +160,7 @@ std::string BatchTaskManager::start(
             batch.finished_at = now;
             if (!empty_success) batch.last_error = "targets cannot be empty";
         }
-        (void)batch_repository_->createBatch(batch, persisted_items);
+        if (!batch_repository_->createBatch(batch, persisted_items)) return {};
         (void)batch_repository_->appendEvent(application::model::CrawlBatchEventRecord {batch_id, std::nullopt, empty_success ? "batchCompleted" : "batchStarted", empty_success ? "No pending targets" : "Batch task started", "{}", now});
     }
 
@@ -181,15 +193,29 @@ std::string BatchTaskManager::start(
 
     auto item_list = std::make_shared<std::vector<application::model::CrawlBatchItemRecord>>(std::move(persisted_items));
     auto next_index = std::make_shared<std::atomic<std::size_t>>(0);
-    const int configured_concurrency = max_batch_concurrency_ ? max_batch_concurrency_() : 1;
+    // 取消或超时后由 worker 结束尚未开始的目标，避免批次终止而明细永久 Pending。
+    const auto cancel_remaining = [repository = batch_repository_, item_list, next_index]() {
+        for (;;) {
+            const auto index = next_index->fetch_add(1);
+            if (index >= item_list->size()) return;
+            auto item = (*item_list)[index];
+            item.state = "Cancelled";
+            item.result_code = "cancelled";
+            item.finished_at = nowSeconds();
+            item.updated_at = item.finished_at;
+            if (repository) (void)repository->updateItem(item);
+        }
+    };
+    const int configured_concurrency = concurrency > 0 ? concurrency : (max_batch_concurrency_ ? max_batch_concurrency_() : 1);
     const int worker_count = (std::min)((std::max)(1, configured_concurrency), static_cast<int>(item_list->size()));
 
     for (int worker = 0; worker < worker_count; ++worker) {
         const bool submitted = batch_runner_.submitDetached(
-            [this, progress, item_list, next_index, normalized_limit, handler]() {
+            [this, progress, item_list, next_index, normalized_limit, handler, cancel_remaining]() {
                 for (;;) {
                     if (progress->cancel_requested.load()) {
                         progress->state = application::model::BatchState::Cancelled;
+                        cancel_remaining();
                         if (batch_repository_) {
                             application::model::CrawlBatchRecord batch;
                             batch.batch_id = progress->batch_id;
@@ -207,6 +233,7 @@ std::string BatchTaskManager::start(
                     }
 
                     if (isTaskTimedOut(progress)) {
+                        cancel_remaining();
                         progress->cancel_requested = true;
                         progress->state = application::model::BatchState::Failed;
                         appendError(progress, "Task timed out");
@@ -251,7 +278,8 @@ std::string BatchTaskManager::start(
 
                     TargetResult target_result;
                     try {
-                        target_result = handler ? handler(item.item_key, normalized_limit) : TargetResult {};
+                        const std::function<bool()> stopped = [this, progress] { return progress->cancel_requested.load() || isTaskTimedOut(progress); };
+                        target_result = handler ? handler(item.item_key, normalized_limit, progress->batch_id, stopped) : TargetResult {};
                     } catch (const std::exception &e) {
                         appendError(progress, "Exception processing " + item.item_key + ": " + e.what());
                         item.last_error = e.what();
@@ -281,7 +309,7 @@ std::string BatchTaskManager::start(
                     }
 
                     if (batch_repository_) {
-                        item.state = target_result.success ? "Completed" : "Failed";
+                        item.state = target_result.success ? "Completed" : (progress->cancel_requested.load() && target_result.result_code == "cancelled" ? "Cancelled" : "Failed");
                         item.written_count = (std::max)(0, target_result.written_count);
                         item.error_category = target_result.success ? "" : target_result.error_category;
                         item.result_code = target_result.result_code;

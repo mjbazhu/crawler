@@ -9,6 +9,7 @@ namespace {
 api::http::HttpResponse withCors(api::http::HttpResponse response)
 {
     response.headers["Access-Control-Allow-Origin"] = "*";
+    response.headers["Access-Control-Expose-Headers"] = "ETag";
     return response;
 }
 
@@ -18,7 +19,7 @@ api::http::HttpResponse handleCorsOptions(api::http::HttpRequest)
         204,
         {{"Access-Control-Allow-Origin", "*"},
          {"Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, OPTIONS"},
-         {"Access-Control-Allow-Headers", "Content-Type"}},
+         {"Access-Control-Allow-Headers", "Content-Type, If-None-Match"}},
         ""
     };
 }
@@ -174,6 +175,23 @@ void CrawlerRoutes::registerRoutes(RouteSink &routes) const
     routes.route("OPTIONS", "/api/migu/songs/{1}", handleCorsOptions);
     routes.route("GET", "/api/migu/songs/{1}", [controller = controller_](api::http::HttpRequest req) {
         return withCors(controller->handleGetMiguSong(std::move(req)));
+    });
+
+    routes.route("OPTIONS", "/api/migu/covers/queue", handleCorsOptions);
+    routes.route("GET", "/api/migu/covers/queue", [controller = controller_](api::http::HttpRequest req) {
+        return withCors(controller->handleListMiguCovers(std::move(req)));
+    });
+    routes.route("OPTIONS", "/api/migu/covers/process", handleCorsOptions);
+    routes.route("POST", "/api/migu/covers/process", [controller = controller_](api::http::HttpRequest req) {
+        return withCors(controller->handleProcessMiguCovers(std::move(req)));
+    });
+    routes.route("OPTIONS", "/api/migu/covers/recover-stale", handleCorsOptions);
+    routes.route("POST", "/api/migu/covers/recover-stale", [controller = controller_](api::http::HttpRequest req) {
+        return withCors(controller->handleRecoverMiguCovers(std::move(req)));
+    });
+    routes.route("OPTIONS", "/api/migu/covers/{1}/{2}/content", handleCorsOptions);
+    routes.route("GET", "/api/migu/covers/{1}/{2}/content", [controller = controller_](api::http::HttpRequest req) {
+        return withCors(controller->handleGetMiguCoverContent(std::move(req)));
     });
 
     routes.route("OPTIONS", "/api/migu/resources/queue", handleCorsOptions);

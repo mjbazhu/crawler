@@ -1,4 +1,5 @@
 #include "crawler/infrastructure/storage/rclone/RcloneRemoteCopier.h"
+#include "crawler/infrastructure/storage/rclone/RcloneRcSupport.h"
 
 #include <nlohmann/json.hpp>
 
@@ -108,40 +109,10 @@ SongResourceRemoteCopyResult failure(std::string category, std::string code, std
     return result;
 }
 
-std::string base64Encode(std::string_view input)
-{
-    static constexpr char kAlphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    std::string output;
-    output.reserve(((input.size() + 2) / 3) * 4);
-    int value = 0;
-    int bits = -6;
-    for (unsigned char ch : input) {
-        value = (value << 8) + ch;
-        bits += 8;
-        while (bits >= 0) {
-            output.push_back(kAlphabet[(value >> bits) & 0x3F]);
-            bits -= 6;
-        }
-    }
-    if (bits > -6) {
-        output.push_back(kAlphabet[((value << 8) >> (bits + 8)) & 0x3F]);
-    }
-    while (output.size() % 4 != 0) {
-        output.push_back('=');
-    }
-    return output;
-}
-
+// 远端 URL 复制与本地文件上传共用同一 RC 鉴权实现。
 std::vector<std::string> makeHeaders(const RcloneConfig &config)
 {
-    std::vector<std::string> headers {
-        "Accept: application/json",
-        "Content-Type: application/json",
-    };
-    if (!config.rc_user.empty() || !config.rc_password.empty()) {
-        headers.push_back("Authorization: Basic " + base64Encode(config.rc_user + ":" + config.rc_password));
-    }
-    return headers;
+    return detail::rcHeaders(config);
 }
 
 std::string jobIdText(const nlohmann::json &job_id)

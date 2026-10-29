@@ -1,5 +1,6 @@
 #include "crawler/infrastructure/http/client/AsioHttpClient.h"
 
+#include "AsioHttpTlsTrust.h"
 #include "crawler/infrastructure/http/client/AsioHttpCoroutineRequest.h"
 #include "crawler/infrastructure/http/client/AsioHttpCoroutineStreamingRequest.h"
 #include "crawler/infrastructure/http/client/AsioHttpRequestBuilder.h"
@@ -45,8 +46,7 @@ public:
     explicit Impl(AsioHttpClient::Options options) : options_(normalizeOptions(options)),
                                                      ssl_context_(ssl::context::tls_client)
     {
-        ErrorCode ec;
-        ssl_context_.set_default_verify_paths(ec);
+        const auto ec = detail::loadDefaultCertificateTrust(ssl_context_);
         if (ec && options_.verify_tls) {
             std::cerr << "[AsioHttpClient] Failed to load default CA paths: " << ec.message() << std::endl;
         }
@@ -384,6 +384,11 @@ HttpStreamResult AsioHttpClient::streamGetWithOptions(std::string_view url, cons
 std::optional<HttpResponse> AsioHttpClient::post(std::string_view url, std::string_view body, const std::vector<std::string> &headers)
 {
     return impl_->request("POST", url, body, headers);
+}
+
+std::optional<HttpResponse> AsioHttpClient::postWithOptions(std::string_view url, std::string_view body, const std::vector<std::string> &headers, const HttpRequestOptions &options)
+{
+    return impl_->request("POST", url, body, headers, options);
 }
 
 boost::asio::any_io_executor AsioHttpClient::executor()

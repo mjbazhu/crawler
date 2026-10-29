@@ -61,6 +61,11 @@ target_link_libraries(crawler_core
     unofficial::sqlite3::sqlite3
 )
 
+if(WIN32)
+    # 为 OpenSSL 只读装载 Windows 系统信任的根证书。
+    target_link_libraries(crawler_core PRIVATE crypt32)
+endif()
+
 function(configure_crawler_output TARGET_NAME)
     set_target_properties(${TARGET_NAME}
         PROPERTIES
@@ -159,6 +164,17 @@ add_crawler_test(MySqlAlbumIdentityTest tests/migu/integration/MySqlAlbumIdentit
 add_crawler_test(MySqlSourceBindingTest tests/migu/integration/MySqlSourceBindingTest.cpp)
 add_crawler_test(MySqlSingerIdentityTest tests/migu/integration/MySqlSingerIdentityTest.cpp)
 add_crawler_test(MetadataOwnershipTest tests/migu/flow/MetadataOwnershipTest.cpp)
+add_crawler_test(MetadataCoverDownloadWorkflowTest tests/migu/flow/MetadataCoverDownloadWorkflowTest.cpp)
+add_crawler_test(MetadataCoverCloudWorkflowTest tests/migu/flow/MetadataCoverCloudWorkflowTest.cpp)
+add_crawler_test(CloudFileStoresTest tests/infrastructure/storage/CloudFileStoresTest.cpp)
+add_crawler_test(ProcessRunnerTest tests/infrastructure/execution/ProcessRunnerTest.cpp)
+add_crawler_test(MySqlMetadataCoverCloudTest tests/migu/integration/MySqlMetadataCoverCloudTest.cpp)
+add_crawler_test(MetadataCoverStoreTest tests/migu/resource/MetadataCoverStoreTest.cpp)
+add_crawler_test(MetadataCoverApiTest tests/migu/api/MetadataCoverApiTest.cpp)
+add_crawler_test(MySqlMetadataCoverQueueTest tests/migu/integration/MySqlMetadataCoverQueueTest.cpp)
+add_executable(MiguMetadataCoverDownloadProbe tests/migu/ingestion/MiguMetadataCoverDownloadProbe.cpp)
+configure_crawler_executable(MiguMetadataCoverDownloadProbe)
+target_include_directories(MiguMetadataCoverDownloadProbe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 add_crawler_test(MetadataIngestionWorkflowTest tests/migu/flow/MetadataIngestionWorkflowTest.cpp)
 add_crawler_test(CatalogMetadataCompletionTest tests/migu/flow/CatalogMetadataCompletionTest.cpp)
 add_crawler_test(AlbumTrackPaginationTest tests/migu/flow/AlbumTrackPaginationTest.cpp)

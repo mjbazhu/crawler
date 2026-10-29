@@ -4,6 +4,7 @@
 #include "crawler/api/http/HttpModels.h"
 #include "crawler/application/use_cases/CrawlerService.h"
 #include "crawler/application/use_cases/MiguPacmtokenService.h"
+#include "crawler/application/use_cases/MetadataCoverService.h"
 
 #include <memory>
 
@@ -17,7 +18,8 @@ public:
     explicit CrawlerController(
         std::shared_ptr<application::use_cases::CrawlerService> service,
         dto::CrawlerSettingsReadonlySnapshot readonly_settings = {},
-        std::shared_ptr<application::use_cases::MiguPacmtokenService> pacmtoken_service = nullptr
+        std::shared_ptr<application::use_cases::MiguPacmtokenService> pacmtoken_service = nullptr,
+        std::shared_ptr<application::use_cases::MetadataCoverService> cover_service = nullptr
     );
 
     // 处理 Migu 歌手分类采集请求，创建后台任务后立即返回任务 ID。
@@ -121,6 +123,15 @@ public:
     // 处理 Migu 资源队列，执行 URL 获取、下载、保存和回写。
     http::HttpResponse handleProcessMiguResources(http::HttpRequest req);
 
+    // 查询歌手/专辑封面队列。
+    http::HttpResponse handleListMiguCovers(http::HttpRequest req);
+    // 下载已入库 URL 对应的封面，默认后台执行。
+    http::HttpResponse handleProcessMiguCovers(http::HttpRequest req);
+    // 恢复封面超时认领。
+    http::HttpResponse handleRecoverMiguCovers(http::HttpRequest req);
+    // 读取指定所有者的已提交图片，支持 ETag 条件请求。
+    http::HttpResponse handleGetMiguCoverContent(http::HttpRequest req);
+
     // 查询 Migu 补池队列。
     http::HttpResponse handleListMiguBackfillQueue(http::HttpRequest req);
 
@@ -167,6 +178,7 @@ public:
     http::HttpResponse handleOpenApi(http::HttpRequest req);
 
 private:
+    std::shared_ptr<application::use_cases::MetadataCoverService> cover_service_;     // 独立封面用例
     std::shared_ptr<application::use_cases::CrawlerService> service_;                 // application 用例服务
     dto::CrawlerSettingsReadonlySnapshot readonly_settings_;                          // settings API 只读启动期快照
     std::shared_ptr<application::use_cases::MiguPacmtokenService> pacmtoken_service_; // pacmtoken 刷新用例

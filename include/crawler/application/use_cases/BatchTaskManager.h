@@ -31,6 +31,8 @@ public:
     };
 
     using TargetHandler = std::function<TargetResult(std::string, int)>;
+    // 带批次身份与协作取消检查的目标处理器，供独立资源任务复用执行设施。
+    using ContextualTargetHandler = std::function<TargetResult(std::string, int, const std::string &, const std::function<bool()> &)>;
     using BatchConcurrencyReader = std::function<int()>;
     using TimeoutReader = std::function<std::chrono::milliseconds()>;
 
@@ -55,6 +57,18 @@ public:
         bool allow_empty = false // 已校验的队列查询可正常完成零目标任务
     );
 
+    // 启动带批次身份与取消检查的目标处理，并采用本批次的有界并发。
+    std::string startWithContext(
+        const std::vector<application::model::CrawlBatchItemRecord> &items,
+        int normalized_limit,
+        std::string task_type,
+        std::string request_params,
+        std::string settings_snapshot,
+        ContextualTargetHandler handler,
+        int concurrency,
+        bool allow_empty = true
+    );
+
     // 请求取消批量任务；已开始的单个处理会在当前步骤结束后协作退出。
     bool cancel(const std::string &batch_id);
 
@@ -62,6 +76,8 @@ public:
     std::optional<application::model::BatchProgressSnapshot> progress(const std::string &batch_id);
 
 private:
+    // 两种处理器共享同一生命周期和事件实现。
+    std::string startImpl(const std::vector<application::model::CrawlBatchItemRecord> &items, int normalized_limit, std::string task_type, std::string request_params, std::string settings_snapshot, std::string parent_batch_id, ContextualTargetHandler handler, bool allow_empty, int concurrency);
     // 判断任务是否超过当前配置的超时时间。
     bool isTaskTimedOut(const std::shared_ptr<application::model::BatchProgress> &progress) const;
 

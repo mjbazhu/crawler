@@ -1,4 +1,5 @@
 #include "crawler/api/controllers/OpenApiDocumentFactory.h"
+#include "crawler/api/controllers/MetadataCoverOpenApi.h"
 
 #include <nlohmann/json.hpp>
 
@@ -1195,8 +1196,8 @@ std::string OpenApiDocumentFactory::miguDocumentJson()
     doc["openapi"] = "3.0.3";
     doc["info"] = {
         {"title", "Crawler Migu Metadata API"},
-        {"version", "1.7.0"},
-        {"description", "Migu metadata crawler API. Only the current singer, singer songs, singer albums, album details and album songs workflows are exposed."},
+        {"version", "1.9.0"},
+        {"description", "Migu metadata, song resource processing, and singer/album cover storage API. Cover tasks download stored URLs, expose verified local images, and automatically upload and confirm cloud receipts through BaiduPCS-Go or rclone Google Drive when configured."},
     };
     doc["servers"] = json::array({json {{"url", "http://127.0.0.1:8080"}, {"description", "Local crawler service"}}});
     doc["tags"] = json::array({
@@ -1507,6 +1508,7 @@ std::string OpenApiDocumentFactory::miguDocumentJson()
         {"responses", {{"200", {{"description", "Service is healthy"}, {"content", jsonContent(ref("#/components/schemas/HealthResponse"))}}}}},
     };
 
+    appendMetadataCoverOpenApi(doc);
     return doc.dump(2);
 }
 

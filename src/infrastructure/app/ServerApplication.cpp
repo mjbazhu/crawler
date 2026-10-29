@@ -9,6 +9,8 @@
 #include "crawler/application/use_cases/MiguPacmtokenService.h"
 #include "crawler/infrastructure/app/HttpClientOptionsFactory.h"
 #include "crawler/infrastructure/app/LyricProcessingComposition.h"
+#include "crawler/infrastructure/app/MetadataCoverComposition.h"
+#include "crawler/infrastructure/app/CloudFileStoreComposition.h"
 #include "crawler/infrastructure/app/PersistenceAssembly.h"
 #include "crawler/infrastructure/app/RuntimeSettingsSnapshotFactory.h"
 #include "crawler/infrastructure/execution/asio/AsioExecutionContext.h"
@@ -20,6 +22,7 @@
 #include "crawler/infrastructure/http/server/DrogonHttpServer.h"
 #include "crawler/infrastructure/music/migu/parser/MiguParser.h"
 #include "crawler/infrastructure/music/persistence/mysql/MySqlSongResourceQueue.h"
+#include "crawler/infrastructure/music/persistence/mysql/MySqlMetadataCoverQueue.h"
 #include "crawler/infrastructure/music/migu/parser/MiguSongResourceParser.h"
 #include "crawler/infrastructure/music/migu/provider/MiguPacmtokenClient.h"
 #include "crawler/infrastructure/music/migu/provider/MiguAsyncSongResourceProvider.h"
@@ -178,7 +181,9 @@ bool ServerApplication::initialize()
         impl_->catalog_query_repository_ = std::move(persistence_components->catalog_query_repository);
         impl_->song_resource_queue_ = std::move(persistence_components->song_resource_queue);
         if (auto queue = std::dynamic_pointer_cast<music::persistence::mysql::MySqlSongResourceQueue>(impl_->song_resource_queue_)) {
-            const auto recovered = impl_->file_storage_->recoverResourceWrites([queue](std::uint64_t resource, std::uint64_t generation, const std::string &path) {
+            auto covers = std::make_shared<music::persistence::mysql::MySqlMetadataCoverQueue>(impl_->mysql_pool_);
+            const auto recovered = impl_->file_storage_->recoverOwnedResourceWrites([queue, covers](const std::string &owner, std::uint64_t resource, std::uint64_t generation, const std::string &path) {
+                if (owner == "singer" || owner == "album") return covers->inspectWrite(owner == "singer" ? application::model::CoverOwner::Singer : application::model::CoverOwner::Album, resource, generation, path);
                 return queue->inspectResourceWrite(resource, generation, path);
             });
             if (recovered > 0) logApp(logging::LogLevel::L_INFO, "Recovered resource file journals: " + std::to_string(recovered));
@@ -186,7 +191,7 @@ bool ServerApplication::initialize()
         auto blocking_storage_executor = impl_->persistence_worker_pool_ ? std::static_pointer_cast<application::ports::TaskExecutor>(impl_->persistence_worker_pool_) : std::static_pointer_cast<application::ports::TaskExecutor>(impl_->resource_worker_pool_);
         impl_->async_execution_context_ = std::make_shared<execution::asio::AsioExecutionContext>(static_cast<std::size_t>((std::max)(1, impl_->config_.outbound_http_io_threads)));
         impl_->async_runtime_ = std::make_shared<execution::asio::AsioAsyncRuntime>(impl_->async_execution_context_->executor(), blocking_storage_executor);
-        if (isRcloneBackend(impl_->config_.resource_storage_backend)) {
+        if (isRcloneBackend(impl_->config_.resource_storage_backend) || (impl_->config_.resource_cloud_upload_enabled && isRcloneBackend(impl_->config_.resource_cloud_upload_backend))) {
             if (impl_->config_.rclone.rc_url.empty() || impl_->config_.rclone.target_fs.empty()) {
                 logApp(logging::LogLevel::L_ERROR, "Rclone resource storage requires CRAWLER_RCLONE_RC_URL and CRAWLER_RCLONE_TARGET_FS.");
                 return false;
@@ -196,17 +201,13 @@ bool ServerApplication::initialize()
             rclone_http_options.request_timeout = std::chrono::milliseconds((std::max)(1000, impl_->config_.rclone.api_timeout_ms));
             rclone_http_options.max_response_bytes = (std::max<std::size_t>)(1024, impl_->config_.rclone.api_max_response_bytes);
             impl_->rclone_http_client_ = std::make_shared<http::client::AsioHttpClient>(std::move(rclone_http_options));
-            impl_->async_song_resource_remote_copier_ = std::make_shared<storage::rclone::RcloneRemoteCopier>(
-                impl_->rclone_http_client_,
-                impl_->async_runtime_,
-                impl_->config_.rclone
-            );
+            if (isRcloneBackend(impl_->config_.resource_storage_backend)) {
+                impl_->async_song_resource_remote_copier_ = std::make_shared<storage::rclone::RcloneRemoteCopier>(impl_->rclone_http_client_, impl_->async_runtime_, impl_->config_.rclone);
+            }
             logApp(logging::LogLevel::L_INFO, "Rclone resource storage enabled.");
         }
         if (impl_->config_.resource_cloud_upload_enabled) {
-            impl_->config_.resource_cloud_upload_enabled = false;
-            impl_->config_.baidupcs.enabled = false;
-            logApp(logging::LogLevel::L_WARN, "Resource cloud upload is disabled in ingestion; resources will be downloaded locally and written back for later reconciliation.");
+            logApp(logging::LogLevel::L_INFO, "Metadata cover cloud upload is enabled; song resource upload assembly remains local.");
         }
 
         impl_->diagnostics_ = std::make_shared<observability::logging::ConsoleDiagnosticsSink>();
@@ -295,7 +296,8 @@ bool ServerApplication::initialize()
         impl_->crawler_controller_ = std::make_shared<api::controllers::CrawlerController>(
             impl_->crawler_service_,
             makeReadonlySettingsSnapshot(impl_->config_),
-            impl_->migu_pacmtoken_service_
+            impl_->migu_pacmtoken_service_,
+            makeMetadataCoverService(impl_->mysql_pool_, impl_->file_storage_, impl_->http_client_, impl_->resource_worker_pool_, impl_->diagnostics_, impl_->batch_task_repository_, std::chrono::milliseconds(impl_->config_.task_timeout_ms), makeCloudFileStore(impl_->config_, impl_->rclone_http_client_), impl_->config_.resource_cloud_timeout_ms)
         );
 
         impl_->http_server_ = std::make_unique<http::server::DrogonHttpServer>(impl_->config_.http_worker_threads, impl_->handler_worker_pool_);
