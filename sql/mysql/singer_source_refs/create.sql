@@ -9,7 +9,6 @@ CREATE TABLE IF NOT EXISTS `singer_source_refs` (
   `source_song_total` int unsigned DEFAULT NULL COMMENT '平台声明歌曲总数，NULL 表示未知',
   `source_album_total` int unsigned DEFAULT NULL COMMENT '平台声明专辑总数，NULL 表示未知',
   `source_country` varchar(128) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '平台返回的国家或地区，例如 华语、欧美、日韩',
-  `metadata_status` tinyint NOT NULL DEFAULT '1' COMMENT '歌手元数据状态：0 待处理，1 已获取，2 已失效，3 失败',
   `songs_sync_status` tinyint NOT NULL DEFAULT '0' COMMENT '歌手歌曲列表同步状态：0 未同步，1 同步中，2 已完成，3 失败，4 部分完成',
   `songs_synced_at` bigint unsigned NOT NULL DEFAULT '0' COMMENT '歌手歌曲列表最近一次同步完成时间，Unix 秒时间戳',
   `songs_sync_count` int unsigned NOT NULL DEFAULT '0' COMMENT '最近一次同步到的歌曲数量',

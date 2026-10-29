@@ -112,7 +112,7 @@ boost::asio::awaitable<void> seedSinger(
     boost::mysql::results result;
     const std::string name = "Codex Recovery Singer " + tag + " " + suffix;
     co_await connection->async_execute(
-        "INSERT INTO singers (name, normalized_name, gender, status, created_at, updated_at) VALUES ('" + name + "', 'codex_recovery_singer_" + tag + "_" + suffix + "', 1, 1, " + std::to_string(updated_at) + ", " + std::to_string(updated_at) + ")",
+        "INSERT INTO singers (name, normalized_name, created_at, updated_at) VALUES ('" + name + "', 'codex_recovery_singer_" + tag + "_" + suffix + "', " + std::to_string(updated_at) + ", " + std::to_string(updated_at) + ")",
         result,
         boost::asio::use_awaitable
     );

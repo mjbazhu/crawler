@@ -63,7 +63,7 @@ public:
         const std::array<int, 8> expected {3, 2, 1, 2, 0, 0, 1, 0};
         for (std::size_t i = 0; i < expected.size(); ++i)
             require(scalar("SELECT source_gender FROM singer_source_refs WHERE source_singer_id='legacy-" + std::to_string(i) + "'") == expected[i], "migration restored the wrong source type");
-        require(scalar("SELECT COUNT(*) FROM singers WHERE gender<>0") == 0, "legacy type still lives in shared names");
+        require(scalar("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND ((table_name='singers' AND column_name IN('gender','status')) OR (table_name='singer_source_refs' AND column_name='metadata_status'))") == 0, "unused singer fields survived migration");
         require(scalar("SELECT COUNT(*) FROM singer_catalog_sources WHERE source_item_key='singer:legacy-0' AND source_gender=3") == 1, "compatibility view lost source columns");
         writer = std::make_shared<mysql::MySqlMetadataBatchWriter>(pool);
         catalog = std::make_shared<mysql::MySqlMusicCatalogQueryRepository>(pool);

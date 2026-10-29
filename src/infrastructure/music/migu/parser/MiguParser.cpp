@@ -28,6 +28,11 @@ application::model::MetadataWriteBatch MiguParser::parseMetadataBatch(const std:
     return MiguMetadataBatchParser {}.parseMetadataBatch(body);
 }
 
+application::result::ServiceResult<application::model::MetadataWriteBatch> MiguParser::parseMetadataResponse(const std::vector<char> &body) const
+{
+    return MiguMetadataBatchParser {}.parseMetadataResponse(body);
+}
+
 std::vector<domain::ParseResult> MiguParser::parse(const std::vector<char> &raw_data) const
 {
     return parse_result_parser_ ? parse_result_parser_->parse(raw_data) : std::vector<domain::ParseResult> {};

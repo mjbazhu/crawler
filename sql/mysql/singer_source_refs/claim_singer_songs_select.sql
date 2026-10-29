@@ -4,7 +4,6 @@ SELECT
     s.normalized_name,
     COALESCE(r.source_name_pinyin, ''),
     r.source_gender AS gender,
-    s.status,
     r.id,
     r.source,
     CONCAT('singer:',r.source_singer_id) AS source_item_key,

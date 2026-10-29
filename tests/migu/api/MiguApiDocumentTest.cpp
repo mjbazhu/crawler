@@ -80,9 +80,13 @@ int main()
     requirePath(doc, "/api/migu/pacmtoken/state");
     requirePath(doc, "/api/migu/pacmtoken/current");
 
-    for (const auto *path : {"/api/migu/singer-songs/crawl", "/api/migu/singer-albums/crawl", "/api/migu/singers/profile/refresh-from-db", "/api/migu/album-details/crawl", "/api/migu/album-songs/crawl"}) {
+    for (const auto *path : {"/api/migu/singer-songs/crawl", "/api/migu/singer-albums/crawl", "/api/migu/album-details/crawl", "/api/migu/album-songs/crawl"}) {
         assert(!doc["paths"].contains(path));
     }
+
+    requirePath(doc, "/api/migu/singers/profile/refresh-from-db");
+    assert(doc["components"]["schemas"].contains("SingerProfileRefreshRequest"));
+    assert(!doc["components"]["schemas"]["SingerRecord"]["properties"].contains("status"));
 
     const auto &item_properties = doc["components"]["schemas"]["BatchTaskItem"]["properties"];
     assert(item_properties.contains("error_category"));
@@ -117,7 +121,7 @@ int main()
     assert(schemas.contains("ResourceProcessResponse"));
     assert(schemas.contains("SingerFromDbPreviewItem"));
     assert(schemas.contains("SingerFromDbPreviewResponse"));
-    for (const auto *name : {"SingerIdsCrawlRequest", "SingerProfileRefreshRequest", "AlbumBackfillRequest"}) {
+    for (const auto *name : {"SingerIdsCrawlRequest", "AlbumBackfillRequest"}) {
         assert(!schemas.contains(name));
     }
     for (const auto *name : {"SingerFromDbCrawlRequest", "BackfillActionRequest"}) {

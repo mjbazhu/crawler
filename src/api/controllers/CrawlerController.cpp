@@ -431,7 +431,6 @@ json singerToJson(const application::model::MiguSingerCatalogRecord &singer)
         {"name", singer.name},
         {"normalized_name", singer.normalized_name},
         {"gender", singer.gender},
-        {"status", singer.status},
         {"source_ref_id", singer.source_ref_id},
         {"source", singer.source},
         {"source_item_key", singer.source_item_key},
@@ -2272,6 +2271,22 @@ http::HttpResponse CrawlerController::handlePreviewMiguBackfill(http::HttpReques
     body["ineligible_count"] = matched_count > eligible_count ? matched_count - eligible_count : 0;
     body["missing_count"] = missing_count;
     return http::HttpResponse {200, {{"Content-Type", "application/json"}}, body.dump()};
+}
+
+http::HttpResponse CrawlerController::handleRefreshMiguSingerProfilesFromDb(http::HttpRequest req)
+{
+    auto request = dto::MiguSingerProfileRefreshRequestDto::fromRequest(req);
+    if (!request) return jsonError(400, "invalid singer profile refresh request");
+    if (const auto error = request->validate()) return jsonError(400, *error);
+    const bool force = request->query.force;
+    const auto refreshed = service_->refreshMiguSingerProfiles(std::move(request->query), force, req.body.empty() ? "{}" : req.body);
+    if (!refreshed.isSuccess()) return jsonError(refreshed.error() == application::result::ServiceErrorType::InvalidParam ? 400 : 503, refreshed.message());
+    const auto &result = *refreshed.data();
+    if (result.batch_id.empty()) {
+        return http::HttpResponse {200, {{"Content-Type", "application/json"}}, json {{"batch_id", nullptr}, {"claimed_count", 0}, {"skipped_count", result.skipped_count}, {"items", actionItemsToJson(result.items)}, {"message", "no singer profiles require refresh"}}.dump()};
+    }
+    const auto count = batchTargetCount(service_, result.batch_id);
+    return taskAcceptedResponse(result.batch_id, "singer profile refresh started", count, 1, 0, static_cast<int>(count), result.claimed_count, result.skipped_count, actionItemsToJson(result.items));
 }
 
 http::HttpResponse CrawlerController::handleRetryMiguBackfill(http::HttpRequest req)

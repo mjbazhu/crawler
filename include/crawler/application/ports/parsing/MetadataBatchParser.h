@@ -1,5 +1,6 @@
 #pragma once
 #include "crawler/application/model/MetadataWriteBatch.h"
+#include "crawler/application/result/ServiceResult.h"
 #include <vector>
 
 namespace orchestrator::modules::crawler::application::ports {
@@ -11,5 +12,10 @@ public:
     virtual ~MetadataBatchParser() = default;
     // 平台实现只解码一次响应，分流歌曲、专辑和歌手上下文。
     virtual application::model::MetadataWriteBatch parseMetadataBatch(const std::vector<char> &body) const = 0;
+    // 明确拒绝的业务响应与临时空响应分开；旧实现继续兼容实体解析。
+    virtual application::result::ServiceResult<application::model::MetadataWriteBatch> parseMetadataResponse(const std::vector<char> &body) const
+    {
+        return application::result::ServiceResult<application::model::MetadataWriteBatch>::success(parseMetadataBatch(body));
+    }
 };
 } // namespace orchestrator::modules::crawler::application::ports

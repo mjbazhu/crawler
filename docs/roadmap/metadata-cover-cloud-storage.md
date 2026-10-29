@@ -4,7 +4,7 @@
 
 本文件记录当前已实现的单份云端回执基线。后续已确认将实际存储平台与上传工具区分、把三类 resources 的云端结果迁入统一回执表，方案见[统一云端回执重构](resource-cloud-receipts.md)；该方案尚未实施。本次先整理并提交当前实现、创建 PR，按用户最新指示暂不合并。
 
-交付位于[草稿 PR #7](https://github.com/mjbazhu/crawler/pull/7)。当前分支保留 `21b19a5` 功能基线，与 main `69a157f` 的 7 处冲突尚待集成处理；历史真实上传与本轮 15 项回归属于功能分支验证，未计为最新 main 的组合验收。冲突及接续顺序见[当前交接](../agents/current.md#pr-交付与接续入口)。
+交付位于[草稿 PR #7](https://github.com/mjbazhu/crawler/pull/7)，保持未合并。本轮已在功能分支纳入 main `69a157f`，解决 7 处冲突并完成下方组合验收；歌手资料长期记录和字段清理保留。接续顺序见[当前交接](../agents/current.md#pr-交付与接续入口)。
 
 ## 入口和配置
 
@@ -80,6 +80,32 @@ EOF、超时、无效元信息或缺少可靠摘要均不当作不存在或成�
 - 两个自建 crawler 服务及临时本机 RC 已按 PID、exe 和启动时间验证身份后停止。云端测试对象、克隆库和证据保留供复核。
 - 六个新增实现的 clangd 编译/preamble/AST 阶段无编译诊断；四个完整 `0 errors`，另两个仅有 ExtractFunction 编辑器 tweak 自检错误，不能称全部 clangd 命令通过。格式、UTF-8 无 BOM、文件长度和文档链接通过，Git diff 无空白错误。
 
-证据根：`D:/codex-runs/crawler-cover-local/20261028/`。本轮未暂存、提交、推送或合并。
+初始云端验收证据根：`D:/codex-runs/crawler-cover-local/20261028/`，当时未提交；后续已提交到 PR #7。本轮集成结果单独记录如下。
 
-用户确认的跨分支边界继续有效：`singer-profile-completion` 与本任务保持独立，统一合并后联调歌手目录；不混入另一会话的字段清理。该目录兼容问题不影响封面队列、文件及云端 SQL 的独立验收。
+此前两会话独立验收的边界属于历史阶段。本轮用户已授权集成 main 中已提交的歌手资料变更，组合验证结果如下；没有处理其他会话的未提交内容。
+
+## PR #7 与 main 的组合验收（2026-10-29）
+
+用户授权解决与 main 的 7 处冲突并测试、推送更新 PR，明确暂不合并 PR。本轮在原功能分支纳入 main `69a157f`（PR #5/#6 的歌手资料功能及长期验收），保留封面流程和原迁移；未实施统一云端回执表或删除现有云端字段。
+
+- 解决 docs/README、当前交接、metadata 文档、schema 状态、BatchTaskManager、MySqlMusicCatalogQueryRepository、MiguHttpRouteSmokeTest 的 7 处冲突。
+- 批次执行同时保留歌手资料的有限重试及封面处理的批次身份/协作取消；修复自动合并遗漏的 max_retries 私有转发参数。封面内部重试继续由原用例管理，未额外叠加管理器重试。
+- schema 状态同时登记 V2026102801、V2026102802、V2026102901，最新可用版本为 2026102901；更新歌手资料集成测试的最新版本断言。三份已执行 migration 字节/checksum 未修改。
+- main 的 49 个歌手 SQL、源码和长期验收文件逐字节保留；资料刷新 OpenAPI operation/request schema 与 main 一致。证据 pr7-main-preserved.json。
+- 重新 configure 并构建 demo 和受影响 target 成功，pr7-integration-build.txt、pr7-parser-build.txt；17 项离线/本机测试通过（15 项组合流程/API/封面/批次，加 2 项歌手/歌曲 parser），pr7-integration-offline.txt、pr7-parser-tests.txt。含旧/新批次处理器、重试上限/取消/超时、默认头像及字段清理、实际路由、WebP/AVIF MIME 和本地文件/云端适配器边界。
+- 7 项全新独立 MySQL 回归通过，汇总 pr7-mysql-latest.json，覆盖歌手旧结构升级及重跑、目录/来源状态保护、后台资料刷新、封面并发认领/恢复/云端条件确认、别名和事务回滚；186 份运行期 SQL prepare 通过。
+- 原指定克隆库 crawler_ownership_test_cover_main20_20261028_235106 通过组合 HTTP 联调：20 位歌手、20 张专辑的详情及本地封面读取、大小/SHA-256、歌手精确查询列表、已确认云端回执保留全部通过；歌手顶层已删除的 status/metadata_status 未恢复。此前歌手详情 404 的跨分支兼容缺口已消除。资料刷新路由保留且非法 force 被拒绝，无需触发真实平台刷新。证据 pr7-clone-integration/result.json。
+- 静态/运行期 OpenAPI 1.9.0 的封面契约与迁移 checksum 核对通过；运行期文档 pr7-runtime-openapi.json，契约日志 pr7-integration-contract.txt。三个冲突实现/测试的 clangd 编译阶段无诊断，其中两个只有编辑器 tweak 自检失败，不记为全部命令通过。
+- 本轮克隆库服务关闭云端上传，仅做目录/内容/已存回执读取；未重跑真实云端上传，前文百度和 Google 各 40 张的结果仍作为历史实测。自建测试服务已停止，运行库和原来源库未写入。上述为本机验证，不代表 GitHub CI。
+
+本轮新测试库：
+
+- `MySqlSingerProfileRefreshTest`：`crawler_ownership_test_singer_profile_pr7_20261029_095039`。
+- `MySqlMetadataCoverCloudTest`：`crawler_ownership_test_pr7_cloud_20261029_095039`。
+- `MySqlMetadataCoverQueueTest`：`crawler_ownership_test_pr7_local_20261029_095039`。
+- `MySqlMetadataOwnershipTest`：`crawler_ownership_test_pr7_ownership_20261029_095039`。
+- `MiguCatalogQueryIntegrationTest`：`crawler_ownership_test_pr7_catalog_20261029_095039`。
+- `MySqlMetadataCoverUrlTest`：`crawler_ownership_test_pr7_url_20261029_095039`。
+- `MySqlAlbumIdentityTest`：`crawler_ownership_test_pr7_identity_20261029_095039`。
+
+证据根仍为 D:/codex-runs/crawler-cover-local/20261028/。PR #7 保持 Draft/open、未合并；组合结果随功能分支推送后，以 GitHub 冲突状态复核为准。原 main 工作区保持原提交和干净状态。

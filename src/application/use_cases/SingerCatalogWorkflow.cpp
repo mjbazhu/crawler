@@ -53,34 +53,18 @@ application::model::SingerCollectionResult SingerCatalogWorkflow::crawlSingerInd
     return {true, false, unique_count, {}};
 }
 
-application::model::SingerSourceProfile SingerCatalogWorkflow::fetchAndSaveSingerSourceProfile(std::uint64_t singer_id)
+application::result::ServiceResult<application::model::SingerSourceProfile> SingerCatalogWorkflow::fetchAndSaveSingerSourceProfile(std::uint64_t singer_id)
 {
-    application::model::SingerSourceProfile profile;
-    profile.source = "migu";
-    profile.source_singer_id = std::to_string(singer_id);
-
-    if (!singer_catalog_provider_ || !parser_) {
-        return profile;
-    }
-
-    auto response = singer_catalog_provider_->fetchSingerInfo(singer_id);
-    if (!response) {
-        return profile;
-    }
-
-    profile = parser_->parseSingerSourceProfile(std::move(response->body));
-    if (profile.source.empty()) {
-        profile.source = "migu";
-    }
-    if (profile.source_singer_id.empty()) {
-        profile.source_singer_id = std::to_string(singer_id);
-    }
-    if (persistence_ && (hasSingerSourceProfileCounts(profile) || profile.metadata)) {
-        if (!persistence_->saveSingerSourceProfile(profile)) {
-            profile.source_song_total.reset();
-            profile.source_album_total.reset();
-        }
-    }
+    using Result = application::result::ServiceResult<application::model::SingerSourceProfile>;
+    using Error = application::result::ServiceErrorType;
+    if (singer_id == 0) return Result::failure(Error::InvalidParam, "invalid singer id");
+    if (!singer_catalog_provider_ || !parser_ || !persistence_) return Result::failure(Error::InternalError, "singer profile workflow is not configured");
+    // 兼容装配也复用同一校验；生产装配共享有界缓存和在途请求。
+    auto completion = completion_;
+    if (!completion) completion = std::make_shared<CatalogMetadataCompletion>(CatalogMetadataCompletionDependencies {singer_catalog_provider_, nullptr, nullptr, parser_});
+    const auto profile = completion->singerContext(singer_id, {}, {}, true);
+    if (!profile.isSuccess()) return profile;
+    if (!persistence_->saveSingerSourceProfile(*profile.data())) return Result::failure(Error::InternalError, "failed to persist singer profile");
     return profile;
 }
 

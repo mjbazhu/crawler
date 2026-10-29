@@ -112,7 +112,7 @@ boost::asio::awaitable<void> seedSinger(
     boost::mysql::results result;
     const std::string name = "Codex Claim Singer " + tag + " " + suffix;
     co_await connection->async_execute(
-        "INSERT INTO singers (name, normalized_name, gender, status, created_at, updated_at) VALUES ('" + name + "', 'codex_claim_singer_" + tag + "_" + suffix + "', 1, 1, " + std::to_string(now) + ", " + std::to_string(now) + ")",
+        "INSERT INTO singers (name, normalized_name, created_at, updated_at) VALUES ('" + name + "', 'codex_claim_singer_" + tag + "_" + suffix + "', " + std::to_string(now) + ", " + std::to_string(now) + ")",
         result,
         boost::asio::use_awaitable
     );
@@ -137,7 +137,7 @@ boost::asio::awaitable<void> seedSingerWithContent(
     boost::mysql::results result;
     const std::string name = "Codex Claim Singer Has Content " + suffix;
     co_await connection->async_execute(
-        "INSERT INTO singers (name, normalized_name, gender, status, created_at, updated_at) VALUES ('" + name + "', 'codex_claim_singer_has_content_" + suffix + "', 1, 1, " + std::to_string(now) + ", " + std::to_string(now) + ")",
+        "INSERT INTO singers (name, normalized_name, created_at, updated_at) VALUES ('" + name + "', 'codex_claim_singer_has_content_" + suffix + "', " + std::to_string(now) + ", " + std::to_string(now) + ")",
         result,
         boost::asio::use_awaitable
     );

@@ -5,6 +5,7 @@
 #include <ctime>
 #include <sstream>
 #include <string_view>
+#include <thread>
 
 namespace orchestrator::modules::crawler::application::use_cases {
 
@@ -75,7 +76,8 @@ std::string itemEventPayload(const application::model::CrawlBatchItemRecord &ite
             << "\",\"item_type\":\"" << escapeJson(item.item_type)
             << "\",\"item_key\":\"" << escapeJson(item.item_key)
             << "\",\"stage\":\"" << escapeJson(stage)
-            << "\",\"written_count\":" << (std::max)(0, written_count);
+            << "\",\"written_count\":" << (std::max)(0, written_count)
+            << ",\"retry_count\":" << item.retry_count;
     if (!error.empty()) {
         payload << ",\"error\":\"" << escapeJson(error) << "\"";
     }
@@ -111,18 +113,19 @@ std::string BatchTaskManager::start(
     std::string settings_snapshot,
     std::string parent_batch_id,
     TargetHandler handler,
-    bool allow_empty
+    bool allow_empty,
+    int max_retries
 )
 {
-    return startImpl(items, normalized_limit, std::move(task_type), std::move(request_params), std::move(settings_snapshot), std::move(parent_batch_id), [handler = std::move(handler)](std::string key, int limit, const std::string &, const std::function<bool()> &) { return handler ? handler(std::move(key), limit) : TargetResult {}; }, allow_empty, 0);
+    return startImpl(items, normalized_limit, std::move(task_type), std::move(request_params), std::move(settings_snapshot), std::move(parent_batch_id), [handler = std::move(handler)](std::string key, int limit, const std::string &, const std::function<bool()> &) { return handler ? handler(std::move(key), limit) : TargetResult {}; }, allow_empty, 0, max_retries);
 }
 
 std::string BatchTaskManager::startWithContext(const std::vector<application::model::CrawlBatchItemRecord> &items, int normalized_limit, std::string task_type, std::string request_params, std::string settings_snapshot, ContextualTargetHandler handler, int concurrency, bool allow_empty)
 {
-    return startImpl(items, normalized_limit, std::move(task_type), std::move(request_params), std::move(settings_snapshot), {}, std::move(handler), allow_empty, concurrency);
+    return startImpl(items, normalized_limit, std::move(task_type), std::move(request_params), std::move(settings_snapshot), {}, std::move(handler), allow_empty, concurrency, 0);
 }
 
-std::string BatchTaskManager::startImpl(const std::vector<application::model::CrawlBatchItemRecord> &items, int normalized_limit, std::string task_type, std::string request_params, std::string settings_snapshot, std::string parent_batch_id, ContextualTargetHandler handler, bool allow_empty, int concurrency)
+std::string BatchTaskManager::startImpl(const std::vector<application::model::CrawlBatchItemRecord> &items, int normalized_limit, std::string task_type, std::string request_params, std::string settings_snapshot, std::string parent_batch_id, ContextualTargetHandler handler, bool allow_empty, int concurrency, int max_retries)
 {
     cleanupFinishedTasks();
 
@@ -208,10 +211,11 @@ std::string BatchTaskManager::startImpl(const std::vector<application::model::Cr
     };
     const int configured_concurrency = concurrency > 0 ? concurrency : (max_batch_concurrency_ ? max_batch_concurrency_() : 1);
     const int worker_count = (std::min)((std::max)(1, configured_concurrency), static_cast<int>(item_list->size()));
+    const int retry_limit = std::clamp(max_retries, 0, 10);
 
     for (int worker = 0; worker < worker_count; ++worker) {
         const bool submitted = batch_runner_.submitDetached(
-            [this, progress, item_list, next_index, normalized_limit, handler, cancel_remaining]() {
+            [this, progress, item_list, next_index, normalized_limit, handler, cancel_remaining, retry_limit]() {
                 for (;;) {
                     if (progress->cancel_requested.load()) {
                         progress->state = application::model::BatchState::Cancelled;
@@ -277,25 +281,43 @@ std::string BatchTaskManager::startImpl(const std::vector<application::model::Cr
                     }
 
                     TargetResult target_result;
-                    try {
-                        const std::function<bool()> stopped = [this, progress] { return progress->cancel_requested.load() || isTaskTimedOut(progress); };
-                        target_result = handler ? handler(item.item_key, normalized_limit, progress->batch_id, stopped) : TargetResult {};
-                    } catch (const std::exception &e) {
-                        appendError(progress, "Exception processing " + item.item_key + ": " + e.what());
-                        item.last_error = e.what();
-                    } catch (...) {
-                        appendError(progress, "Unknown exception processing " + item.item_key);
-                        item.last_error = "Unknown exception";
+                    const std::function<bool()> stopped = [this, progress] { return progress->cancel_requested.load() || isTaskTimedOut(progress); };
+                    for (;;) {
+                        try {
+                            target_result = handler ? handler(item.item_key, normalized_limit, progress->batch_id, stopped) : TargetResult {};
+                        } catch (const std::exception &e) {
+                            target_result = {false, 0, e.what(), "unknown", "failed"};
+                        } catch (...) {
+                            target_result = {false, 0, "Unknown exception", "unknown", "failed"};
+                        }
+                        if (target_result.success || !target_result.retryable || item.retry_count >= retry_limit || progress->cancel_requested.load()) break;
+                        const auto delay = std::clamp(target_result.retry_delay * (1 << (std::min)(item.retry_count, 4)), std::chrono::milliseconds(0), std::chrono::milliseconds(20000));
+                        const auto retry_at = std::chrono::steady_clock::now() + delay;
+                        // 短间隔协作等待，取消或超时后不再发起下一次外部请求。
+                        while (std::chrono::steady_clock::now() < retry_at && !progress->cancel_requested.load() && !isTaskTimedOut(progress)) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                        if (progress->cancel_requested.load()) break;
+                        if (isTaskTimedOut(progress)) {
+                            target_result = {false, 0, "Task timed out", "timeout", "timeout"};
+                            break;
+                        }
+                        ++item.retry_count;
+                        item.last_error = target_result.error;
+                        item.error_category = target_result.error_category;
+                        item.result_code = target_result.result_code;
+                        item.updated_at = nowSeconds();
+                        if (batch_repository_) {
+                            (void)batch_repository_->updateItem(item);
+                            (void)batch_repository_->appendEvent(application::model::CrawlBatchEventRecord {progress->batch_id, static_cast<int>(index), "itemRetryScheduled", item.item_key, itemEventPayload(item, "retry", 0, item.last_error, item.error_category, item.result_code), item.updated_at});
+                        }
                     }
 
                     const std::uint64_t item_finish = nowSeconds();
                     if (target_result.success) {
                         progress->success_count++;
+                        item.last_error.clear();
                     } else {
                         progress->failure_count++;
-                        if (item.last_error.empty()) {
-                            item.last_error = target_result.error.empty() ? "Failed to process: " + item.item_key : target_result.error;
-                        }
+                        item.last_error = target_result.error.empty() ? "Failed to process: " + item.item_key : target_result.error;
                         if (target_result.error_category.empty()) {
                             target_result.error_category = "unknown";
                         }

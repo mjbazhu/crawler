@@ -23,11 +23,13 @@ class BatchTaskManager {
 public:
     // 单个批次目标处理结果，供持久化 item 写入准确数量和错误。
     struct TargetResult {
-        bool success = false;       // 是否成功
-        int written_count = 0;      // 写入或解析数量
-        std::string error;          // 失败原因
-        std::string error_category; // 失败分类，空表示无失败
-        std::string result_code;    // 结果编码，成功时默认为 ok
+        bool success = false;                         // 是否成功
+        int written_count = 0;                        // 写入或解析数量
+        std::string error;                            // 失败原因
+        std::string error_category;                   // 失败分类，空表示无失败
+        std::string result_code;                      // 结果编码，成功时默认为 ok
+        bool retryable = false;                       // 仅明确允许重取的外部响应失败可重试
+        std::chrono::milliseconds retry_delay {1000}; // 首次重试等待时间，限流至少等待 20 秒
     };
 
     using TargetHandler = std::function<TargetResult(std::string, int)>;
@@ -54,7 +56,8 @@ public:
         std::string settings_snapshot,
         std::string parent_batch_id,
         TargetHandler handler,
-        bool allow_empty = false // 已校验的队列查询可正常完成零目标任务
+        bool allow_empty = false, // 已校验的队列查询可正常完成零目标任务
+        int max_retries = 0       // 额外尝试次数，默认保持其他批次原有执行策略
     );
 
     // 启动带批次身份与取消检查的目标处理，并采用本批次的有界并发。
@@ -77,7 +80,7 @@ public:
 
 private:
     // 两种处理器共享同一生命周期和事件实现。
-    std::string startImpl(const std::vector<application::model::CrawlBatchItemRecord> &items, int normalized_limit, std::string task_type, std::string request_params, std::string settings_snapshot, std::string parent_batch_id, ContextualTargetHandler handler, bool allow_empty, int concurrency);
+    std::string startImpl(const std::vector<application::model::CrawlBatchItemRecord> &items, int normalized_limit, std::string task_type, std::string request_params, std::string settings_snapshot, std::string parent_batch_id, ContextualTargetHandler handler, bool allow_empty, int concurrency, int max_retries);
     // 判断任务是否超过当前配置的超时时间。
     bool isTaskTimedOut(const std::shared_ptr<application::model::BatchProgress> &progress) const;
 

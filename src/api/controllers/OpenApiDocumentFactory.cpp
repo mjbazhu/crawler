@@ -253,7 +253,7 @@ void buildSchemas(json &schemas)
          {
              {"batch_id", {{"type", "string"}}},
              {"source", {{"type", "string"}, {"example", "migu"}}},
-             {"type", {{"type", "string"}, {"enum", json::array({"singerIndex", "singerSongs", "singerAlbums", "singerSongsFromDb", "singerAlbumsFromDb", "albumDetails", "albumSongs"})}}},
+             {"type", {{"type", "string"}, {"enum", json::array({"singerIndex", "singerSongs", "singerAlbums", "singerSongsFromDb", "singerAlbumsFromDb", "singerProfileRefresh", "albumDetails", "albumSongs"})}}},
              {"state", {{"type", "string"}, {"enum", json::array({"Pending", "Running", "Completed", "Failed", "Cancelled"})}}},
              {"request_params", {{"type", "object"}, {"additionalProperties", true}}},
              {"settings_snapshot", {{"type", "object"}, {"additionalProperties", true}}},
@@ -457,6 +457,9 @@ void buildSchemas(json &schemas)
              {"total", {{"type", "integer"}, {"minimum", 0}}},
          }},
     };
+    schemas["SingerProfileRefreshRequest"] = {
+        {"type", "object"}, {"additionalProperties", false}, {"properties", {{"source", {{"type", "string"}, {"enum", json::array({"migu"})}, {"default", "migu"}}}, {"source_ids", {{"type", "array"}, {"minItems", 1}, {"maxItems", 500}, {"items", {{"type", "string"}, {"pattern", "^[1-9][0-9]{0,19}$"}}}}}, {"limit", {{"type", "integer"}, {"minimum", 0}, {"maximum", 500}, {"default", 50}, {"description", "Maximum selected profiles; 0 selects all matching sources."}}}, {"force", {{"type", "boolean"}, {"default", false}, {"description", "Refresh known totals too. Does not crawl directories or modify their status, timestamps or claims."}}}, {"filter", {{"type", "object"}, {"additionalProperties", false}, {"properties", {{"q", {{"type", "string"}, {"maxLength", 512}}}, {"country", {{"type", "string"}, {"maxLength", 128}}}, {"gender", {{"type", "integer"}, {"minimum", 0}, {"maximum", 3}}}}}}}}}
+    };
     schemas["SingerRecord"] = {
         {"type", "object"},
         {"required", json::array({"source", "source_singer_id", "name", "songs_sync_status", "albums_sync_status"})},
@@ -467,7 +470,6 @@ void buildSchemas(json &schemas)
              {"name", {{"type", "string"}}},
              {"normalized_name", {{"type", "string"}}},
              {"gender", {{"type", "integer"}, {"minimum", 0}, {"maximum", 3}}},
-             {"status", {{"type", "integer"}}},
              {"source_ref_id", {{"type", "integer"}, {"minimum", 0}}},
              {"source", {{"type", "string"}, {"enum", json::array({"migu"})}}},
              {"source_item_key", {{"type", "string"}}},
@@ -1208,6 +1210,11 @@ std::string OpenApiDocumentFactory::miguDocumentJson()
     buildSchemas(doc["components"]["schemas"]);
 
     doc["paths"]["/api/migu/singers/crawl"]["post"] = crawlPostPath("Crawl singer catalog", "Crawl Migu singer categories and save singers plus singer_source_refs.", "#/components/schemas/SingerIndexCrawlRequest");
+    auto profile_path = crawlPostPath("Refresh singer profiles from database", "Refresh whole singer profiles without crawling song/album directories or downloading images. Missing declared totals are selected by default; zero is known. Unknown classification is preserved.", "#/components/schemas/SingerProfileRefreshRequest");
+    profile_path["requestBody"]["required"] = false;
+    profile_path["responses"]["200"] = {{"description", "No eligible profiles; returns batch_id=null, claimed_count, skipped_count and items."}};
+    profile_path["responses"]["503"] = errorResponse("Singer profile refresh is not configured");
+    doc["paths"]["/api/migu/singers/profile/refresh-from-db"]["post"] = std::move(profile_path);
     doc["paths"]["/api/migu/singer-songs/crawl-from-db"]["post"] = crawlPostPath("Crawl singer songs from database queue", "Claim singers from singer_source_refs by songs_sync_status and crawl songs. Optional country, gender and q filters are ignored when empty.", "#/components/schemas/SingerFromDbCrawlRequest");
     doc["paths"]["/api/migu/singer-songs/crawl-from-db/preview"]["post"] = singerFromDbPreviewPostPath("Preview singer songs crawl from database queue", "Returns matched count, eligible count and target samples before claiming singer_source_refs rows for song crawling.");
     doc["paths"]["/api/migu/singer-albums/crawl-from-db"]["post"] = crawlPostPath("Crawl singer albums from database queue", "Claim singers from singer_source_refs by albums_sync_status and crawl albums. Optional country, gender and q filters are ignored when empty.", "#/components/schemas/SingerFromDbCrawlRequest");
@@ -1221,7 +1228,7 @@ std::string OpenApiDocumentFactory::miguDocumentJson()
                            {{"name", "page"}, {"in", "query"}, {"required", false}, {"schema", {{"type", "integer"}, {"minimum", 1}, {"default", 1}}}},
                            {{"name", "page_size"}, {"in", "query"}, {"required", false}, {"schema", {{"type", "integer"}, {"minimum", 1}, {"maximum", 200}, {"default", 20}}}},
                            {{"name", "state"}, {"in", "query"}, {"required", false}, {"schema", {{"type", "string"}, {"enum", json::array({"Pending", "Running", "Completed", "Failed", "Cancelled"})}}}},
-                           {{"name", "type"}, {"in", "query"}, {"required", false}, {"schema", {{"type", "string"}, {"enum", json::array({"singerIndex", "singerSongs", "singerAlbums", "singerSongsFromDb", "singerAlbumsFromDb", "albumDetails", "albumSongs"})}}}},
+                           {{"name", "type"}, {"in", "query"}, {"required", false}, {"schema", {{"type", "string"}, {"enum", json::array({"singerIndex", "singerSongs", "singerAlbums", "singerSongsFromDb", "singerAlbumsFromDb", "singerProfileRefresh", "albumDetails", "albumSongs"})}}}},
                            {{"name", "q"}, {"in", "query"}, {"required", false}, {"schema", {{"type", "string"}, {"maxLength", 128}}}, {"description", "Searches batch id, type, display_name, target_summary, target_keywords, last_error, error_category and result_code."}},
                            {{"name", "display_name"}, {"in", "query"}, {"required", false}, {"schema", {{"type", "string"}, {"maxLength", 128}}}},
                            {{"name", "target_summary"}, {"in", "query"}, {"required", false}, {"schema", {{"type", "string"}, {"maxLength", 128}}}},

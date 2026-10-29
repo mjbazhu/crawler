@@ -4,23 +4,21 @@
 
 当前交付指示：用户已授权整理文档、提交、推送、创建 PR，最新指示为暂不合并 PR。主分支已通过 PR #5/#6 合入歌手资料清理和长期验收；本轮需保留这些已提交内容并核对集成兼容。下一阶段[统一云端回执重构](../roadmap/resource-cloud-receipts.md)方案已确认但尚未实施，不在当前交付时新增回执表或删云端列。
 
+## 本轮 main 集成
+
+已按用户授权在本功能分支纳入 main `69a157f`，解决全部 7 处冲突，保留 main 的歌手资料刷新、字段清理、默认头像保护、有限重试和[长期验收原文](../migu/singer-profile-validation.md)。本轮仅集成功能基线，统一云端回执方案仍未实施。
+
 ## PR 交付与接续入口
 
-[PR #7](https://github.com/mjbazhu/crawler/pull/7) 已创建并推送，目标 main，当前为 Draft/open、未合并、未开启自动合并。实现提交为 `3335716`，实现/验收与后续方案文档提交为 `524ac68`。创建 PR 前重新执行 15 项离线/本机回归全部通过，见 `D:/codex-runs/crawler-cover-local/20261028/pr-checkpoint-tests.txt`；本轮未重跑真实云端或 MySQL，也未把历史结果作为组合版本测试。
+[PR #7](https://github.com/mjbazhu/crawler/pull/7) 继续保持 Draft/open、未合并。原实现/文档提交为 3335716、524ac68、de96bf2；本轮以 merge commit 保留 main 和功能分支历史，测试后推送更新，不执行 PR 合并或改动 main 工作区。
 
-与 `origin/main` 的 `69a157f` 进行只读预检，发现 7 处冲突，GitHub 同样报告 mergeable=false；本轮没有执行任何分支合并或 PR 合并：
+本轮 demo/受影响 target 构建、17 项离线/本机回归、7 项全新隔离 MySQL 回归及 186 份 SQL prepare 通过；原克隆库的 20 位歌手/20 张专辑完成目录、详情、本地封面与 SHA-256 联调，历史歌手详情 404 缺口已消除，已删除字段未恢复。49 个 main 歌手 SQL/源码/长期记录及资料刷新 OpenAPI 已核对保留。完整库名、日志和验证边界见[组合验收](../roadmap/metadata-cover-cloud-storage.md#pr-7-与-main-的组合验收2026-10-29)。
 
-- `docs/README.md`、本文件、`docs/migu/metadata.md`。
-- `sql/mysql/schema/schema_status.sql`。
-- `src/application/use_cases/BatchTaskManager.cpp`。
-- `src/infrastructure/music/persistence/mysql/MySqlMusicCatalogQueryRepository.cpp`。
-- `tests/migu/api/MiguHttpRouteSmokeTest.cpp`。
-
-用户后续允许处理集成时，保留 main 的歌手字段清理、刷新入口和长期验收文档，以及本分支封面流程、迁移编号和 API 契约；解决冲突后重新配置、构建及执行针对性组合回归，完成歌手目录 cover 联调。不能把当前 PR 写成可直接合并或已通过 main 组合验证。新回执表 SQL 重构在本 PR 审阅及后续基线同步后单独开始。
+本轮自建服务已停止，真实云端未重传，未写运行库或原来源库；历史百度/Google 上传验收仍保留原范围。下一步先按用户指示审阅 PR，合并需另有明确指令。后续统一回执 SQL 重构从当时最新 main 的独立分支开始。
 
 ## 实施状态
 
-本地闭环已经实现，40 张真实歌手/专辑图片通过克隆库上的 HTTP 接口完成下载及读取验收。此前本地版本 `1.8.0` 已验收；本轮顶部 API 清单、推荐流程与两份 OpenAPI 已更新到 `1.9.0`，包含云端状态及补传规则。详细范围、接口和验收统一维护在[封面专项](../roadmap/metadata-cover-download.md)。并行歌手字段清理与当前目录查询存在兼容缺口，见下方，不能把它计作联调通过。
+本地闭环已经实现，40 张真实歌手/专辑图片通过克隆库上的 HTTP 接口完成下载及读取验收。此前本地版本 `1.8.0` 已验收；本轮顶部 API 清单、推荐流程与两份 OpenAPI 已更新到 `1.9.0`，包含云端状态及补传规则。详细范围、接口和验收统一维护在[封面专项](../roadmap/metadata-cover-download.md)。初始独立阶段的歌手目录兼容缺口已在本轮 main 组合验收中消除，历史失败与本轮通过结果分别保留。
 
 用户随后明确要求把现有 Google 后端也一起接入并直接实现。已实现共用 `CloudFileStore` 与 `MetadataCoverCloudWorkflow`：百度复用 BaiduPCS-Go uploader，加有界进程及云端回读 SHA-256 核验；Google 复用 rclone RC 配置与鉴权，使用 `operations/uploadfile` 上传同一字节快照，`operations/stat` 核验大小和完整摘要。两者共用云端状态、认领、回写及现有 `/covers/process`，配置选择一个后端，不要求手动步骤。
 
@@ -70,7 +68,7 @@ cmake --build D:/codex-builds/crawler-cover-local-20261028 --target <受影响 t
 
 修改包括规划/交接文档、封面模型及窄 port、队列与 SQL/migration、独立 workflow/门面、文件保存/读取/恢复、HTTP adapter/路由/DTO/目录查询、组合根及两份 OpenAPI、新增测试和手动真实探测，并联动既有针对性测试与事件说明。实现及方案已提交、推送到 PR #7；本轮新增交付状态文档随同分支更新，原 main 工作区保持干净。
 
-1. 克隆源已应用并行 `singer-profile-completion` 的字段清理，删除 `singers.status` 等；本分支旧歌手目录 SQL 仍引用该列，真实歌手详情返回 404，专辑详情已验证返回正确 cover。这是跨分支联调缺口，证据 `main20-20261028_235106/catalog-integration.json`；封面队列/下载/内容本身通过。用户已明确选择“保持两会话独立，统一合并后再联调歌手目录”，本轮保留该边界，不整合另一会话的未提交变更。
+1. 初始克隆库歌手详情 404 为历史跨分支问题，证据 main20-20261028_235106/catalog-integration.json；本轮集成 main 后，20 位歌手详情与封面全部通过，见 pr7-clone-integration/result.json。
 2. 若定位历史专辑 URL 归属问题，先按保存的原响应核对再定向修复；本次仅保护新输入，未批量清理历史数据。
-3. 两家后端的自动上传、已有文件补传、对象核验及条件回写已完成，配置及验收见[云端存储](../roadmap/metadata-cover-cloud-storage.md)。歌手资料分支仍保持独立，统一合并后再联调目录。
-4. 提交、推送及创建草稿 PR 已完成，PR 按用户指示保持未合并。后续先处理已列出的 main 集成冲突并验证，再根据用户合并指示推进；统一回执 SQL 重构以当时最新 main 为基线，在独立分支继续。
+3. 两家后端自动上传和补传已完成；main 中已提交的歌手资料改动已集成，目录封面联调通过，见[组合验收](../roadmap/metadata-cover-cloud-storage.md#pr-7-与-main-的组合验收2026-10-29)。
+4. 本轮冲突已解决并完成组合验证，测试结果随 merge commit 推送更新 PR #7，PR 保持未合并。统一回执 SQL 重构仍在后续独立分支实施。

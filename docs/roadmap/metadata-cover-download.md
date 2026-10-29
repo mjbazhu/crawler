@@ -78,7 +78,7 @@ URL 更新默认保留成功文件。下载期间 URL 改变时，条件回写�
 - **契约与静态检查：** 顶部 API 清单、推荐流程及静态/运行期 OpenAPI `1.8.0` 对齐；4 个新增路径、6 个 schema 和 2 个目录字段一致，迁移 checksum 匹配，见 `contract-check.txt`。初始 19 个及本轮 4 个实现的 clangd 编译/preamble/AST 阶段无诊断；部分命令因编辑器重构 tweak 自检失败而非零退出，不能计为全部 clangd 检查通过。
 - **真实平台：** 用户指定 `crawler_ownership_test_main20_20261028_154114`，以单事务快照克隆为 `crawler_ownership_test_cover_main20_20261028_235106`。22 张表、5 个视图、数据哈希一致且引用留在克隆内；本会话未写源库。20 张歌手图、20 张专辑图共 4,812,571 字节通过实际 HTTP 下载、回执、文件 SHA-256、本地 MIME、ETag/304、第二轮复用、任务/事件和错误接口验收；图片包含 WebP/JPEG/PNG。TLS 校验保持开启，本机自签名服务在握手阶段被拒绝，无 HTTP 请求或文件产物。见 `main20-live-http-final.txt`、`main20-untrusted-tls.txt` 和 `main20-20261028_235106/http-cover-result.json`。
 - **真实失败修复：** 首轮 40 张均因 Windows OpenSSL 未加载系统 ROOT 而证书失败；补只读系统根信任后同批成功。实际 WebP 图片又暴露 Drogon 普通 header 推断回退成 HTML 的问题，改为保留自定义 MIME 后通过内容验收。封面迁移在发布前改用 `2026102802`，避免占用并行歌手资料清理已执行的 `2026102801`，DDL 字节未改。
-- **跨分支限制：** 指定克隆库已删除 `singers.status` 等字段，本分支旧歌手目录查询仍引用该列，歌手详情联调返回 404；专辑详情返回正确 cover。两会话暂按独立范围保留，待歌手资料变更统一合并后联调目录，不能把该项写成通过。
+- **跨分支限制：** 指定克隆库已删除 `singers.status` 等字段，本分支旧歌手目录查询仍引用该列，歌手详情联调返回 404；专辑详情返回正确 cover。该项属于初始独立阶段的失败；本轮在功能分支集成 main 后，20 位歌手目录/详情及本地封面全部通过，见[组合验收](metadata-cover-cloud-storage.md#pr-7-与-main-的组合验收2026-10-29)。
 
 此前默认库探测的 `SKIP` 已由本轮 main20 真实验收补齐，不再代表当前状态。源库另有会话持续更新，本会话通过只读快照验证，没有干预其任务；运行库 `crawler` 未迁移或写入，云端上传未纳入本次实现。
 
@@ -88,4 +88,4 @@ URL 更新默认保留成功文件。下载期间 URL 改变时，条件回写�
 - 已读取相关路线、元数据/资源约束、SQL、封面 adapter、HTTP、装配、目录 API 与现有测试源码。
 - 本地闭环、SQL、接口和针对性测试已实现，离线/本机与独立数据库回归通过；证据以本次验收及当前交接为准。
 - 有效构建位于 `D:/codex-builds/crawler-cover-local-20261028`，规避 C 盘链接空间不足；使用原 preset 和本地链接符号选项。
-- 后续[云端自动接入](metadata-cover-cloud-storage.md)及 API/OpenAPI 1.9.0 已完成并纳入 PR #7；当前需在用户后续授权的集成阶段解决 main 冲突并联调歌手目录 cover。新的[统一云端回执方案](resource-cloud-receipts.md)只固化设计，待基线同步后独立实施。历史专辑 URL 仅在有原响应证据时定向处理。
+- 后续[云端自动接入](metadata-cover-cloud-storage.md)及 API/OpenAPI 1.9.0 已完成并纳入 PR #7；本轮 main 冲突已解决并完成歌手/专辑目录封面组合联调，PR 保持未合并。新的[统一云端回执方案](resource-cloud-receipts.md)只固化设计，待基线同步后独立实施。历史专辑 URL 仅在有原响应证据时定向处理。

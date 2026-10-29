@@ -3,6 +3,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <charconv>
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
@@ -197,6 +198,60 @@ std::vector<std::string> selectedStrings(const std::vector<std::string> &values,
 // 选择 ID 区间。
 
 } // namespace
+
+std::optional<MiguSingerProfileRefreshRequestDto> MiguSingerProfileRefreshRequestDto::fromRequest(const http::HttpRequest &req)
+{
+    try {
+        const auto body = req.body.empty() ? json::object() : json::parse(req.body);
+        if (!body.is_object()) return std::nullopt;
+        for (const auto &entry : body.items()) {
+            const auto &key = entry.key();
+            if (key != "source" && key != "force" && key != "limit" && key != "source_ids" && key != "filter") return std::nullopt;
+        }
+        MiguSingerProfileRefreshRequestDto dto;
+        if (body.contains("source")) dto.query.source = body.at("source").get<std::string>();
+        if (body.contains("force")) dto.query.force = body.at("force").get<bool>();
+        if (body.contains("limit")) {
+            if (!body.at("limit").is_number_integer()) return std::nullopt;
+            const auto limit = body.at("limit").get<std::int64_t>();
+            if (limit < 0 || limit > kMaxLimit) return std::nullopt;
+            dto.query.limit = static_cast<int>(limit);
+        }
+        if (body.contains("source_ids")) {
+            dto.query.source_ids = body.at("source_ids").get<std::vector<std::string>>();
+            if (dto.query.source_ids.empty()) return std::nullopt;
+        }
+        const auto filter = body.value("filter", json::object());
+        if (!filter.is_object()) return std::nullopt;
+        for (const auto &entry : filter.items()) {
+            if (entry.key() != "q" && entry.key() != "country" && entry.key() != "gender") return std::nullopt;
+        }
+        if (filter.contains("q")) dto.query.keyword = filter.at("q").get<std::string>();
+        if (filter.contains("country")) dto.query.country = filter.at("country").get<std::string>();
+        if (filter.contains("gender")) {
+            if (!filter.at("gender").is_number_integer()) return std::nullopt;
+            const auto gender = filter.at("gender").get<std::int64_t>();
+            if (gender < 0 || gender > 3) return std::nullopt;
+            dto.query.gender = static_cast<int>(gender);
+        }
+        return dto;
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+std::optional<std::string> MiguSingerProfileRefreshRequestDto::validate() const
+{
+    if (query.source != "migu") return "source must be migu";
+    if (query.source_ids.size() > 500) return "source_ids must contain at most 500 IDs";
+    if (query.keyword.size() > 512 || query.country.size() > 128) return "singer profile filter is too long";
+    for (const auto &id : query.source_ids) {
+        std::uint64_t value = 0;
+        const auto parsed = std::from_chars(id.data(), id.data() + id.size(), value);
+        if (id.empty() || id.size() > 20 || parsed.ec != std::errc {} || parsed.ptr != id.data() + id.size() || value == 0 || id.front() == '0') return "source_ids must contain positive numeric singer IDs without leading zeros";
+    }
+    return std::nullopt;
+}
 
 std::optional<MiguSingerIndexCrawlRequestDto> MiguSingerIndexCrawlRequestDto::fromRequest(const http::HttpRequest &req)
 {

@@ -43,7 +43,7 @@ std::optional<application::model::SingerSourceMetadata> parseSingerSourceFromIte
     metadata.source_tag = JsonUtils::getString(item, "txt3");
     metadata.source_metric = JsonUtils::getString(item, "txt4");
     metadata.source_country = singer_class.country;
-    metadata.avatar_url = normalizeMiguResourceUrl(JsonUtils::getString(item, "img"));
+    metadata.avatar_url = normalizeMiguSingerAvatarUrl(JsonUtils::getString(item, "img"));
     metadata.source_index_tab = std::string(tab);
     metadata.source_index_order = index_order;
     return metadata;

@@ -57,6 +57,7 @@ FROM (
     SELECT 2026102701, _utf8mb4'migu_album_material_lookup' COLLATE utf8mb4_unicode_ci, _utf8mb4'b830cb1af262e73ec4669f5f39ae4312' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102702, _utf8mb4'singer_source_gender_ownership' COLLATE utf8mb4_unicode_ci, _utf8mb4'c920c30b5f4fd81c1c9dff0fb7167f00' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102703, _utf8mb4'metadata_cover_remote_urls' COLLATE utf8mb4_unicode_ci, _utf8mb4'75da4ef101026533d80bf7e8830b391f' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT 2026102801, _utf8mb4'singer_profile_field_cleanup' COLLATE utf8mb4_unicode_ci, _utf8mb4'0a9119000b834016660cc8601db77fba' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102802, _utf8mb4'metadata_cover_download_claims' COLLATE utf8mb4_unicode_ci, _utf8mb4'fe5df5956db30daace32711d734a390e' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102901, _utf8mb4'metadata_cover_cloud_storage' COLLATE utf8mb4_unicode_ci, _utf8mb4'ee00f3811554d6eb404813a48f58b607' COLLATE utf8mb4_unicode_ci
 ) expected
@@ -98,6 +99,7 @@ FROM (
     SELECT 2026102701, _utf8mb4'b830cb1af262e73ec4669f5f39ae4312' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102702, _utf8mb4'c920c30b5f4fd81c1c9dff0fb7167f00' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102703, _utf8mb4'75da4ef101026533d80bf7e8830b391f' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT 2026102801, _utf8mb4'0a9119000b834016660cc8601db77fba' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102802, _utf8mb4'fe5df5956db30daace32711d734a390e' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102901, _utf8mb4'ee00f3811554d6eb404813a48f58b607' COLLATE utf8mb4_unicode_ci
 ) expected

@@ -39,6 +39,9 @@ std::string selectImageUrl(const nlohmann::json *items);
 // 将 Migu 返回的资源路径补齐为可直接请求的 URL。
 std::string normalizeMiguResourceUrl(std::string resource_url);
 
+// 歌手头像排除已确认的平台默认图，保留空值以沿用已有真实地址。
+std::string normalizeMiguSingerAvatarUrl(std::string resource_url);
+
 // 判断列表项是否包含有效歌曲信息。
 bool hasValidSongItem(const nlohmann::json &item);
 
