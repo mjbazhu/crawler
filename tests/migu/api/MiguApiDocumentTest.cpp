@@ -1,9 +1,11 @@
 #include "crawler/api/controllers/OpenApiDocumentFactory.h"
+#include "migu/support/ApiRouteContractSupport.h"
 
 #include <nlohmann/json.hpp>
 
 #include <cassert>
 #include <cstdlib>
+#include <exception>
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -33,6 +35,12 @@ void requireDumpContains(const nlohmann::json &value, const std::string &needle)
 int main()
 {
     const auto doc = nlohmann::json::parse(OpenApiDocumentFactory::miguDocumentJson());
+    try {
+        orchestrator::modules::crawler::tests::api_contract::verifyRegisteredRoutes(doc);
+    } catch (const std::exception &error) {
+        std::cerr << "OpenAPI route contract failed: " << error.what() << '\n';
+        return EXIT_FAILURE;
+    }
     assert(doc["info"]["version"] == "1.9.0");
     requireDumpContains(doc["info"]["description"], "singer/album cover storage");
     // 可选导出真实运行期文档，供静态 OpenAPI 契约一致性核对。

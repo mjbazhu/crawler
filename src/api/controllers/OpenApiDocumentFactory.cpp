@@ -1208,6 +1208,8 @@ std::string OpenApiDocumentFactory::miguDocumentJson()
     });
 
     buildSchemas(doc["components"]["schemas"]);
+    // 资源治理操作复用该响应，确保运行期引用与静态文档均可解析。
+    doc["components"]["responses"]["BadRequest"] = errorResponse("Invalid request");
 
     doc["paths"]["/api/migu/singers/crawl"]["post"] = crawlPostPath("Crawl singer catalog", "Crawl Migu singer categories and save singers plus singer_source_refs.", "#/components/schemas/SingerIndexCrawlRequest");
     auto profile_path = crawlPostPath("Refresh singer profiles from database", "Refresh whole singer profiles without crawling song/album directories or downloading images. Missing declared totals are selected by default; zero is known. Unknown classification is preserved.", "#/components/schemas/SingerProfileRefreshRequest");

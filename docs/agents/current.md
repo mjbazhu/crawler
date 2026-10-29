@@ -16,6 +16,16 @@
 
 本轮自建服务已停止，真实云端未重传，未写运行库或原来源库；历史百度/Google 上传验收仍保留原范围。下一步先按用户指示审阅 PR，合并需另有明确指令。后续统一回执 SQL 重构从当时最新 main 的独立分支开始。
 
+## 全量路由文档核对（2026-10-29）
+
+在 main 集成提交 `70f4909` 上追加路由覆盖审查：通过实际 CrawlerRoutes 注册取得 54 个业务操作、52 个路径模板及 50 个 CORS OPTIONS；补池按四种有效类型展开为 66 个操作。静态 YAML 使用通用补池路径，运行期多数使用具体类型路径，展开后与代码/API 顶部清单双向覆盖一致，缺失和多余均为 0。
+
+修复 API 顶部清单遗漏的 9 项（两类目录采集 preview、任务 progress/stop、设置 GET/PUT/PATCH、health、openapi.json）。补齐运行期 OpenAPI 缺失的 components.responses.BadRequest 定义，资源 retry/reset/recover-stale 的 400 引用现可解析；静态 YAML 已有该定义，无需重复改写。
+
+MiguApiDocumentTest 新增实际注册路由与运行期文档的双向覆盖、必需路径参数声明及本地引用完整性检查；静态文档 85 个组件引用核对通过。demo/三项 API target 构建，MiguApiDocumentTest、MiguCatalogApiSmokeTest、MiguHttpRouteSmokeTest 均通过。此轮验证方法/路径覆盖及引用完整性，未逐项重新审查全部请求/响应字段语义，未重跑 MySQL 或外部平台测试。
+
+证据：`D:/codex-runs/crawler-cover-local/20261028/route-documentation-audit.json`、`route-documentation-operations.json`、`route-audit-registered.json`、`route-audit-openapi.json`、`route-audit-build.txt`、`route-audit-tests.txt`。API 版本保持 1.9.0，PR #7 继续未合并。
+
 ## 实施状态
 
 本地闭环已经实现，40 张真实歌手/专辑图片通过克隆库上的 HTTP 接口完成下载及读取验收。此前本地版本 `1.8.0` 已验收；本轮顶部 API 清单、推荐流程与两份 OpenAPI 已更新到 `1.9.0`，包含云端状态及补传规则。详细范围、接口和验收统一维护在[封面专项](../roadmap/metadata-cover-download.md)。初始独立阶段的歌手目录兼容缺口已在本轮 main 组合验收中消除，历史失败与本轮通过结果分别保留。

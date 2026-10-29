@@ -35,10 +35,14 @@ OpenAPI：
 
 | API | 用途 | 数据与关键行为 |
 | --- | --- | --- |
+| `GET /api/health` | 健康检查 | 返回服务健康状态 |
+| `GET /api/openapi.json` | 获取运行期接口契约 | 返回当前实际装配版本的 OpenAPI JSON |
 | `POST /api/migu/singers/crawl` | 获取歌手分类列表 | `singers`、`singer_source_refs` |
 | `POST /api/migu/singers/profile/refresh-from-db` | 独立补齐或刷新库内歌手整份资料 | 来源声明总数、有效资料及头像 URL，不改变目录生命周期 |
 | `POST /api/migu/singer-songs/crawl-from-db` | 从库中认领未同步歌曲的歌手并批量获取歌曲 | `singer_source_refs.songs_sync_status`、歌曲来源表、批次表 |
+| `POST /api/migu/singer-songs/crawl-from-db/preview` | 预览歌手歌曲目录采集范围 | 返回命中及可处理目标，不认领或采集 |
 | `POST /api/migu/singer-albums/crawl-from-db` | 从库中认领未同步专辑的歌手并批量获取专辑 | `singer_source_refs.albums_sync_status`、专辑来源表、批次表 |
+| `POST /api/migu/singer-albums/crawl-from-db/preview` | 预览歌手专辑目录采集范围 | 返回命中及可处理目标，不认领或采集 |
 | `GET /api/migu/overview` | 控制台总览 | 从 `singers`、`songs`、`albums`、来源表和同步状态聚合 |
 | `GET /api/migu/integrity` | 状态一致性检查 | 歌手缺歌曲/缺专辑按真实关联表判断，并返回 stale running 计数 |
 | `GET /api/migu/schema/status` | Schema 检查 | 返回 MySQL schema 版本、缺失表和缺失关键列 |
@@ -66,11 +70,16 @@ OpenAPI：
 | `POST /api/migu/resources/reset` | 资源任务重置 | 重置资源任务状态、重试次数和错误信息，不删除文件 |
 | `POST /api/migu/resources/recover-stale` | 资源任务超时恢复 | 将超时获取中的资源任务置为失败 |
 | `GET /api/migu/dictionaries` | 前端字典 | 同步状态、性别、专辑类型、资源类型、音质、失败分类 |
+| `GET /api/migu/settings` | 查询运行设置 | 返回当前设置及允许修改的字段 |
+| `PUT /api/migu/settings` | 更新运行设置 | 校验并更新可变调度、并发及资源下载设置 |
+| `PATCH /api/migu/settings` | 部分更新运行设置 | 与 PUT 共用字段校验及更新流程 |
 | `GET /api/migu/backfill/*/queue` | 补池队列 | `*` 为 `singer-songs`、`singer-albums`、`album-details`、`album-songs` |
 | `POST /api/migu/backfill/*/preview` | 补池预览 | 返回筛选命中数量、可操作数量、样例目标和不可操作原因 |
 | `POST /api/migu/backfill/*/retry` | 补池重试 | 按 ID 或筛选条件启动批次 |
 | `POST /api/migu/backfill/*/reset` | 补池重置 | 只重置同步状态，不启动任务 |
 | `GET /api/migu/tasks` | 批次列表 | `crawl_batches`，默认隐藏归档批次，可传 `include_archived=true` |
+| `GET /api/migu/tasks/progress` | 内存批次进度 | 通过 `batch_id` 查询当前任务快照 |
+| `POST /api/migu/tasks/stop` | 请求停止批次 | 通过 `batch_id` 设置协作取消，并更新任务状态 |
 | `GET /api/migu/tasks/summary` | 批次全局指标 | 状态分布、运行中数量、最近成功/失败批次、失败最多任务类型 |
 | `GET /api/migu/tasks/{batch_id}` | 批次详情 | `crawl_batches` |
 | `GET /api/migu/tasks/{batch_id}/items` | 批次目标列表 | `crawl_batch_items` |
@@ -80,6 +89,8 @@ OpenAPI：
 | `POST /api/migu/tasks/{batch_id}/backfill-retry` | 从批次 item 回补池重试 | 从支持的歌手/专辑 item 生成补池 retry |
 | `POST /api/migu/tasks/{batch_id}/archive` | 归档批次 | 只隐藏批次，不删除历史 |
 | `GET /api/migu/governance/events` | 治理审计 | 查看资源、补池、维护和批次治理操作历史 |
+
+清单按 HTTP 方法和路径列出全部 54 个注册业务操作；补池的 `*` 表示 `singer-songs`、`singer-albums`、`album-details`、`album-songs` 四种有效类型，展开后为 66 个有效操作。代码中的数字路径占位符与文档中的命名占位符等价。`/api/migu/*` 的 50 个 `OPTIONS` 注册用于统一 CORS 预检，不另列为业务操作；静态和运行期 OpenAPI 对通用补池参数与具体类型路径的表达不同，展开有效类型后覆盖一致。
 
 ## 内容查询
 
