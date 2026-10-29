@@ -179,6 +179,7 @@ int main(int argc, char *argv[])
         song.source_album_name = "首次专辑";
         song.source_album_pinyin = "shoucizhuanji";
         song.cover_url = "https://example.test/cover.png";
+        song.source_album_cover_url = "https://example.test/album-only.png";
         song.copyright_id = "fixture-copyright";
         song.lyric_url = "https://example.test/lyric";
         song.mrc_url = "https://example.test/mrc";
@@ -189,7 +190,7 @@ int main(int argc, char *argv[])
         require(scalar(pool, "SELECT COUNT(*) FROM album_song_refs r JOIN album_source_refs a ON a.id=r.album_source_ref_id JOIN song_source_refs s ON s.id=r.song_source_ref_id WHERE a.source_album_id='ownership-album' AND s.source_content_id='ownership-content'") == 1, "first write lacks album relationship");
         require(scalar(pool, "SELECT COUNT(*) FROM song_artist_refs r JOIN singer_source_refs s ON s.id=r.singer_source_ref_id WHERE s.source_singer_id='ownership-singer' AND s.source_name_pinyin='shoucigeshou' AND r.is_seed=1") == 1, "first write lacks singer or pinyin");
         require(client->last_request_url.empty(), "metadata ingestion unexpectedly downloaded a binary resource");
-        require(scalar(pool, "SELECT COUNT(*) FROM album_resources r JOIN album_source_refs a ON a.id=r.album_source_ref_id WHERE a.source_album_id='ownership-album' AND r.status=0 AND r.remote_url='https://example.test/cover.png' AND r.local_path IS NULL") == 1, "album URL was not queued without downloading");
+        require(scalar(pool, "SELECT COUNT(*) FROM album_resources r JOIN album_source_refs a ON a.id=r.album_source_ref_id WHERE a.source_album_id='ownership-album' AND r.status=0 AND r.remote_url='https://example.test/album-only.png' AND r.local_path IS NULL") == 1, "album URL was not queued without downloading");
         require(scalar(pool, "SELECT COUNT(*) FROM song_resources sr JOIN song_source_refs r ON r.id=sr.song_source_ref_id WHERE r.source_content_id='ownership-content' AND sr.resource_kind IN('cover','lyric','mrc','trc') AND sr.status=0") == 4, "song resources were downloaded during metadata ingestion or task inputs were removed");
         auto &queue = *resource_queue;
         model::SongResourceClaimQuery claim;
@@ -283,7 +284,7 @@ int main(int argc, char *argv[])
         require(queue.claimPending(skip_claim).empty(), "metadata refresh reset a permanent skip");
 
         require(service.saveSongSources({song}, 1), "idempotent ingestion failed");
-        require(scalar(pool, "SELECT COUNT(*) FROM album_resources r JOIN album_source_refs a ON a.id=r.album_source_ref_id WHERE a.source_album_id='ownership-album' AND r.remote_url='https://example.test/cover.png' AND r.status=0 AND r.local_path IS NULL") == 1, "metadata recollection unexpectedly downloaded an album cover");
+        require(scalar(pool, "SELECT COUNT(*) FROM album_resources r JOIN album_source_refs a ON a.id=r.album_source_ref_id WHERE a.source_album_id='ownership-album' AND r.remote_url='https://example.test/album-only.png' AND r.status=0 AND r.local_path IS NULL") == 1, "metadata recollection unexpectedly downloaded an album cover");
         require(scalar(pool, "SELECT COUNT(*) FROM song_source_refs WHERE source_content_id='ownership-content'") == 1, "song ingestion duplicated source");
         require(scalar(pool, "SELECT COUNT(*) FROM album_source_refs WHERE source_album_id='ownership-album'") == 1, "song ingestion duplicated album");
         model::AlbumSourceMetadata album;

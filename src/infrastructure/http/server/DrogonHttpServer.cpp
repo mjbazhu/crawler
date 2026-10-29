@@ -5,6 +5,7 @@
 #include <drogon/drogon.h>
 
 #include <algorithm>
+#include <cctype>
 #include <exception>
 #include <functional>
 #include <memory>
@@ -71,7 +72,13 @@ drogon::HttpResponsePtr toDrogonResponse(api::http::HttpResponse response)
     auto converted = drogon::HttpResponse::newHttpResponse();
     converted->setStatusCode(static_cast<drogon::HttpStatusCode>(response.status_code));
     for (auto &[key, value] : response.headers) {
-        converted->addHeader(std::move(key), std::move(value));
+        auto normalized = key;
+        std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+        // 原样保留 MIME；Drogon 的普通 header 推断会把 WebP 等类型退回 HTML。
+        if (normalized == "content-type")
+            converted->setContentTypeCodeAndCustomString(drogon::CT_CUSTOM, value);
+        else
+            converted->addHeader(std::move(key), std::move(value));
     }
     converted->setBody(std::move(response.body));
     return converted;
@@ -167,6 +174,23 @@ void DrogonHttpServer::route(const std::string &method, const std::string &path,
     const auto drogon_method = toDrogonMethod(method);
     if (drogon_method == drogon::Invalid) {
         throw std::invalid_argument("unsupported HTTP method: " + method);
+    }
+
+    // 封面内容路由同时使用所有者类型与资源 ID，必须向 Drogon 声明两个占位参数。
+    if (path.find("{2}") != std::string::npos) {
+        drogon::app().registerHandler(
+            path,
+            [this, handler = std::move(handler)](
+                const drogon::HttpRequestPtr &request,
+                std::function<void(const drogon::HttpResponsePtr &)> &&callback,
+                const std::string &,
+                const std::string &
+            ) mutable {
+                dispatchApiHandler(handler_executor_, handler, request, std::move(callback));
+            },
+            {drogon_method}
+        );
+        return;
     }
 
     if (path.find("{1}") != std::string::npos) {

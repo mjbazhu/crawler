@@ -38,7 +38,7 @@ int main()
 {
     try {
         crawler::infrastructure::music::migu::parser::MiguParser parser;
-        const std::string json = R"({"resource":[{"contentId":"digital","materialId":"material","resourceType":"5","title":"专辑","singer":"歌手","singerId":"artist","songItems":[{"contentId":"content","songName":"歌曲","songNamePinyin":"gequ","albumId":"material","album":"专辑","albumNamePinyin":"zhuanji","length":"00:03:42","disc":"2","trackNumber":"7","artists":[{"id":"artist","name":"歌手","nameSpelling":"geshou"}],"newRateFormats":[{"formatType":"SQ","resourceType":"E","iosFormat":"011003","androidFormat":"011002","iosSize":"101","androidSize":"99"}]}]}]})";
+        const std::string json = R"({"resource":[{"contentId":"digital","materialId":"material","resourceType":"5","title":"专辑","imgItem":[{"imgSizeType":"03","img":"https://example.test/explicit-album.png"}],"singer":"歌手","singerId":"artist","songItems":[{"contentId":"content","songName":"歌曲","img3":"https://example.test/song-image.png","songNamePinyin":"gequ","albumId":"material","album":"专辑","albumNamePinyin":"zhuanji","length":"00:03:42","disc":"2","trackNumber":"7","artists":[{"id":"artist","name":"歌手","nameSpelling":"geshou"}],"newRateFormats":[{"formatType":"SQ","resourceType":"E","iosFormat":"011003","androidFormat":"011002","iosSize":"101","androidSize":"99"}]}]}]})";
         const std::vector<char> raw(json.begin(), json.end());
         const auto songs = parser.parseSongSources(raw);
         const auto albums = parser.parseAlbumSources(raw);
@@ -46,6 +46,7 @@ int main()
         require(songs[0].source_duration_seconds == 222, "detail duration is not parsed");
         require(songs[0].album_track_no == 7 && songs[0].album_disc_no == 2, "explicit disc/track lost");
         require(songs[0].source_album_id == "digital" && songs[0].source_album_material_id == "material", "album context identity lost");
+        require(songs[0].source_album_cover_url == "https://example.test/explicit-album.png" && songs[0].cover_url == "https://example.test/song-image.png", "parser mixed explicit album and song images");
         require(albums[0].source_title_pinyin == "zhuanji", "album pinyin did not reach album input");
         require(songs[0].audio_formats.size() == 1 && songs[0].audio_formats[0].iformat == "011003" && songs[0].audio_formats[0].asize == 99, "iOS/Android aliases lost");
         model::MetadataWriteBatch input;
@@ -84,6 +85,7 @@ int main()
         require(service.saveAlbumSources({album}, 0), "album metadata ingestion failed");
         require(writer->last.albums.front().cover_url == album.cover_url && !writer->last.albums.front().cover_resource, "album URL was lost or turned into an inline download result");
         auto song = songs.front();
+        song.source_album_cover_url.clear();
         song.cover_url = "https://example.test/song.png";
         song.lyric_url = "https://example.test/song.lrc";
         song.mrc_url = "https://example.test/song.mrc";
@@ -92,6 +94,9 @@ int main()
         require(service.saveSongSources({song}, 0), "song metadata ingestion failed");
         const auto &saved = writer->last.songs.front();
         require(saved.lyric_url == song.lyric_url && saved.mrc_url == song.mrc_url && saved.trc_url == song.trc_url && saved.cover_url == song.cover_url, "song resource task inputs were removed");
+        require(writer->last.albums.front().cover_url.empty(), "ordinary song image was misclassified as album cover");
+        song.source_album_cover_url = "https://example.test/explicit-album.png";
+        require(service.saveSongSources({song}, 0) && writer->last.albums.front().cover_url == song.source_album_cover_url, "explicit album image context was lost");
         writer->fail = true;
         require(!service.saveSingerSources({singer}, 1), "database failure was hidden");
         std::cout << "PASS: detail aliases, table ownership, metadata URLs and download-free ingestion\n";

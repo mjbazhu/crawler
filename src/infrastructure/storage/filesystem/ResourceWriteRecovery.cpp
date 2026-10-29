@@ -9,6 +9,13 @@ namespace orchestrator::modules::crawler::infrastructure::storage::filesystem {
 
 std::size_t FileStorage::recoverResourceWrites(const std::function<std::optional<application::model::ResourceWriteDisposition>(std::uint64_t, std::uint64_t, const std::string &)> &inspect)
 {
+    return recoverOwnedResourceWrites([&](const std::string &owner, std::uint64_t resource, std::uint64_t generation, const std::string &path) {
+        return owner == "song" ? inspect(resource, generation, path) : std::nullopt;
+    });
+}
+
+std::size_t FileStorage::recoverOwnedResourceWrites(const std::function<std::optional<application::model::ResourceWriteDisposition>(const std::string &, std::uint64_t, std::uint64_t, const std::string &)> &inspect)
+{
     const auto directory = root_dir_ / ".resource-writes";
     std::error_code error;
     if (!std::filesystem::exists(directory, error) || error) return 0;
@@ -26,10 +33,13 @@ std::size_t FileStorage::recoverResourceWrites(const std::function<std::optional
         std::getline(record, local_path);
         std::getline(record, temporary);
         std::getline(record, previous);
+        std::string owner;
+        if (!std::getline(record, owner) || owner.empty()) owner = "song";
+        if (owner != "song" && owner != "singer" && owner != "album") continue;
         record.close();
         // 日志也作为外部数据检查，禁止损坏日志逃逸存储根目录。
         if (!file_detail::isSafeRelativePath(local_path) || !file_detail::isSafeRelativePath(temporary)) continue;
-        const auto disposition = inspect(resource, generation, local_path);
+        const auto disposition = inspect(owner, resource, generation, local_path);
         if (!disposition || *disposition == application::model::ResourceWriteDisposition::Active) continue;
         if (*disposition == application::model::ResourceWriteDisposition::Discard) {
             error.clear();

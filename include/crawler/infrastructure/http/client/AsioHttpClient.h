@@ -67,6 +67,8 @@ public:
 
     // 发送 POST 请求，返回完整响应体。
     std::optional<HttpResponse> post(std::string_view url, std::string_view body, const std::vector<std::string> &headers = {}) override;
+    // 单次 POST 覆盖超时与响应上限，用于已下载文件云端上传。
+    std::optional<HttpResponse> postWithOptions(std::string_view url, std::string_view body, const std::vector<std::string> &headers, const HttpRequestOptions &options) override;
 
     // 返回内部 Asio executor，供外部用 co_spawn 启动 coGet/coPost。
     boost::asio::any_io_executor executor();

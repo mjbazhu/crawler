@@ -54,7 +54,8 @@ public:
         std::string storage_path = "./data";
         std::string resource_storage_backend = "filesystem";    // 资源二进制存储后端：filesystem；rclone 为旧远端 copyurl 模式
         bool resource_cloud_upload_enabled = false;             // 本地保存后是否上传到网盘
-        std::string resource_cloud_upload_backend = "baidupcs"; // 云端上传后端；当前支持 baidupcs
+        int resource_cloud_timeout_ms = 120000;                 // 单个封面上传及核验总超时
+        std::string resource_cloud_upload_backend = "baidupcs"; // 封面云端后端：baidupcs 或 rclone（Google 等 remote）
         storage::baidupcs::BaiduPcsGoConfig baidupcs;           // BaiduPCS-Go 本地文件上传配置
         storage::rclone::RcloneConfig rclone;                   // rclone 远端 copyurl 配置，保留旧方案
 

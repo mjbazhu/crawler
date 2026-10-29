@@ -1,10 +1,10 @@
 # Migu 资源批次事件规范
 
-本文约束 `/api/migu/resources/process` 产生的批次事件。事件用于回答“批次现在执行到哪一步”，属于可查询的业务进度和审计记录，落库到 `crawl_batch_events`，由 `/api/migu/tasks/{batch_id}/events` 返回。
+本文约束 `/api/migu/resources/process` 产生的批次事件，并说明独立封面任务复用的通用事件。事件用于回答“批次现在执行到哪一步”，属于可查询的业务进度和审计记录，落库到 `crawl_batch_events`，由 `/api/migu/tasks/{batch_id}/events` 返回。
 
 ## 分层边界
 
-- 批次事件用于前端展示、结果追踪和审计查询，必须通过 `SongResourceProcessListener` 写入，application workflow 不直接依赖具体 logger。
+- 歌曲资源批次事件用于前端展示、结果追踪和审计查询，必须通过 `SongResourceProcessListener` 写入，application workflow 不直接依赖具体 logger。
 - 运行日志用于实时排障和线下追踪，资源批次事件会通过 application 的 `DiagnosticsSink` 脱敏镜像到 console/file logger；日志不是前端任务状态的唯一来源。
 - 同一业务阶段只定义一个稳定事件名，同步和异步 workflow 必须保持一致。
 - payload 必须是 JSON object 字符串；没有扩展字段时写 `{}`。
@@ -54,12 +54,18 @@
 - `relatedResourceNotClaimed`：无可认领关联资源，生成 synthetic skipped item。
 - `relatedResourceDeduplicated`：同一首歌同一歌词类型已处理，当前音质不再重复下载。
 
+## 独立封面任务
+
+`/api/migu/covers/process` 使用 `BatchTaskManager` 的通用事件，任务类型为 `metadataCovers`，不经过歌曲专用的 `SongResourceProcessListener`。复用 `batchStarted`、`itemStarted`、`itemCompleted`、`itemFailed`、`batchFinished`、`cancelRequested`、`timeout` 和执行器失败时的 `batchFailed`；空目标直接记录 `batchCompleted`。当前不产生歌曲 listen、pacmtoken 或歌词关联阶段事件。
+
+通用 item 事件 payload 包含 `target_id/item_type/item_key/stage/written_count`，失败时补 `error/error_category/result_code`。封面明细类型为 `singerCover` 或 `albumCover`，item key 为 `singer:<resource_id>` 或 `album:<resource_id>`；明细自身 payload 另含 `owner_type/resource_id/source_ref_id`。目标只有轮到执行时才认领，取消后尚未开始的明细转为 `Cancelled`。事件与明细均不保存远端 URL 或绝对文件路径。
+
 ## 实施约束
 
 - 新增资源处理阶段时，优先扩展上述事件；只有出现新的独立业务阶段才新增事件名。
 - 事件 payload 字段必须稳定、小而明确，不把数据库行、外部响应体或本地绝对路径直接塞入 payload。
 - 单次下载进度事件必须限频；默认只记录开始、完成和失败，避免大批次写爆事件表。
-- 修改事件名或 payload 语义时，需要同步更新本文件、`sql/mysql/25_create_crawl_batch_events.sql` 注释和相关测试。
+- 修改事件名或 payload 语义时，需要同步更新本文件、`sql/mysql/crawl_batch_events/create.sql` 注释和相关测试。
 - 运行日志控制台只输出文本格式；文本文件和 JSONL 文件独立配置，可同时保存。
 - `INFO` 只保留批次开始/结束、认领开始/完成/空结果、item 完成/失败、资源回写完成、失败/跳过回写完成和 pacmtoken 检查刷新；尝试开始、内容下载开始、路径规划、blob 保存/提交等细粒度成功阶段默认降为 `DEBUG`。
 - 运行日志默认写入 `logs/crawler.log` 文本文件，可通过 `CRAWLER_LOG_TEXT_FILE_ENABLED=true|false`、`CRAWLER_LOG_TEXT_FILE`、`CRAWLER_LOG_JSON_FILE_ENABLED=true|false`、`CRAWLER_LOG_JSON_FILE` 调整。

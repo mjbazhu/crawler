@@ -90,6 +90,7 @@ struct SongResourceBlobStreamSaveRequest {
     bool require_database_ack = false;  // workflow 写入在数据库确认前保留补偿能力
     std::string relative_path_hint;     // 期望保存的相对路径
     std::string content_type;           // 资源 Content-Type
+    std::string owner_kind = "song";    // 文件日志归属：song、singer、album；旧日志默认为 song
 };
 
 // 歌曲资源字节保存结果，用于成功回写 song_resources。

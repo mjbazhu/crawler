@@ -1,6 +1,10 @@
 #pragma once
 
+#include "crawler/application/model/MetadataCover.h"
+#include "crawler/application/model/MetadataResourceFile.h"
 #include "crawler/application/ports/storage/MetadataCoverStore.h"
+#include "crawler/application/ports/storage/MetadataCoverReader.h"
+#include "crawler/application/ports/storage/SongResourceBlobStore.h"
 #include "crawler/infrastructure/http/client/HttpClient.h"
 #include "crawler/infrastructure/storage/filesystem/FileStorage.h"
 
@@ -9,19 +13,29 @@
 #include <memory>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace orchestrator::modules::crawler::infrastructure::storage::filesystem {
 
 // 线程安全的本地封面 adapter；共享 HTTP 客户端和文件存储，单次文件路径互不覆盖。
-class MetadataCoverStore final : public application::ports::MetadataCoverStore {
+class MetadataCoverStore final : public application::ports::MetadataCoverStore, public application::ports::MetadataCoverReader {
 public:
     // 保存线程安全依赖，headers 由组合根按音乐源策略提供。
     MetadataCoverStore(std::shared_ptr<http::client::HttpClient> client, std::shared_ptr<FileStorage> files, std::vector<std::string> headers);
 
-    // 限制单个封面为 8 MiB、15 秒，并校验响应确实为支持的图片。
+    // 限制单个封面为 8 MiB，默认 15 秒，校验响应为支持的完整图片结构。
     application::model::MetadataResourceFile save(std::string_view source, std::string_view owner_kind, std::string_view source_id, std::string_view url) override;
+
+    // 独立下载携带代次、取消及旧文件上下文。
+    application::model::MetadataResourceFile save(application::model::MetadataCoverSaveRequest request) override;
+
+    // 有界检查已提交文件，使用规范路径限制在存储根内。
+    bool available(const application::model::MetadataResourceFile &file) const override;
+    // 读取并验证实际图片内容与数据库回执。
+    std::optional<application::model::MetadataCoverContent> read(const application::model::MetadataResourceFile &file) const override;
 
     // 成功事务解除会话补偿；不确定事务保留本地日志。
     void accept(std::string_view local_path) override;

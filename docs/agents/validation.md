@@ -39,7 +39,7 @@ SQL 测试配置从 [MySqlTestSupport.h](../../tests/migu/support/MySqlTestSuppo
 
 | 任务或改动 | 已注册 target | 类型及选择条件 |
 | --- | --- | --- |
-| API/DTO 与 OpenAPI | `MiguCatalogApiSmokeTest`、`MiguApiDocumentTest`；真实路由另选 `MiguHttpRouteSmokeTest` | 前两者离线；路由测试使用本机 `127.0.0.1:19080` 和替身服务，端口需要可用 |
+| API/DTO 与 OpenAPI | `MiguCatalogApiSmokeTest`、`MiguApiDocumentTest`；真实路由另选 `MiguHttpRouteSmokeTest` | 前两者离线；文档测试核对实际注册/运行期 OpenAPI 双向覆盖、必需路径参数及本地引用；路由测试使用本机 `127.0.0.1:19080` 和替身服务 |
 | 平台请求与解析 | `MiguProviderTest`，及 `MiguSongSourceParserTest` / `MiguSingerIndexParserTest` / `MiguAlbumSourceParserTest` / `MiguSongResourceParserTest` 中受影响者 | 离线；按解析能力选，不为 parser 变更运行真实采集 |
 | 歌手目录和采集编排 | `MiguSingerIndexIngestionFlowTest`、`MiguSingerAlbumIngestionFlowTest` 中受影响者 | mock 数据源的本机流程；URL/搜索等没有对应 target 的分支需补覆盖，不能声称这些测试覆盖所有 workflow |
 | 独立歌手资料刷新、默认头像及有限重试 | `SingerProfileRefreshTest`；协议变更另选 API 行 | 离线；覆盖有效零总数、未知分类、默认头像、HTTP/业务错误与身份校验、写入失败，以及重试上限、禁用、取消和超时；不请求真实平台或 MySQL |
@@ -47,12 +47,16 @@ SQL 测试配置从 [MySqlTestSupport.h](../../tests/migu/support/MySqlTestSuppo
 | MySQL writer、migration、关系或 catalog | `MySqlMetadataOwnershipTest`、`MiguSongRelationIntegrationTest`、`MiguCatalogQueryIntegrationTest` 中受影响者 | 独立 MySQL；写入/升级选 ownership，关系选 relation，事实计数/查询/资源治理选 catalog |
 | 歌手资料刷新真实 adapter 与字段清理迁移 | `MySqlSingerProfileRefreshTest`；运行期 SQL prepare 另选 `MySqlMetadataOwnershipTest --check-sql-only` | 独立 MySQL；前者要求空库且库名以 `crawler_ownership_test_singer_profile_` 开头，使用离线平台响应；验证旧结构升级及重复迁移、资料/头像保存、重试、错误清理及目录生命周期隔离 |
 | 资源 workflow 与资源解析 | `SongResourceDownloadWorkflowTest`、`AsyncSongResourceDownloadWorkflowTest`，解析变化加 `MiguSongResourceParserTest` | workflow 使用替身端口，不要求真实下载；同步与异步实现都受影响时都检查 |
+| 歌手/专辑封面本地下载 | `MetadataCoverDownloadWorkflowTest`、`MetadataCoverStoreTest`、`MetadataCoverApiTest`；持久化另选 `MySqlMetadataCoverQueueTest` | 覆盖完整内容复用、同大小损坏/缺失的失败计数及旧回执保留、旧代次快照、排队/在途析构；MySQL 用 `crawler_ownership_test_*` 验证含真实 SQL 写入故障的确认边界。共享设施变化继续选对应行 |
+| 歌手/专辑封面云端存储 | `MetadataCoverCloudWorkflowTest`、`CloudFileStoresTest`、`ProcessRunnerTest`；持久化另选 `MySqlMetadataCoverCloudTest` | 共用流程、百度回读、Google RC multipart/摘要、真实本机进程超时/取消；MySQL 用独立库验证云端代次、快照和别名。真实云端另需有效登录态/RC，不能把替身结果计作真实上传 |
 | 流式传输、完整文件提交或异步运行时 | `AsyncHttpStreamTest`、`AsyncFileBlobStoreTest`、`SongResourceDownloadStorageTest`、`AsyncTaskTest` 中受影响者 | 本机 I/O；分别覆盖回环 HTTP、文件存储或异步调度，不能互相替代 |
 | 批次事件、认领与恢复 | `CrawlerServiceResourceBatchEventTest`；持久化认领/恢复选 `MiguBackfillClaimIntegrationTest` / `MiguMetadataRecoveryIntegrationTest` | 事件测试使用替身及本地日志；后两者使用独立 MySQL 并写 fixture |
 | 配置、构建与运行设置 | 构建 `demo` 或受影响 target；设置/协议变化选 API 行及实际消费者测试 | 构建不等于启动；启动可能初始化数据库，需按任务范围判断是否执行 |
 | 故障排查或代码审查 | 选上面与证据所指阶段相符的项 | 只读任务不默认运行会改库或采集的测试；准确报告实际执行范围 |
 
 target 的来源是 [CMakeLists.txt](../../CMakeLists.txt)。`tests/legacy/` 中存在源码不代表当前已注册；新增或改名后先核对 CMake，不能用不存在的测试名交付。
+
+全量路由核对按 HTTP 方法和路径进行，补池通用参数展开四种有效类型，其他占位参数按模板比较；统一 CORS OPTIONS 不算业务操作。`MiguApiDocumentTest` 不自动读取静态 YAML 或 Markdown，也不代表所有字段语义均已核对。可在执行该测试前设置 `CRAWLER_TEST_OPENAPI_OUTPUT`、`CRAWLER_TEST_ROUTES_OUTPUT` 为仓库外的绝对文件路径，分别导出运行期文档和原始注册清单，再与静态/API 清单比较。新增业务路由仍须同步两份 OpenAPI 与 API 文档；本轮覆盖证据见[路线记录](../roadmap/README.md#m1-现状校准)。
 
 已配置环境中，按 target 构建并精确选择测试，例如：
 
@@ -70,6 +74,8 @@ ctest --test-dir build/msvc-debug -R '^MiguSongSourceParserTest$' --output-on-fa
 - 仅调整根 `AGENTS.md`、文档导航、说明文档的组织结构和引用，且未改变 API 契约、SQL、构建配置或生产代码时，检查迁移内容覆盖、Markdown 链接、UTF-8 无 BOM、格式和 Git diff。
 - 此类整理不要求编译整个 C++ 模块或运行依赖外部平台、MySQL 的测试；如果同时修改契约或代码，仍执行对应检查。
 - 核对原规范中的禁止事项、状态不变量和操作前提是否保留，不把历史实测写成当前验证结果。
+
+涉及启动、配置和恢复操作的说明时，逐项追踪入口默认值与消费者，检查 PowerShell/JSON 示例及链接；按[快速启动](../getting-started.md)或[恢复指南](../operations/service-lifecycle.md)选择实际演练。只读查询、设置更新、迁移初始化、任务恢复、备份还原是不同范围；有条件执行的结果单独记录，未演练场景保留限制。文档改动不自动授权对运行音乐库做迁移或恢复。
 
 ## 资源链路专项回归
 

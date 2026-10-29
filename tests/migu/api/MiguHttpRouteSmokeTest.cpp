@@ -3,6 +3,8 @@
 #include "crawler/application/use_cases/CrawlerServiceDependencies.h"
 #include "crawler/infrastructure/http/client/AsioHttpClient.h"
 #include "crawler/infrastructure/http/server/DrogonHttpServer.h"
+#include "migu/support/MetadataCoverTestSupport.h"
+#include <nlohmann/json.hpp>
 
 #include <chrono>
 #include <exception>
@@ -254,7 +256,7 @@ private:
 };
 
 // 创建不连接外部系统的控制器，用于真实 HTTP 路由 smoke。
-std::shared_ptr<controllers::CrawlerController> makeController(std::shared_ptr<SmokeSongResourceQueue> resource_queue = {})
+std::shared_ptr<controllers::CrawlerController> makeController(std::shared_ptr<SmokeSongResourceQueue> resource_queue = {}, std::shared_ptr<use_cases::MetadataCoverService> covers = {})
 {
     if (!resource_queue) {
         resource_queue = std::make_shared<SmokeSongResourceQueue>();
@@ -269,7 +271,7 @@ std::shared_ptr<controllers::CrawlerController> makeController(std::shared_ptr<S
     dependencies.persistence.batch_task_repository = std::make_shared<SmokeBatchTaskRepository>();
     dependencies.executors.batch_executor = std::make_shared<ImmediateTaskExecutor>();
     auto service = std::make_shared<use_cases::CrawlerService>(std::move(dependencies));
-    return std::make_shared<controllers::CrawlerController>(std::move(service));
+    return std::make_shared<controllers::CrawlerController>(std::move(service), crawler::api::dto::CrawlerSettingsReadonlySnapshot {}, nullptr, std::move(covers));
 }
 
 // 捕获项目内路由注册结果，用于验证 CORS OPTIONS handler。
@@ -383,8 +385,23 @@ int main()
 
         server.bind("127.0.0.1", kPort);
         auto resource_queue = std::make_shared<SmokeSongResourceQueue>();
-        routing::CrawlerRoutes routes(makeController(resource_queue));
+        namespace cover_test = crawler::tests::cover;
+        cover_test::TempRoot cover_root;
+        auto cover_files = std::make_shared<cover_test::files::FileStorage>(cover_root.path);
+        auto cover_http = std::make_shared<cover_test::Http>();
+        auto cover_store = std::make_shared<cover_test::files::MetadataCoverStore>(cover_http, cover_files, std::vector<std::string> {});
+        auto cover_queue = std::make_shared<cover_test::Queue>();
+        cover_queue->rows[{model::CoverOwner::Singer, 1}] = cover_test::target(model::CoverOwner::Singer);
+        auto cover_workflow = std::make_shared<use_cases::MetadataCoverDownloadWorkflow>(cover_queue, cover_store, cover_store);
+        auto covers = std::make_shared<use_cases::MetadataCoverService>(cover_queue, cover_store, cover_workflow, std::make_shared<ImmediateTaskExecutor>(), nullptr, std::make_shared<SmokeBatchTaskRepository>());
+        routing::CrawlerRoutes routes(makeController(resource_queue, covers));
         routes.registerRoutes(server);
+        // 只测 server adapter 的 MIME 保真，避免普通 header 推断覆盖 WebP/AVIF。
+        for (const std::string mime : {"image/webp", "image/avif"}) {
+            server.route("GET", "/test-" + mime.substr(6), [mime](crawler::api::http::HttpRequest) {
+                return crawler::api::http::HttpResponse {200, {{"Content-Type", mime}}, "mime-fixture"};
+            });
+        }
 
         std::promise<void> start_signal;
         server_thread = std::thread([&server, &start_signal]() {
@@ -396,6 +413,25 @@ int main()
 
         http_client::AsioHttpClient client;
         const std::string base_url = "http://127.0.0.1:" + std::to_string(kPort);
+        for (const std::string mime : {"image/webp", "image/avif"}) {
+            const auto image = client.get(base_url + "/test-" + mime.substr(6));
+            requireStatus(image, 200, "GET custom image MIME route");
+            require(image->content_type == mime && bodyString(*image) == "mime-fixture", "server adapter changed custom image MIME or bytes");
+        }
+        auto cover_process = client.post(base_url + "/api/migu/covers/process", R"({"owner_type":"singer","resource_ids":[1],"async":false})", {"Content-Type: application/json"});
+        requireStatus(cover_process, 200, "POST local cover process route");
+        const auto cover_receipt = nlohmann::json::parse(bodyString(*cover_process))["items"][0];
+        auto cover_content = client.get(base_url + cover_receipt["local_url"].get<std::string>());
+        requireStatus(cover_content, 200, "GET local cover image route");
+        require(cover_content->body == cover_test::png() && cover_content->content_type == "image/png", "real route changed PNG bytes or MIME");
+        std::string cover_etag;
+        for (const auto &header : cover_content->headers)
+            if (header.name == "ETag" || header.name == "etag") cover_etag = header.value;
+        require(!cover_etag.empty(), "local cover ETag header missing");
+        requireStatus(client.get(base_url + cover_receipt["local_url"].get<std::string>(), {"If-None-Match: " + cover_etag}), 304, "GET conditional cover route");
+        requireStatus(client.get(base_url + "/api/migu/covers/album/1/content"), 404, "GET unowned cover route");
+        requireStatus(client.get(base_url + "/api/migu/covers/queue?owner_type=singer"), 200, "GET cover queue route");
+        requireStatus(client.post(base_url + "/api/migu/covers/recover-stale", R"({"owner_type":"singer","stale_after_seconds":60})", {"Content-Type: application/json"}), 200, "POST cover recovery route");
         for (const auto *path : {"/api/migu/singer-songs/crawl", "/api/migu/singer-albums/crawl", "/api/migu/album-details/crawl", "/api/migu/album-songs/crawl"}) {
             requireStatus(client.post(base_url + path, "{}", {"Content-Type: application/json"}), 404, std::string("POST removed route ") + path);
         }

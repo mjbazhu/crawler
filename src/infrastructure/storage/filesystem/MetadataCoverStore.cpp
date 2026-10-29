@@ -1,4 +1,5 @@
 #include "crawler/infrastructure/storage/filesystem/MetadataCoverStore.h"
+#include "MetadataCoverIo.h"
 
 #include <algorithm>
 #include <chrono>
@@ -19,18 +20,6 @@ bool safeSegment(std::string_view value)
     });
 }
 
-// 按内容签名决定扩展名，拒绝成功状态码下的 HTML 错误页。
-std::string imageExtension(const std::vector<char> &bytes)
-{
-    const std::string_view data(bytes.data(), bytes.size());
-    if (data.starts_with("\x89PNG\r\n\x1a\n")) return "png";
-    if (data.size() >= 3 && static_cast<unsigned char>(data[0]) == 0xff && static_cast<unsigned char>(data[1]) == 0xd8 && static_cast<unsigned char>(data[2]) == 0xff) return "jpg";
-    if (data.starts_with("GIF87a") || data.starts_with("GIF89a")) return "gif";
-    if (data.size() >= 12 && data.starts_with("RIFF") && data.substr(8, 4) == "WEBP") return "webp";
-    if (data.size() >= 12 && data.substr(4, 4) == "ftyp" && (data.substr(8, 4) == "avif" || data.substr(8, 4) == "avis")) return "avif";
-    return {};
-}
-
 // 保存脱敏的失败结果，原始远端地址不能进入错误记录。
 application::model::MetadataResourceFile failure(std::string category, std::string code, std::string message)
 {
@@ -49,42 +38,41 @@ MetadataCoverStore::MetadataCoverStore(std::shared_ptr<http::client::HttpClient>
 
 application::model::MetadataResourceFile MetadataCoverStore::save(std::string_view source, std::string_view owner_kind, std::string_view source_id, std::string_view url)
 {
-    if (!client_ || !files_ || !safeSegment(source) || !safeSegment(source_id) || (owner_kind != "singers" && owner_kind != "albums") || (!url.starts_with("https://") && !url.starts_with("http://"))) {
+    if (owner_kind != "singers" && owner_kind != "albums") return failure("invalid_target", "invalid_cover_target", "invalid metadata cover target");
+    application::model::MetadataCoverSaveRequest request;
+    request.target.owner = owner_kind == "singers" ? application::model::CoverOwner::Singer : application::model::CoverOwner::Album;
+    request.target.source = source;
+    request.target.source_id = source_id;
+    request.target.remote_url = url;
+    return save(std::move(request));
+}
+
+application::model::MetadataResourceFile MetadataCoverStore::save(application::model::MetadataCoverSaveRequest input)
+{
+    const auto &target = input.target;
+    if (!client_ || !files_ || !safeSegment(target.source) || !safeSegment(target.source_id)) {
         return failure("invalid_target", "invalid_cover_target", "invalid metadata cover target");
     }
-    http::client::HttpRequestOptions options;
-    options.request_timeout = std::chrono::seconds(15);
-    options.max_response_bytes = 8 * 1024 * 1024;
-    std::optional<http::client::HttpResponse> response;
-    try {
-        response = client_->getWithOptions(url, headers_, options);
-    } catch (const std::exception &) {
-        return failure("network", "cover_fetch_failed", "metadata cover request failed");
-    }
-    if (!response || response->status_code < 200 || response->status_code >= 300) {
-        return failure("network", "cover_fetch_failed", "metadata cover request failed");
-    }
-    if (response->body.size() > options.max_response_bytes) {
-        return failure("network", "cover_too_large", "metadata cover exceeded the response size limit");
-    }
-    const std::string extension = imageExtension(response->body);
-    if (extension.empty()) {
-        return failure("parse", "invalid_cover_content", "metadata cover response is not a supported image");
-    }
+    auto fetched = cover_io::fetch(*client_, target.remote_url, headers_, input.timeout_ms, input.cancelled);
+    if (fetched.error.status == 3) return fetched.error;
+    if (input.cancelled && input.cancelled()) return failure("resource", "cancelled", "cover processing cancelled");
     const auto stamp = std::chrono::system_clock::now().time_since_epoch().count();
+    const std::string owner_directory = target.owner == application::model::CoverOwner::Singer ? "singers" : "albums";
     application::model::SongResourceBlobStreamSaveRequest request;
     request.require_database_ack = true;
-    request.relative_path_hint = std::string(source) + "/" + std::string(owner_kind) + "/" + std::string(source_id) + "/cover/" + std::to_string(stamp) + "-" + std::to_string(sequence_.fetch_add(1)) + "." + extension;
-    request.content_type = std::move(response->content_type);
+    request.resource_id = target.resource_id;
+    request.claim_generation = target.claim_generation;
+    request.owner_kind = target.resource_id == 0 ? "song" : std::string(application::model::coverOwnerName(target.owner));
+    request.previous_local_path = target.file.local_path;
+    request.relative_path_hint = target.source + "/" + owner_directory + "/" + target.source_id + "/cover/" + std::to_string(stamp) + "-" + std::to_string(sequence_.fetch_add(1)) + "." + fetched.extension;
+    request.content_type = cover_io::imageMime(fetched.extension);
     auto session = files_->beginSongResourceBlobWrite(std::move(request));
     std::string error;
-    if (!session || !session->write(std::string_view(response->body.data(), response->body.size()), error)) {
+    if (!session || !session->write(std::string_view(fetched.bytes.data(), fetched.bytes.size()), error)) {
         return failure("persistence", "cover_save_failed", "metadata cover file could not be staged");
     }
     auto saved = session->commit();
-    if (!saved.ok) {
-        return failure("persistence", "cover_save_failed", "metadata cover file could not be committed");
-    }
+    if (!saved.ok) return failure("persistence", "cover_save_failed", "metadata cover file could not be committed");
     {
         std::lock_guard<std::mutex> lock(sessions_mutex_);
         sessions_.emplace(saved.local_path, std::move(session));
@@ -97,7 +85,6 @@ application::model::MetadataResourceFile MetadataCoverStore::save(std::string_vi
     result.result_code = "ok";
     return result;
 }
-
 bool MetadataCoverStore::discard(std::string_view local_path)
 {
     if (auto session = takeSession(local_path)) {

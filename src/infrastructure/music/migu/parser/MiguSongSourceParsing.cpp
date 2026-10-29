@@ -82,6 +82,11 @@ std::optional<application::model::SongSourceMetadata> parseSongSourceFromSongObj
         wrapper ? JsonUtils::getString(*wrapper, "txt3") : std::string {},
     });
     metadata.source_album_pinyin = firstNonEmpty({JsonUtils::getString(song_item, "albumPinyin"), JsonUtils::getString(song_item, "albumNamePinyin")});
+    metadata.source_album_cover_url = album_context ? normalizeMiguResourceUrl(firstNonEmpty({
+                                                          selectImageUrl(JsonUtils::getArray(*album_context, "imgItem")),
+                                                          selectImageUrl(JsonUtils::getArray(*album_context, "imgItems")),
+                                                      })) :
+                                                      std::string {};
     metadata.cover_url = normalizeMiguResourceUrl(
         firstNonEmpty({
             JsonUtils::getString(song_item, "img3"),

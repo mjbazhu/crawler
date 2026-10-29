@@ -1,9 +1,12 @@
 #include "crawler/api/controllers/OpenApiDocumentFactory.h"
+#include "migu/support/ApiRouteContractSupport.h"
 
 #include <nlohmann/json.hpp>
 
 #include <cassert>
 #include <cstdlib>
+#include <exception>
+#include <fstream>
 #include <iostream>
 #include <string>
 
@@ -32,6 +35,20 @@ void requireDumpContains(const nlohmann::json &value, const std::string &needle)
 int main()
 {
     const auto doc = nlohmann::json::parse(OpenApiDocumentFactory::miguDocumentJson());
+    try {
+        orchestrator::modules::crawler::tests::api_contract::verifyRegisteredRoutes(doc);
+    } catch (const std::exception &error) {
+        std::cerr << "OpenAPI route contract failed: " << error.what() << '\n';
+        return EXIT_FAILURE;
+    }
+    assert(doc["info"]["version"] == "1.9.0");
+    requireDumpContains(doc["info"]["description"], "singer/album cover storage");
+    // 可选导出真实运行期文档，供静态 OpenAPI 契约一致性核对。
+    if (const char *output = std::getenv("CRAWLER_TEST_OPENAPI_OUTPUT"); output && *output) {
+        std::ofstream file(output, std::ios::binary);
+        file << doc.dump(2);
+        if (!file) return EXIT_FAILURE;
+    }
 
     requirePath(doc, "/api/migu/singers");
     requirePath(doc, "/api/migu/singers/{source_singer_id}");
@@ -48,6 +65,10 @@ int main()
     requirePath(doc, "/api/migu/resources/reset");
     requirePath(doc, "/api/migu/resources/recover-stale");
     requirePath(doc, "/api/migu/resources/process");
+    requirePath(doc, "/api/migu/covers/queue");
+    requirePath(doc, "/api/migu/covers/process");
+    requirePath(doc, "/api/migu/covers/recover-stale");
+    requirePath(doc, "/api/migu/covers/{owner_type}/{resource_id}/content");
     requirePath(doc, "/api/migu/dictionaries");
     requirePath(doc, "/api/migu/singer-songs/crawl-from-db/preview");
     requirePath(doc, "/api/migu/singer-albums/crawl-from-db/preview");
@@ -81,10 +102,19 @@ int main()
     assert(item_properties["result_code"]["enum"].is_array());
 
     const auto &schemas = doc["components"]["schemas"];
+    assert(schemas["MetadataCoverCloud"]["properties"]["status"]["enum"].size() == 5);
+    assert(schemas["MetadataCoverRequest"]["properties"].contains("cloud_status"));
+    assert(schemas["MetadataCoverRecord"]["properties"]["cloud"]["$ref"] == "#/components/schemas/MetadataCoverCloud");
     assert(schemas.contains("SingerRecord"));
     assert(schemas.contains("AlbumRecord"));
     assert(schemas["SingerRecord"]["properties"].contains("avatar_url"));
     assert(schemas["AlbumRecord"]["properties"].contains("cover_url"));
+    assert(schemas["SingerRecord"]["properties"].contains("cover"));
+    assert(schemas["AlbumRecord"]["properties"].contains("cover"));
+    assert(schemas["SingerRecord"]["properties"]["cover"]["allOf"][0]["$ref"] == "#/components/schemas/MetadataCoverRecord");
+    assert(schemas["MetadataCoverRequest"]["additionalProperties"] == false);
+    assert(schemas["MetadataCoverRequest"]["properties"]["async"]["default"] == true);
+    assert(schemas["MetadataCoverRecord"]["properties"]["local_url"]["nullable"] == true);
     assert(schemas.contains("SongRecord"));
     assert(schemas.contains("ResourceQueueRecord"));
     assert(schemas.contains("ResourceActionRequest"));

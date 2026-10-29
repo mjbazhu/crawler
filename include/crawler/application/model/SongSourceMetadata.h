@@ -44,6 +44,7 @@ struct SongSourceMetadata {
     std::string source_album_material_id;   // 歌曲自带 albumId，用于数字专辑的明确身份对应，仅参与入库编排
     std::string source_album_name;          // 平台专辑名称
     std::string source_album_pinyin;        // 平台专辑拼音或排序名
+    std::string source_album_cover_url;     // 明确专辑上下文中的图片，普通歌曲图片不能代填
     std::string source_primary_artist_id;   // 解析兜底主歌手 ID，不再写入 song_source_refs
     std::string source_primary_artist_name; // 解析兜底主歌手名称，不再写入 song_source_refs
 

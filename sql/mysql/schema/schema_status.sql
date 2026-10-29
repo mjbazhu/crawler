@@ -57,7 +57,9 @@ FROM (
     SELECT 2026102701, _utf8mb4'migu_album_material_lookup' COLLATE utf8mb4_unicode_ci, _utf8mb4'b830cb1af262e73ec4669f5f39ae4312' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102702, _utf8mb4'singer_source_gender_ownership' COLLATE utf8mb4_unicode_ci, _utf8mb4'c920c30b5f4fd81c1c9dff0fb7167f00' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102703, _utf8mb4'metadata_cover_remote_urls' COLLATE utf8mb4_unicode_ci, _utf8mb4'75da4ef101026533d80bf7e8830b391f' COLLATE utf8mb4_unicode_ci UNION ALL
-    SELECT 2026102801, _utf8mb4'singer_profile_field_cleanup' COLLATE utf8mb4_unicode_ci, _utf8mb4'0a9119000b834016660cc8601db77fba' COLLATE utf8mb4_unicode_ci
+    SELECT 2026102801, _utf8mb4'singer_profile_field_cleanup' COLLATE utf8mb4_unicode_ci, _utf8mb4'0a9119000b834016660cc8601db77fba' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT 2026102802, _utf8mb4'metadata_cover_download_claims' COLLATE utf8mb4_unicode_ci, _utf8mb4'fe5df5956db30daace32711d734a390e' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT 2026102901, _utf8mb4'metadata_cover_cloud_storage' COLLATE utf8mb4_unicode_ci, _utf8mb4'ee00f3811554d6eb404813a48f58b607' COLLATE utf8mb4_unicode_ci
 ) expected
 LEFT JOIN schema_migrations m ON m.version = expected.version
 UNION ALL
@@ -97,7 +99,9 @@ FROM (
     SELECT 2026102701, _utf8mb4'b830cb1af262e73ec4669f5f39ae4312' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102702, _utf8mb4'c920c30b5f4fd81c1c9dff0fb7167f00' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT 2026102703, _utf8mb4'75da4ef101026533d80bf7e8830b391f' COLLATE utf8mb4_unicode_ci UNION ALL
-    SELECT 2026102801, _utf8mb4'0a9119000b834016660cc8601db77fba' COLLATE utf8mb4_unicode_ci
+    SELECT 2026102801, _utf8mb4'0a9119000b834016660cc8601db77fba' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT 2026102802, _utf8mb4'fe5df5956db30daace32711d734a390e' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT 2026102901, _utf8mb4'ee00f3811554d6eb404813a48f58b607' COLLATE utf8mb4_unicode_ci
 ) expected
 LEFT JOIN schema_migrations m ON m.version = expected.version
 UNION ALL
@@ -143,6 +147,12 @@ FROM (
     SELECT _utf8mb4'song_source_refs' COLLATE utf8mb4_unicode_ci AS table_name, _utf8mb4'source_duration_seconds' COLLATE utf8mb4_unicode_ci AS column_name UNION ALL
     SELECT _utf8mb4'singer_resources' COLLATE utf8mb4_unicode_ci, _utf8mb4'remote_url' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT _utf8mb4'album_resources' COLLATE utf8mb4_unicode_ci, _utf8mb4'remote_url' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT _utf8mb4'singer_resources' COLLATE utf8mb4_unicode_ci, _utf8mb4'claim_generation' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT _utf8mb4'singer_resources' COLLATE utf8mb4_unicode_ci, _utf8mb4'running_batch_id' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT _utf8mb4'singer_resources' COLLATE utf8mb4_unicode_ci, _utf8mb4'claimed_at' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT _utf8mb4'album_resources' COLLATE utf8mb4_unicode_ci, _utf8mb4'claim_generation' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT _utf8mb4'album_resources' COLLATE utf8mb4_unicode_ci, _utf8mb4'running_batch_id' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT _utf8mb4'album_resources' COLLATE utf8mb4_unicode_ci, _utf8mb4'claimed_at' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT _utf8mb4'album_source_refs' COLLATE utf8mb4_unicode_ci, _utf8mb4'source_title_pinyin' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT _utf8mb4'song_artist_refs' COLLATE utf8mb4_unicode_ci, _utf8mb4'artist_order' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT _utf8mb4'song_artist_refs' COLLATE utf8mb4_unicode_ci, _utf8mb4'is_primary' COLLATE utf8mb4_unicode_ci UNION ALL
@@ -186,7 +196,19 @@ FROM (
     SELECT _utf8mb4'governance_events' COLLATE utf8mb4_unicode_ci, _utf8mb4'target_name' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT _utf8mb4'governance_events' COLLATE utf8mb4_unicode_ci, _utf8mb4'target_summary' COLLATE utf8mb4_unicode_ci UNION ALL
     SELECT _utf8mb4'governance_events' COLLATE utf8mb4_unicode_ci, _utf8mb4'target_source_id' COLLATE utf8mb4_unicode_ci UNION ALL
-    SELECT _utf8mb4'governance_events' COLLATE utf8mb4_unicode_ci, _utf8mb4'target_owner_name' COLLATE utf8mb4_unicode_ci
+    SELECT _utf8mb4'governance_events' COLLATE utf8mb4_unicode_ci, _utf8mb4'target_owner_name' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT _utf8mb4'singer_resources' COLLATE utf8mb4_unicode_ci, _utf8mb4'cloud_backend' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT _utf8mb4'singer_resources' COLLATE utf8mb4_unicode_ci, _utf8mb4'cloud_path' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT _utf8mb4'singer_resources' COLLATE utf8mb4_unicode_ci, _utf8mb4'cloud_status' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT _utf8mb4'singer_resources' COLLATE utf8mb4_unicode_ci, _utf8mb4'cloud_checksum' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT _utf8mb4'singer_resources' COLLATE utf8mb4_unicode_ci, _utf8mb4'cloud_claim_generation' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT _utf8mb4'singer_resources' COLLATE utf8mb4_unicode_ci, _utf8mb4'cloud_attempt' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT _utf8mb4'album_resources' COLLATE utf8mb4_unicode_ci, _utf8mb4'cloud_backend' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT _utf8mb4'album_resources' COLLATE utf8mb4_unicode_ci, _utf8mb4'cloud_path' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT _utf8mb4'album_resources' COLLATE utf8mb4_unicode_ci, _utf8mb4'cloud_status' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT _utf8mb4'album_resources' COLLATE utf8mb4_unicode_ci, _utf8mb4'cloud_checksum' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT _utf8mb4'album_resources' COLLATE utf8mb4_unicode_ci, _utf8mb4'cloud_claim_generation' COLLATE utf8mb4_unicode_ci UNION ALL
+    SELECT _utf8mb4'album_resources' COLLATE utf8mb4_unicode_ci, _utf8mb4'cloud_attempt' COLLATE utf8mb4_unicode_ci
 ) expected_columns
 LEFT JOIN information_schema.columns c
     ON c.table_schema = DATABASE()

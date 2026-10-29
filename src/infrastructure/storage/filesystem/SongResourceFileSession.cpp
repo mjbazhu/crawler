@@ -194,7 +194,8 @@ std::unique_ptr<application::ports::SongResourceBlobWriteSession> openSongResour
                    << request.claim_generation << '\n'
                    << request.relative_path_hint << '\n'
                    << temporary.lexically_relative(root_dir).generic_string() << '\n'
-                   << request.previous_local_path << '\n';
+                   << request.previous_local_path << '\n'
+                   << request.owner_kind << '\n';
             record.flush();
             if (!record) {
                 removeQuietly(journal);

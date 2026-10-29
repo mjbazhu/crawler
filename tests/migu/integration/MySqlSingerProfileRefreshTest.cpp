@@ -306,7 +306,7 @@ int main(int argc, char **argv)
         require(scalar("SELECT COUNT(*) FROM singer_resources WHERE local_path IS NOT NULL OR fetched_at<>0 OR status<>0") == 0, "profile refresh downloaded images");
         require(scalar("SELECT COUNT(*) FROM songs") == 0 && scalar("SELECT COUNT(*) FROM albums") == 0, "profile refresh expanded into directories");
         const auto schema = catalog->schemaStatus();
-        require(schema.ok && schema.latest_available_version == 2026102801, "schema status disagrees with the migration");
+        require(schema.ok && schema.latest_available_version == 2026102901, "schema status disagrees with the combined migrations");
         pool->cancel();
         std::cout << "MYSQL_PROFILE_REFRESH samples=" << samples.size() << " missing_refreshed=" << expected_missing << " forced_refreshed=" << samples.size() << " directory_state_preserved=1 downloads=0\n";
         return 0;

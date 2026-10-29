@@ -65,8 +65,10 @@
 - **识别条件**：资源获取 URL 失败、音频或歌词不完整、重复下载、临时 URL 过期、状态回写或重试行为异常。
 - **必读范围**：[资源流程](../migu/resources.md) 的受影响阶段、状态码与重试规则；改事件读 [批次事件规范](../observability/resource-batch-events.md)，改 SQL 或认领同时读元数据类。
 - **首查代码**：正式异步流程是 [AsyncSongResourceDownloadWorkflow.cpp](../../src/application/use_cases/AsyncSongResourceDownloadWorkflow.cpp)，同步兼容流程在 [SongResourceDownloadWorkflow.cpp](../../src/application/use_cases/SongResourceDownloadWorkflow.cpp)。按失败阶段再定位 [MiguAsyncSongResourceProvider.cpp](../../src/infrastructure/music/migu/provider/MiguAsyncSongResourceProvider.cpp)、[MiguSongResourceParsing.cpp](../../src/infrastructure/music/migu/parser/MiguSongResourceParsing.cpp)、[FileStorage.cpp](../../src/infrastructure/storage/filesystem/FileStorage.cpp) 和 [MySqlSongResourceQueue.cpp](../../src/infrastructure/music/persistence/mysql/MySqlSongResourceQueue.cpp)。
+- **封面专项入口**：歌手/专辑图片从 [MetadataCoverService.cpp](../../src/application/use_cases/MetadataCoverService.cpp) → [MetadataCoverDownloadWorkflow.cpp](../../src/application/use_cases/MetadataCoverDownloadWorkflow.cpp) → [封面队列](../../src/infrastructure/music/persistence/mysql/MySqlMetadataCoverQueue.cpp) 与 [保存器](../../src/infrastructure/storage/filesystem/MetadataCoverStore.cpp) 查起，协议在 [MetadataCoverController.cpp](../../src/api/controllers/MetadataCoverController.cpp)；读取[本地封面流程](../migu/resources.md#歌手头像与专辑封面本地下载)，不套用歌曲 listen/token 流程。
+- **封面云端入口**：本地成功后由 [MetadataCoverCloudWorkflow.cpp](../../src/application/use_cases/MetadataCoverCloudWorkflow.cpp) 编排；后端装配见 [CloudFileStoreComposition.cpp](../../src/infrastructure/app/CloudFileStoreComposition.cpp)，再按所选后端查百度/rclone adapter。读[云端专项](../roadmap/metadata-cover-cloud-storage.md)及[配置区别](../configuration.md#存储模式与封面云端)，联动两张封面表的 cloud/process SQL；当前仅保存单份最后回执，统一回执表尚未实施。
 - **处理步骤**：按认领、换取 URL、解析、下载、完整提交、状态回写逐段核对，保留稳定错误分类。传输失败再定位 HTTP client；参数或解析错误不通过加重试掩盖。
-- **联动修改**：同步和异步流程、path planner、blob store、关联歌词去重、事件以及 [资源表 SQL](../../sql/mysql/song_resources/) 按实际影响同步检查；不把已停用的自动上传接回采集流程。
+- **联动修改**：同步和异步流程、path planner、blob store、关联歌词去重、事件及各自资源表 SQL 按实际影响同步检查；元数据继续只存图片 URL，歌曲主装配不因封面云端开关而接回 uploader。
 - **验证与完成标准**：按验证表选资源 workflow；流式或存储变更加本机 I/O 测试。完整对象提交后才写成功，失败清理本次 staging，重试重新获取临时音频 URL，永久跳过不会被普通认领、retry 或 reset 拉回。
 
 ## 任务状态与并发
@@ -81,7 +83,7 @@
 ## 配置与构建
 
 - **识别条件**：编译/链接失败、target 找不到、头文件路径错误、环境配置不生效、运行设置无法热更新或默认装配变化。
-- **必读范围**：[CMakeLists.txt](../../CMakeLists.txt)、[CMakePresets.json](../../CMakePresets.json)、[.clangd](../../.clangd) 和开发规范的 C++20 规则；新增目录或改依赖读架构相关边界。
+- **必读范围**：[CMakeLists.txt](../../CMakeLists.txt)、[CMakePresets.json](../../CMakePresets.json)、[.clangd](../../.clangd) 和开发规范的 C++20 规则；配置读取与生效见[配置说明](../configuration.md)，初次运行见[快速启动](../getting-started.md)，新增目录或改依赖读架构相关边界。
 - **首查代码**：启动配置从 [main.cpp](../../src/main.cpp)、[ServerApplication.h](../../include/crawler/infrastructure/app/ServerApplication.h)、[ServerApplication.cpp](../../src/infrastructure/app/ServerApplication.cpp) 查起。存储选型定位 [PersistenceAssembly.cpp](../../src/infrastructure/app/PersistenceAssembly.cpp)，出站请求选项定位 [HttpClientOptionsFactory.cpp](../../src/infrastructure/app/HttpClientOptionsFactory.cpp)，热更新定位运行设置模型与快照 factory。
 - **处理步骤**：构建问题从第一条有效错误确认工具链、依赖、include 或 target 注册问题；配置问题沿环境读取、Config 默认值、装配和运行快照追踪，区分启动参数、可热更新策略及只读技术快照。
 - **联动修改**：新增源文件/测试检查 target 可编译及 CTest 注册，保留 C++20 与标准扩展关闭；设置变化同步读取、默认值、校验、DTO、快照和实际消费者，不为解决局部问题改全局工具链或输出私有配置。
@@ -90,7 +92,7 @@
 ## 故障排查
 
 - **识别条件**：用户只给出失败、卡住、错误响应或环境差异，尚不能确定所属层。
-- **必读范围**：先读用户现象和当前环境，按最早失败阶段选上面类别；仅涉及本机运行、上传核对或 TLS 背景时读 [运行说明](../operations/resource-storage.md)。
+- **必读范围**：先读用户现象和当前环境，按最早失败阶段选上面类别；配置来源见[配置说明](../configuration.md)，停止、stale、迁移失败或备份恢复见[恢复指南](../operations/service-lifecycle.md)，本机上传核对或 TLS 背景见[资源运行说明](../operations/resource-storage.md)。
 - **首查代码**：从请求路由、用例阶段、结构化错误或脱敏批次事件定位；传输问题再到 [AsioHttpClient.cpp](../../src/infrastructure/http/client/AsioHttpClient.cpp)、[AsioHttpUrl.cpp](../../src/infrastructure/http/client/AsioHttpUrl.cpp)、[AsioHttpRequestBuilder.cpp](../../src/infrastructure/http/client/AsioHttpRequestBuilder.cpp) 和 [AsioHttpResponseParser.cpp](../../src/infrastructure/http/client/AsioHttpResponseParser.cpp) 查对应阶段，不把协议逻辑重新堆回 session。
 - **处理步骤**：记录预期、实际、最小复现、输入来源和错误阶段，用同一任务或资源标识串联证据。优先离线复现；判断是数据、协议、网络、存储、状态还是配置问题后再提出局部修复。
 - **联动修改**：只有用户要求修复时进入对应开发类别；记录源码与文档、当前装配与兼容分支的差异，不凭一条日志批量 reset、重爬或修改运行库。

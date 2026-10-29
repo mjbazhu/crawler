@@ -79,6 +79,7 @@ void mergeSong(application::model::SongSourceMetadata &target, const application
     text(target.source_album_name, incoming.source_album_name);
     text(target.source_album_material_id, incoming.source_album_material_id);
     text(target.source_album_pinyin, incoming.source_album_pinyin);
+    text(target.source_album_cover_url, incoming.source_album_cover_url);
     text(target.source_primary_artist_id, incoming.source_primary_artist_id);
     text(target.source_primary_artist_name, incoming.source_primary_artist_name);
     text(target.cover_url, incoming.cover_url);
@@ -192,7 +193,7 @@ application::model::MetadataWriteBatch buildMetadataWriteBatch(application::mode
                 album.normalized_title = song.source_album_name;
             }
             if (album.source_title_pinyin.empty()) album.source_title_pinyin = song.source_album_pinyin;
-            if (album.cover_url.empty()) album.cover_url = song.cover_url;
+            if (album.cover_url.empty()) album.cover_url = song.source_album_cover_url;
             if (!song.source_album_material_id.empty() && song.source_album_material_id != album.source_album_id) {
                 album.source_material_id = song.source_album_material_id;
             }

@@ -64,6 +64,7 @@ public:
     std::string cover(const std::string &album)
     {
         auto result = support::runOnExecutor(pool->executor(), pool->coExecute("SELECT r.remote_url FROM album_resources r JOIN album_source_refs a ON a.id=r.album_source_ref_id WHERE a.source_album_id='" + prefix + album + "'"), "cover verification");
+        require(!result.rows().empty(), "album cover fixture has no explicit album image URL");
         return mysql::MySqlValueReader::stringAt(result.rows().front(), 0);
     }
 
@@ -88,6 +89,7 @@ public:
         value.source_album_pinyin = "shouci";
         value.artist_refs = {{prefix + "singer", "测试入口歌手", "geshou", "artist", 1, true, true}};
         value.cover_url = "https://example.test/identity.png";
+        value.source_album_cover_url = "https://example.test/album-identity.png";
         value.album_disc_name = "Disc 2";
         value.album_disc_no = 2;
         value.album_track_no = 3;
@@ -182,6 +184,7 @@ void verifyConcurrentDiscovery(Fixture &f)
         const std::string material = "race-material-" + std::to_string(iteration), canonical = "race-canonical-" + std::to_string(iteration);
         auto song = f.song("race-song-" + std::to_string(iteration), material);
         song.cover_url.clear();
+        song.source_album_cover_url.clear();
         model::MetadataWriteBatch first;
         first.songs = {song};
         first = use::buildMetadataWriteBatch(std::move(first));

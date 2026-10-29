@@ -40,6 +40,9 @@ public:
     // 启动时只核对本 adapter 的待确认日志；无法查询或仍被认领的文件保留。
     std::size_t recoverResourceWrites(const std::function<std::optional<application::model::ResourceWriteDisposition>(std::uint64_t, std::uint64_t, const std::string &)> &inspect);
 
+    // 按显式所有者恢复；两类封面与歌曲的数字 ID 不共享命名空间。
+    std::size_t recoverOwnedResourceWrites(const std::function<std::optional<application::model::ResourceWriteDisposition>(const std::string &, std::uint64_t, std::uint64_t, const std::string &)> &inspect);
+
     // 获取完整路径
     std::filesystem::path getFullPath(std::string_view relative_path) const;
 

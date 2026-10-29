@@ -80,9 +80,10 @@ int main(int argc, char *argv[])
     config.storage_path = env::Environment::getStringOr("CRAWLER_STORAGE_PATH", config.storage_path);
     config.resource_storage_backend = env::Environment::getStringOr("CRAWLER_RESOURCE_STORAGE_BACKEND", config.resource_storage_backend);
     config.resource_cloud_upload_enabled = env::Environment::getBoolOr("CRAWLER_RESOURCE_CLOUD_UPLOAD_ENABLED", config.resource_cloud_upload_enabled);
+    config.resource_cloud_timeout_ms = env::Environment::getIntOr("CRAWLER_RESOURCE_CLOUD_TIMEOUT_MS", config.resource_cloud_timeout_ms);
     config.resource_cloud_upload_backend = env::Environment::getStringOr("CRAWLER_RESOURCE_CLOUD_UPLOAD_BACKEND", config.resource_cloud_upload_backend);
-    // 当前采集主流程只落本地并回写 SQL，网盘上传由人工上传和对账脚本处理。
-    config.baidupcs.enabled = false;
+    // 歌曲原流程保持本地；歌手和专辑封面按云端开关自动上传。
+    config.baidupcs.enabled = config.resource_cloud_upload_enabled;
     config.baidupcs.local_root = config.storage_path;
     config.baidupcs.cloud_root = env::Environment::getStringOr("CRAWLER_RESOURCE_CLOUD_ROOT", config.baidupcs.cloud_root);
     config.baidupcs.executable_path = env::Environment::getStringOr("CRAWLER_BAIDUPCS_GO_PATH", config.baidupcs.executable_path);

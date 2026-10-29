@@ -81,6 +81,13 @@ public:
     // 线程安全说明：实现类必须保证该方法可被多线程并发调用
     virtual std::optional<HttpResponse> post(std::string_view url, std::string_view body, const std::vector<std::string> &headers = {}) = 0;
 
+    // 云端文件上传需要独立的总超时；旧客户端保留兼容回退。
+    virtual std::optional<HttpResponse> postWithOptions(std::string_view url, std::string_view body, const std::vector<std::string> &headers, const HttpRequestOptions &options)
+    {
+        (void)options;
+        return post(url, body, headers);
+    }
+
     // 协程式 GET，请在调用方选择的 Asio executor 上 co_spawn。
     // 线程安全说明：实现类必须保证该方法可被多个协程并发调用。
     virtual AwaitableResponse coGet(std::string url, std::vector<std::string> headers = {}) = 0;

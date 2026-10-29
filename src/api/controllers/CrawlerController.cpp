@@ -1,4 +1,5 @@
 #include "crawler/api/controllers/CrawlerController.h"
+#include "crawler/api/dto/MetadataCoverDto.h"
 #include "crawler/application/model/AlbumCollectionPolicy.h"
 
 #include "crawler/api/controllers/OpenApiDocumentFactory.h"
@@ -1519,8 +1520,9 @@ std::size_t batchTargetCount(const std::shared_ptr<application::use_cases::Crawl
 CrawlerController::CrawlerController(
     std::shared_ptr<application::use_cases::CrawlerService> service,
     dto::CrawlerSettingsReadonlySnapshot readonly_settings,
-    std::shared_ptr<application::use_cases::MiguPacmtokenService> pacmtoken_service
-) : service_(std::move(service)),
+    std::shared_ptr<application::use_cases::MiguPacmtokenService> pacmtoken_service,
+    std::shared_ptr<application::use_cases::MetadataCoverService> cover_service
+) : cover_service_(std::move(cover_service)), service_(std::move(service)),
     readonly_settings_(std::move(readonly_settings)),
     pacmtoken_service_(std::move(pacmtoken_service))
 {}
@@ -1626,11 +1628,12 @@ http::HttpResponse CrawlerController::handleStopMiguBatch(http::HttpRequest req)
         return jsonError(400, *error);
     }
 
-    if (!service_->getBatchProgress(request->batch_id)) {
+    const bool cover_batch = cover_service_ && cover_service_->progress(request->batch_id).has_value();
+    if (!cover_batch && !service_->getBatchProgress(request->batch_id)) {
         return jsonError(404, "batch_id not found");
     }
 
-    const bool cancelled = service_->cancelBatch(request->batch_id);
+    const bool cancelled = cover_batch ? cover_service_->cancel(request->batch_id) : service_->cancelBatch(request->batch_id);
     if (!cancelled) {
         return jsonError(409, "batch cannot be cancelled");
     }
@@ -1652,7 +1655,8 @@ http::HttpResponse CrawlerController::handleGetMiguBatchProgress(http::HttpReque
         return jsonError(400, "batch_id is required");
     }
 
-    auto progress_opt = service_->getBatchProgress(batch_id);
+    auto progress_opt = cover_service_ ? cover_service_->progress(batch_id) : std::nullopt;
+    if (!progress_opt) progress_opt = service_->getBatchProgress(batch_id);
     if (!progress_opt) {
         return jsonError(404, "batch_id not found");
     }
@@ -1859,7 +1863,9 @@ http::HttpResponse CrawlerController::handleListMiguSingers(http::HttpRequest re
     }
 
     auto page = service_->listMiguSingers(singerCatalogQueryFromRequest(req));
-    return http::HttpResponse {200, {{"Content-Type", "application/json"}}, pageToJson(page, singerToJson).dump()};
+    auto body = pageToJson(page, singerToJson);
+    if (!dto::attachMetadataCovers(body, application::model::CoverOwner::Singer, cover_service_)) return jsonError(503, "metadata cover query failed");
+    return http::HttpResponse {200, {{"Content-Type", "application/json"}}, body.dump()};
 }
 
 http::HttpResponse CrawlerController::handleGetMiguSinger(http::HttpRequest req)
@@ -1872,7 +1878,9 @@ http::HttpResponse CrawlerController::handleGetMiguSinger(http::HttpRequest req)
     if (!singer) {
         return jsonError(404, "singer not found");
     }
-    return http::HttpResponse {200, {{"Content-Type", "application/json"}}, singerToJson(*singer).dump()};
+    auto body = singerToJson(*singer);
+    if (!dto::attachMetadataCovers(body, application::model::CoverOwner::Singer, cover_service_)) return jsonError(503, "metadata cover query failed");
+    return http::HttpResponse {200, {{"Content-Type", "application/json"}}, body.dump()};
 }
 
 http::HttpResponse CrawlerController::handleListMiguSingerSongs(http::HttpRequest req)
@@ -1900,7 +1908,9 @@ http::HttpResponse CrawlerController::handleListMiguSingerAlbums(http::HttpReque
         return jsonError(400, "source_singer_id is required");
     }
     auto page = service_->listMiguSingerAlbums(source_singer_id, albumCatalogQueryFromRequest(req));
-    return http::HttpResponse {200, {{"Content-Type", "application/json"}}, pageToJson(page, albumToJson).dump()};
+    auto body = pageToJson(page, albumToJson);
+    if (!dto::attachMetadataCovers(body, application::model::CoverOwner::Album, cover_service_)) return jsonError(503, "metadata cover query failed");
+    return http::HttpResponse {200, {{"Content-Type", "application/json"}}, body.dump()};
 }
 
 http::HttpResponse CrawlerController::handleListMiguAlbums(http::HttpRequest req)
@@ -1910,7 +1920,9 @@ http::HttpResponse CrawlerController::handleListMiguAlbums(http::HttpRequest req
     }
 
     auto page = service_->listMiguAlbums(albumCatalogQueryFromRequest(req));
-    return http::HttpResponse {200, {{"Content-Type", "application/json"}}, pageToJson(page, albumToJson).dump()};
+    auto body = pageToJson(page, albumToJson);
+    if (!dto::attachMetadataCovers(body, application::model::CoverOwner::Album, cover_service_)) return jsonError(503, "metadata cover query failed");
+    return http::HttpResponse {200, {{"Content-Type", "application/json"}}, body.dump()};
 }
 
 http::HttpResponse CrawlerController::handleGetMiguAlbum(http::HttpRequest req)
@@ -1923,7 +1935,9 @@ http::HttpResponse CrawlerController::handleGetMiguAlbum(http::HttpRequest req)
     if (!album) {
         return jsonError(404, "album not found");
     }
-    return http::HttpResponse {200, {{"Content-Type", "application/json"}}, albumToJson(*album).dump()};
+    auto body = albumToJson(*album);
+    if (!dto::attachMetadataCovers(body, application::model::CoverOwner::Album, cover_service_)) return jsonError(503, "metadata cover query failed");
+    return http::HttpResponse {200, {{"Content-Type", "application/json"}}, body.dump()};
 }
 
 http::HttpResponse CrawlerController::handleListMiguAlbumSongs(http::HttpRequest req)

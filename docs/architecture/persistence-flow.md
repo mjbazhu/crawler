@@ -1,8 +1,19 @@
 # 元数据与歌曲资源持久化流程
 
-本说明对应 `codex/resource-persistence-flow`，保留从 `f48011b` 开始的阶段分析与验收记录。当前元数据交付版本为 `7235cf4`，行为约束见 [元数据模型](../migu/metadata.md)，最新结果见 [合并前元数据修复验收](#合并前元数据修复验收)，长期待办统一见 [元数据专项剩余项](../roadmap/README.md#元数据专项剩余项)。历史段落中的“本轮”只指当时版本，不表示当前仍附带图片/歌词下载或保留旧采集路由。
+本说明保留 `codex/resource-persistence-flow` 从 `f48011b` 到 `7235cf4` 的阶段分析与验收记录；`7235cf4` 是该阶段交付版本，不是整个项目当前 HEAD。历史段落中的“本轮”只指当时版本，不表示当前仍附带图片/歌词下载、保留旧采集路由或缺少独立封面服务。行为约束见[元数据模型](../migu/metadata.md)，该阶段结果见[合并前元数据修复验收](#合并前元数据修复验收)，长期待办统一见[元数据专项剩余项](../roadmap/README.md#元数据专项剩余项)。
 
 起始阶段以 `f48011b` 为分析基线，新增了 `V2026102602__resource_claim_generation.sql` 和物料查询索引迁移 `V2026102701__migu_album_material_lookup.sql`；已应用迁移保持不变。后续迁移及流程变更分别记录在对应阶段。
+
+## 当前流程入口
+
+2026-10-29 文档核对基线为 `967bc67`，包含 main 歌手资料清理及独立封面能力。下方原调用图和矩阵继续说明元数据/歌曲资源链路；新增能力从以下正文进入，历史验收数量和版本不改写：
+
+| 能力 | 当前正文与边界 |
+| --- | --- |
+| 元数据与独立资料刷新 | [元数据模型](../migu/metadata.md#当前采集入口)、[歌手资料验收](../migu/singer-profile-validation.md)；只保存响应中的资料及图片 URL，不下载图片 |
+| 歌曲音频、歌词及歌曲封面 | [资源流程](../migu/resources.md)；filesystem 主装配本地提交后回写，MRC 后处理见[歌词说明](../migu/lyrics.md) |
+| 歌手头像、专辑封面本地与云端 | [当前架构数据流](README.md#当前封面数据流)、[本地专项](../roadmap/metadata-cover-download.md)、[云端专项](../roadmap/metadata-cover-cloud-storage.md)；短事务认领，事务外 I/O，按代次/快照确认，本地与云端状态独立 |
+| 运行、恢复与未来表结构 | [配置](../configuration.md)、[服务恢复](../operations/service-lifecycle.md)、[统一云端回执方案](../roadmap/resource-cloud-receipts.md)；统一回执表尚未实施 |
 
 ## 本轮实际改变的调用链
 
