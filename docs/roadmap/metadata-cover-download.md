@@ -70,7 +70,7 @@ URL 更新默认保留成功文件。下载期间 URL 改变时，条件回写�
 
 ## 本次验收结果
 
-2026-10-28 至 29 在 `codex/artist-album-cover-storage` 工作区验证，未提交；证据根为 `D:/codex-runs/crawler-cover-local/20261028/`。
+2026-10-28 至 29 在 `codex/artist-album-cover-storage` 工作区验证；后续已随[草稿 PR #7](https://github.com/mjbazhu/crawler/pull/7)提交推送，按用户指示保持未合并。证据根为 `D:/codex-runs/crawler-cover-local/20261028/`。
 
 - **构建：** MSVC/vcpkg 的 `demo` 及受影响测试 target 构建成功。有效目录为 `D:/codex-builds/crawler-cover-local-20261028`，C 盘空间不足后仅在本地 cache 关闭可执行文件链接调试符号和增量链接，未改变默认 preset。
 - **离线与本机：** 初始实现 15 项通过，见 `offline_final.txt`。补 Windows CA、MIME、schema 和契约后，受影响的 8 项再次通过，见 `api-ca-mime-final-tests.txt`；含 WebP/AVIF 自定义 MIME 真路由、封面存储/API、歌曲同步/异步下载及流式 HTTP。
@@ -88,4 +88,4 @@ URL 更新默认保留成功文件。下载期间 URL 改变时，条件回写�
 - 已读取相关路线、元数据/资源约束、SQL、封面 adapter、HTTP、装配、目录 API 与现有测试源码。
 - 本地闭环、SQL、接口和针对性测试已实现，离线/本机与独立数据库回归通过；证据以本次验收及当前交接为准。
 - 有效构建位于 `D:/codex-builds/crawler-cover-local-20261028`，规避 C 盘链接空间不足；使用原 preset 和本地链接符号选项。
-- 当前下一步是云端自动接入；两会话保持独立，统一合并后联调歌手目录 cover 和发布契约版本。历史专辑 URL 仅在有原响应证据时定向处理。
+- 后续[云端自动接入](metadata-cover-cloud-storage.md)及 API/OpenAPI 1.9.0 已完成并纳入 PR #7；当前需在用户后续授权的集成阶段解决 main 冲突并联调歌手目录 cover。新的[统一云端回执方案](resource-cloud-receipts.md)只固化设计，待基线同步后独立实施。历史专辑 URL 仅在有原响应证据时定向处理。

@@ -2,6 +2,8 @@
 
 更新日期：2026-10-29。状态：讨论方案已确认，尚未实施。先交付本会话已完成的歌手头像/专辑封面本地及云端能力，创建 PR 供审阅；用户最新指示为暂不合并。后续 SQL 重构从届时最新 main 的独立分支开始。
 
+当前交付已创建为[草稿 PR #7](https://github.com/mjbazhu/crawler/pull/7)，保持未合并。功能分支与 main 的 7 处集成冲突及测试边界已列入 PR 和[当前交接](../agents/current.md#pr-交付与接续入口)，下一会话先处理该基线边界，不能直接把本方案当作现有 schema。
+
 ## 当前已实现基线
 
 [封面云端实现](metadata-cover-cloud-storage.md) 已支持 BaiduPCS-Go 与 rclone Google Drive，两个后端各完成 20 张歌手图、20 张专辑图上传、内容核验及数据库回写。当前每条资源只有一组 cloud_*，保存最后确认的云端回执；cloud_backend 的值为上传实现 baidupcs/rclone，不代表实际存储平台。切换后端会替换同一行的最后回执，不表示之前的远端对象已删除。
