@@ -59,11 +59,13 @@ model::CloudFileResult BaiduCloudFileStore::upload(model::CloudFileUploadRequest
         if (!deadline.remaining()) return -1;
         const auto result = run({"meta", path});
         const auto &output = result.output;
+        if (result.exit_code == 0 && output.find(path) != std::string::npos) {
+            if (std::regex_search(output, std::regex("(文件类型|类型)[ \\t]+(目录|文件夹)|是否目录[ \\t]+(是|true)"))) return 2;
+            if (std::regex_search(output, std::regex("(文件类型|类型)[ \\t]+(文件|普通文件)|是否目录[ \\t]+(否|false)"))) return 1;
+        }
         if (output.find("未登录") != std::string::npos || output.find("not logged") != std::string::npos) return 3;
-        if (output.find("31066") != std::string::npos) return 0;
-        if (result.exit_code != 0 || output.find(path) == std::string::npos) return -1;
-        if (std::regex_search(output, std::regex("(文件类型|类型)[ \\t]+(目录|文件夹)|是否目录[ \\t]+(是|true)"))) return 2;
-        if (std::regex_search(output, std::regex("(文件类型|类型)[ \\t]+(文件|普通文件)|是否目录[ \\t]+(否|false)"))) return 1;
+        // 只识别明确的错误码字段；路径、时间或普通诊断包含这些数字不代表缺失。
+        if (std::regex_search(output, std::regex(R"((错误代码|错误码|代码|error_code|errno|errcode)[ \t"']*(:|：|=)[ \t"']*31066([^0-9]|$))", std::regex::icase))) return 0;
         return -1;
     };
     const auto stopped = [&] { return cloud::failure(deadline.cancelled() ? "cancelled" : "cloud_timeout", deadline.cancelled() ? "resource" : "timeout", true); };

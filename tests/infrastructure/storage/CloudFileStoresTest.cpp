@@ -104,7 +104,7 @@ int main()
             process::ProcessResult result;
             result.exit_code = 0;
             if (line.find("\"meta\"") != std::string::npos) {
-                result.output = unknown ? "EOF" : (exists ? "文件路径 /Media/" + request.relative_path + "\n  类型              文件\n" : "代码: 31066");
+                result.output = unknown ? "EOF: /Media/" + request.relative_path : (exists ? "文件路径 /Media/" + request.relative_path + "\n  类型              文件\n" : "代码: 31066");
             } else if (line.find("\"upload\"") != std::string::npos) {
                 ++uploads;
                 exists = true;
@@ -125,6 +125,13 @@ int main()
         auto saved = baidu->upload(request);
         test::require(saved.ok && saved.receipt.checksum == request.checksum && uploads == 1, "Baidu did not confirm readback content");
         test::require(baidu->upload(request).reused && uploads == 1, "Baidu second pass uploaded again");
+        // 文件路径或普通诊断带有错误码数字，不能据此判断不存在并盲目覆盖。
+        request.relative_path = "migu/singers/31066/cover/a.png";
+        test::require(baidu->upload(request).reused && uploads == 1, "Baidu treated a numeric path as a missing-file error");
+        unknown = true;
+        test::require(baidu->upload(request).uncertain && uploads == 1, "Baidu numeric-path verification failure caused blind upload");
+        unknown = false;
+        request.relative_path = "migu/singers/1/cover/a.png";
         wrong_bytes = true;
         test::require(!baidu->upload(request).ok, "same-size wrong Baidu content was accepted");
         unknown = true;
