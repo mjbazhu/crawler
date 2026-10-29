@@ -367,7 +367,7 @@ paths:
     post:
       tags: [migu]
       summary: Process Migu resource queue
-      description: Claims pending resource records, obtains temporary Migu resource URLs, downloads content, saves bytes and writes results back to MySQL. Known digital albums are skipped without requesting resource URLs. Set async=true for long-running background processing; item and event rows are written in real time.
+      description: Claims pending resource records, obtains temporary Migu resource URLs, downloads content, saves bytes and writes results back to MySQL. Current filesystem song processing does not automatically upload; CRAWLER_RESOURCE_CLOUD_UPLOAD_ENABLED applies to metadata covers through /api/migu/covers/process. Legacy rclone copyurl storage is selected separately. Known digital albums are skipped without requesting resource URLs. Set async=true for long-running background processing; item and event rows are written in real time.
       requestBody:
         required: true
         content:
@@ -2024,10 +2024,10 @@ components:
         local_path: { type: string }
         cloud_backend:
           type: string
-          description: Cloud upload backend, for example baidupcs. Empty when cloud upload is disabled.
+          description: Compatibility cloud adapter field. Current filesystem song processing does not automatically upload; cover cloud settings do not enable the song uploader. Stored queue receipts may be historical or manually reconciled.
         cloud_path:
           type: string
-          description: Stable cloud path after upload, for example /Media/migu/... Empty when cloud upload is disabled.
+          description: Compatibility cloud object path, not a public URL. New filesystem song process results are empty; stored queue records may retain a last confirmed historical or manually reconciled path.
         size_bytes: { type: integer, minimum: 0 }
         checksum: { type: string }
         status: { type: integer, minimum: 0, maximum: 4 }
@@ -2112,7 +2112,7 @@ components:
           description: Supports status/resource_status, q, kind and format.
     ResourceProcessRequest:
       type: object
-      description: Claims pending Migu resource records, fetches the resource URL when needed, downloads content, optionally uploads the saved local file to cloud storage, and writes back status. Use async=true for long-running batches. Audio resources use the runtime pacmtoken stored through POST /api/migu/pacmtoken/refresh and may auto-refresh it during processing; tokens are not written to batch tables or logs.
+      description: Claims pending Migu resource records, fetches the resource URL when needed, downloads content and writes back status. Current filesystem song processing does not automatically upload saved files; cover cloud settings are independent. Legacy rclone copyurl storage is selected separately. Use async=true for long-running batches. Audio resources use the runtime pacmtoken stored through POST /api/migu/pacmtoken/refresh and may auto-refresh it during processing; tokens are not written to batch tables or logs.
       properties:
         source:
           type: string
@@ -2248,10 +2248,10 @@ components:
           description: Storage path returned by the blob store after save. Empty when the item did not save content.
         cloud_backend:
           type: string
-          description: Cloud upload backend, for example baidupcs. Empty when cloud upload is disabled.
+          description: Compatibility cloud adapter field. Current filesystem song processing does not automatically upload; cover cloud settings do not enable the song uploader. Stored queue receipts may be historical or manually reconciled.
         cloud_path:
           type: string
-          description: Stable cloud path after upload, for example /Media/migu/... Empty when cloud upload is disabled.
+          description: Compatibility cloud object path, not a public URL. New filesystem song process results are empty; stored queue records may retain a last confirmed historical or manually reconciled path.
         size_bytes: { type: integer, minimum: 0 }
         checksum: { type: string }
         error_category:

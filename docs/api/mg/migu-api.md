@@ -518,7 +518,7 @@ retry/reset 都会返回汇总和明细。显式 ID 场景下，`items` 会包�
 - 处理开始后会写入统一批次表，`task_type=resourceProcess`，前端可通过 `/api/migu/tasks`、`/api/migu/tasks/{batch_id}/items`、`/api/migu/tasks/{batch_id}/events` 查看结果。同步和异步模式都会实时写入 item 开始、完成、失败事件；`pacmtokenRefreshed` 事件只记录长度和时间，不记录 token。
 - 已知数字专辑会在请求 Migu URL 前直接跳过；如果 Migu 返回 `440016`，也会把同一首歌的相关音频资源标记为跳过，避免重复浪费请求。`440013` 这类疑似登录态或账号权限问题保留为失败资源，换 token 后可 retry。
 - 本地相对路径固定为 `migu/songs/{contentId}/audio/{format}.{ext}`、`migu/songs/{contentId}/lyrics/lyric.lrc`、`migu/songs/{contentId}/lyrics/mrc.mrc`、`migu/songs/{contentId}/lyrics/trc.trc`。
-- 云端上传启用时，云端路径固定为 `{CRAWLER_RESOURCE_CLOUD_ROOT}/<本地相对路径>`；默认是 `/Media/migu/...`。
+- 当前 filesystem 生产装配没有歌曲下载后的自动 uploader，`CRAWLER_RESOURCE_CLOUD_UPLOAD_ENABLED` 只接入歌手/专辑封面。歌曲结果中的 `cloud_backend/cloud_path` 保留兼容字段，下面的新下载示例为空字符串；历史队列的非空云端回执也不表示本次下载进行了上传。歌曲手动归档与核对见[运行说明](../../operations/resource-storage.md)。旧 `RESOURCE_STORAGE_BACKEND=rclone` 是另一条远端 copyurl 存储路径，区别见[配置说明](../../configuration.md#存储模式与封面云端)。
 
 同步响应：
 
@@ -548,8 +548,8 @@ retry/reset 都会返回汇总和明细。显式 ID 场景下，`items` 会包�
       "related": false,
       "synthetic": false,
       "local_path": "migu/songs/600902000006889266/audio/ZQ24.flac",
-      "cloud_backend": "baidupcs",
-      "cloud_path": "/Media/migu/songs/600902000006889266/audio/ZQ24.flac",
+      "cloud_backend": "",
+      "cloud_path": "",
       "size_bytes": 16266000,
       "checksum": "sha256...",
       "error_category": "",
@@ -570,8 +570,8 @@ retry/reset 都会返回汇总和明细。显式 ID 场景下，`items` 会包�
       "related": true,
       "synthetic": false,
       "local_path": "migu/songs/600902000006889266/lyrics/lyric.lrc",
-      "cloud_backend": "baidupcs",
-      "cloud_path": "/Media/migu/songs/600902000006889266/lyrics/lyric.lrc",
+      "cloud_backend": "",
+      "cloud_path": "",
       "size_bytes": 1024,
       "checksum": "sha256...",
       "error_category": "",
@@ -861,7 +861,7 @@ POST /api/migu/backfill/singer-songs/retry
 
 同步状态含义：`0` 未同步，`1` 同步中，`2` 已完成，`3` 失败，`4` 部分完成。资源状态含义：`0` 待获取，`1` 获取中，`2` 已完成，`3` 失败，`4` 跳过。
 
-`singer_song_relations`、`singer_album_relations`、`album_song_relations` 是实时关系行数，分别来自 `song_artist_refs`、`album_source_refs.source_artist_id` 和 `album_song_refs`，用于总览判断“已有多少事实关联”，不作为写入时强维护的汇总字段。
+`singer_song_relations`、`singer_album_relations`、`album_song_relations` 是实时关系行数，分别来自 `song_artist_refs`、`album_artist_refs` 和 `album_song_refs`，用于总览判断“已有多少事实关联”，不作为写入时强维护的汇总字段。
 
 ## 批次列表
 

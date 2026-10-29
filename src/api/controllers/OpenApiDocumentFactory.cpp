@@ -595,8 +595,8 @@ void buildSchemas(json &schemas)
              {"resource_kind", {{"type", "string"}}},
              {"format_type", {{"type", "string"}}},
              {"local_path", {{"type", "string"}}},
-             {"cloud_backend", {{"type", "string"}, {"description", "Cloud upload backend, for example baidupcs. Empty when cloud upload is disabled."}}},
-             {"cloud_path", {{"type", "string"}, {"description", "Stable cloud path after upload, for example /Media/migu/... Empty when cloud upload is disabled."}}},
+             {"cloud_backend", {{"type", "string"}, {"description", "Compatibility cloud adapter field. Current filesystem song processing does not automatically upload; cover cloud settings do not enable the song uploader. Stored queue receipts may be historical or manually reconciled."}}},
+             {"cloud_path", {{"type", "string"}, {"description", "Compatibility cloud object path, not a public URL. New filesystem song process results are empty; stored queue records may retain a last confirmed historical or manually reconciled path."}}},
              {"size_bytes", {{"type", "integer"}, {"minimum", 0}}},
              {"checksum", {{"type", "string"}}},
              {"status", {{"type", "integer"}, {"minimum", 0}, {"maximum", 4}}},
@@ -648,7 +648,7 @@ void buildSchemas(json &schemas)
     };
     schemas["ResourceProcessRequest"] = {
         {"type", "object"},
-        {"description", "Claims pending Migu resource records, fetches the resource URL when needed, downloads content, optionally uploads the saved local file to cloud storage, and writes back status. By default it claims status 0/3 across all resource kinds; filter.kind/resource_kind can limit processing to audio, cover, lyric/lrc, mrc or trc. Use async=true for long-running batches. Audio resources use the runtime pacmtoken stored through POST /api/migu/pacmtoken/refresh and may auto-refresh it during processing; tokens are not written to batch tables or logs."},
+        {"description", "Claims pending Migu resource records, fetches the resource URL when needed, downloads content and writes back status. Current filesystem song processing does not automatically upload saved files; cover cloud settings are independent. Legacy rclone copyurl storage is selected separately. By default it claims status 0/3 across all resource kinds; filter.kind/resource_kind can limit processing to audio, cover, lyric/lrc, mrc or trc. Use async=true for long-running batches. Audio resources use the runtime pacmtoken stored through POST /api/migu/pacmtoken/refresh and may auto-refresh it during processing; tokens are not written to batch tables or logs."},
         {"properties",
          {
              {"source", {{"type", "string"}, {"enum", json::array({"migu"})}, {"default", "migu"}}},
@@ -714,8 +714,8 @@ void buildSchemas(json &schemas)
              {"related", {{"type", "boolean"}, {"description", "True when the item was discovered from an audio response cover/lyric/mrc/trc URL."}}},
              {"synthetic", {{"type", "boolean"}, {"description", "True when no real resource row could be claimed, for example related_not_claimed."}}},
              {"local_path", {{"type", "string"}, {"description", "Storage path returned by the blob store after save. Empty when the item did not save content."}}},
-             {"cloud_backend", {{"type", "string"}, {"description", "Cloud upload backend, for example baidupcs. Empty when cloud upload is disabled."}}},
-             {"cloud_path", {{"type", "string"}, {"description", "Stable cloud path after upload, for example /Media/migu/... Empty when cloud upload is disabled."}}},
+             {"cloud_backend", {{"type", "string"}, {"description", "Compatibility cloud adapter field. Current filesystem song processing does not automatically upload; cover cloud settings do not enable the song uploader. Stored queue receipts may be historical or manually reconciled."}}},
+             {"cloud_path", {{"type", "string"}, {"description", "Compatibility cloud object path, not a public URL. New filesystem song process results are empty; stored queue records may retain a last confirmed historical or manually reconciled path."}}},
              {"size_bytes", {{"type", "integer"}, {"minimum", 0}}},
              {"checksum", {{"type", "string"}}},
              {"error_category", {{"type", "string"}, {"description", "Failure or skip category. Empty when ok is true."}}},
@@ -1418,7 +1418,7 @@ std::string OpenApiDocumentFactory::miguDocumentJson()
     doc["paths"]["/api/migu/resources/process"]["post"] = {
         {"tags", json::array({"migu"})},
         {"summary", "Process Migu resource queue"},
-        {"description", "Claims pending resource records, obtains temporary Migu resource URLs, downloads content, saves bytes, optionally uploads saved local files to cloud storage, and writes results back to MySQL. Omitted kind processes all resource kinds; use filter.kind to select audio, cover, lyric/lrc, mrc or trc. Known digital albums are skipped without requesting resource URLs; when an audio response returns 440016, all audio formats for that song are marked skipped while cover/lyric/mrc/trc remain eligible. Set async=true for long-running background processing; item and event rows are written in real time."},
+        {"description", "Claims pending resource records, obtains temporary Migu resource URLs, downloads content, saves bytes and writes results back to MySQL. Current filesystem song processing does not automatically upload; CRAWLER_RESOURCE_CLOUD_UPLOAD_ENABLED applies to metadata covers through /api/migu/covers/process. Legacy rclone copyurl storage is selected separately. Omitted kind processes all resource kinds; use filter.kind to select audio, cover, lyric/lrc, mrc or trc. Known digital albums are skipped without requesting resource URLs; when an audio response returns 440016, all audio formats for that song are marked skipped while cover/lyric/mrc/trc remain eligible. Set async=true for long-running background processing; item and event rows are written in real time."},
         {"requestBody", requestBody(ref("#/components/schemas/ResourceProcessRequest"))},
         {"responses", {{"200", {{"description", "Resource processing result"}, {"content", jsonContent(ref("#/components/schemas/ResourceProcessResponse"))}}}, {"202", {{"description", "Resource processing accepted"}, {"content", jsonContent(ref("#/components/schemas/ResourceProcessAcceptedResponse"))}}}, {"400", errorResponse("Invalid resource process request")}, {"503", errorResponse("Resource workflow is not configured")}}},
     };
