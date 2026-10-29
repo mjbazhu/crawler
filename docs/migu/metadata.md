@@ -23,7 +23,8 @@
 - `album_song_refs` 只保存非空的 `album_source_ref_id`、`song_source_ref_id`、disc、track 和来源顺序，平台身份通过两端来源表取得。
 - 歌手歌曲响应提供专辑身份和名称时先建立摘要和关系，必要的详情由目录采集流程统一补齐；已有完整详情优先复用，拼音等字段随整份响应解析。实体、来源、关系、音质参数和资源登记在同一数据库事务提交，网络请求在事务外执行。
 - `album_artist_refs` 维护专辑与歌手来源的角色、顺序、主歌手和入口标记；`albums` 与 `album_source_refs` 不重复保存歌手属性。专辑身份 hash 使用平台与专辑来源 ID，不依赖名称、歌手或后到的物料 ID。
-- `singer_resources`、`album_resources` 的 `remote_url` 保存响应中的歌手头像、专辑封面地址，与元数据同事务提交。新资源登记为待获取；重采只更新非空地址，保留已有文件、成功状态和校验信息。元数据采集不下载封面和歌词；歌曲资源沿用 `/api/migu/resources/process`，歌手与专辑封面下载后续接入。
+- `singer_resources`、`album_resources` 的 `remote_url` 保存响应中的歌手头像、专辑封面地址，与元数据同事务提交。新资源登记为待获取；重采只更新非空地址，保留已有文件、成功状态和校验信息。元数据采集不下载封面和歌词；歌曲资源沿用 `/api/migu/resources/process`，歌手与专辑封面由 `/api/migu/covers/process` 独立下载，见[本地封面流程](resources.md#歌手头像与专辑封面本地下载)。
+- 歌曲输入中的 `cover_url` 只用于歌曲资源；明确专辑详情上下文的图片通过 `source_album_cover_url` 分流到专辑。普通歌曲的 `img1/img2/img3/img` 不再自动补为空专辑图片。既有库中的历史地址按证据核对，本次不会批量猜改。
 
 ### 歌手索引与 tab 归属
 

@@ -17,7 +17,7 @@
 | `album_song_refs` | 专辑来源与歌曲来源之间的 Disc、track、顺序 | 两端主键，均不可为空 |
 | `song_source_audio_formats` | 音质、资源类型、iOS/Android 格式编码及大小 | 歌曲来源主键与音质 |
 | `song_resources` | 歌曲资源任务、已保存文件/云端结果、状态和错误 | 歌曲来源主键、资源类型、音质 |
-| `singer_resources` / `album_resources` | 本地封面相对路径、字节数、checksum、状态和脱敏错误 | 所属来源主键与资源类型 |
+| `singer_resources` / `album_resources` | 图片 URL、本地封面回执、状态和脱敏错误；独立下载的代次、批次与认领时间 | 所属来源主键与资源类型 |
 | `migu_dalbum_details` | 数字专辑来源与 `materialId` 的明确映射 | 专辑来源主键 |
 | `crawl_batches` / `crawl_batch_items` / `crawl_batch_events` | 任务、目标和事件 | 与音乐实体去重分离 |
 | `governance_events` | 治理操作记录 | 事件主键 |
@@ -64,6 +64,10 @@
 已有大库首次升级时，可设置 `CRAWLER_MYSQL_STARTUP_TIMEOUT_MS=600000`，为数据迁移和索引创建预留时间。后续启动根据 migration 记录跳过已完成版本。
 
 各表 `create.sql` 是当前结构快照，用于查阅与独立建表；正式升级仍走 migration。`transactions/` 放事务控制，`schema/` 放跨表 schema/完整性检查，`tests/` 仅用于校验。
+
+`V2026102802__metadata_cover_download_claims.sql` 为两类封面补 `claim_generation/running_batch_id/claimed_at` 和队列索引。封面迁移在发布前从 `2026102801` 避让到 `2026102802`，SQL 内容及 checksum 不变，避免与并行歌手资料专项已执行的 `singer_profile_field_cleanup` 冲突；不修改已有歌手清理记录。`cover_*` SQL 只负责对应资源表的查询、条件认领、成功/失败及超时恢复；成功回写同时比较代次与 URL。失败和恢复保留已有完整文件。专辑别名合并保留规范来源的活跃认领，迁入物料来源时不继承原 worker 的运行态；恢复日志同时核对已经迁移到其他主键的文件引用。
+
+`V2026102901__metadata_cover_cloud_storage.sql` 为两表增加 `cloud_backend/path/size_bytes/checksum/status/uploaded_at`、独立云端认领、错误和 JSON 上传意图。`cloud_*` SQL 只修改云端列；成功确认需本地状态 2、路径/大小/SHA-256 快照与云端代次匹配。`cover_process_*` 把本地 0/3 与云端缺失、失败、待核对或配置变化的本地 2 项纳入候选。已确认回执匹配时不再处理；本地刷新使旧云端认领失效，保留最后确认对象作为历史回执。专辑别名合并同时迁移所选本地文件及云端回执，不继承旧云端运行态。百度和 Google 共用该结构，只有 `cloud_backend/path` 不同。
 
 实施顺序：新增 migration 与表级 SQL → 接入原子编排和封面存储 → 更新查询、资源队列和协议 → 独立库验证 → 常规部署时由启动初始化执行迁移。
 

@@ -1,8 +1,8 @@
 openapi: 3.0.3
 info:
   title: Crawler Migu Metadata API
-  version: 1.7.0
-  description: Migu metadata and song resource crawler API. The current singer, singer songs, singer albums, album details, album songs and resource processing workflows are exposed.
+  version: 1.9.0
+  description: Migu metadata, song resource processing, and singer/album cover storage API. Cover tasks download stored URLs, expose verified local images, and automatically upload and confirm cloud receipts through BaiduPCS-Go or rclone Google Drive when configured.
 servers:
   - url: http://127.0.0.1:8080
     description: Local crawler service
@@ -1003,6 +1003,345 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HealthResponse'
+  /api/migu/covers/queue:
+    {
+      "get": {
+        "tags": [
+          "migu"
+        ],
+        "summary": "List local and cloud singer or album cover states",
+        "parameters": [
+          {
+            "name": "owner_type",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "singer",
+                "album"
+              ]
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "migu"
+              ]
+            }
+          },
+          {
+            "name": "resource_ids",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "description": "Comma-separated positive resource IDs, at most 200."
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-3](,[0-3]){0,3}$"
+            }
+          },
+          {
+            "name": "cloud_status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-4](,[0-4]){0,4}$"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000000,
+              "default": 1
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cover queue",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetadataCoverPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid query",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Cover service or persistence unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  /api/migu/covers/process:
+    {
+      "post": {
+        "tags": [
+          "migu"
+        ],
+        "summary": "Download covers and automatically upload when cloud storage is enabled",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MetadataCoverRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetadataCoverProcessResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Background batch accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetadataCoverAccepted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Cover service or persistence unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "description": "Metadata collection stores URLs only. This operation accepts stored resource IDs or filters, never arbitrary URLs or paths. async defaults to true; poll or cancel through existing task routes. Cloud disabled: process local states 0/3, or 2 with explicit refresh. Cloud enabled: also select completed local files with missing, failed, uncertain or outdated cloud receipts and upload existing verified bytes without re-fetching Migu. Backend baidupcs or rclone is selected by server configuration. Success requires verified cloud content and conditional database confirmation. Cloud errors preserve local completion and are reported separately. Explicit refresh requires resource_ids."
+      }
+    }
+  /api/migu/covers/recover-stale:
+    {
+      "post": {
+        "tags": [
+          "migu"
+        ],
+        "summary": "Recover stale local and cloud claims and invalidate old workers",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MetadataCoverRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetadataCoverRecovery"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Cover service or persistence unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  /api/migu/covers/{owner_type}/{resource_id}/content:
+    {
+      "get": {
+        "tags": [
+          "migu"
+        ],
+        "summary": "Read a committed local cover image",
+        "parameters": [
+          {
+            "name": "owner_type",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "singer",
+                "album"
+              ]
+            }
+          },
+          {
+            "name": "resource_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "If-None-Match",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Verified local image",
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/gif": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "image/avif": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "ETag matches the current image"
+          },
+          "400": {
+            "description": "Invalid cover identity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Committed local file is missing, corrupt, or unknown",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Cover service or persistence unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
 components:
   responses:
     TaskAccepted:
@@ -1072,6 +1411,368 @@ components:
           schema:
             $ref: '#/components/schemas/BackfillQueueTargetPage'
   schemas:
+    MetadataCoverCloud:
+      {
+        "type": "object",
+        "required": [
+          "enabled",
+          "status",
+          "current",
+          "backend",
+          "path",
+          "size_bytes",
+          "checksum",
+          "uploaded_at",
+          "error_category",
+          "result_code",
+          "last_error"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether cloud upload is enabled in this server."
+          },
+          "status": {
+            "type": "integer",
+            "enum": [
+              0,
+              1,
+              2,
+              3,
+              4
+            ],
+            "description": "Cloud state: pending, running, confirmed, failed, uncertain. Independent of local download status."
+          },
+          "current": {
+            "type": "boolean",
+            "description": "Confirmed receipt matches the committed local file and, while enabled, the configured backend and target prefix."
+          },
+          "backend": {
+            "type": "string",
+            "enum": [
+              "",
+              "baidupcs",
+              "rclone"
+            ],
+            "description": "Backend of the last confirmed receipt; rclone includes Google Drive."
+          },
+          "path": {
+            "type": "string",
+            "description": "Last confirmed full object path, e.g. /Media/migu/... or gcloud:Media/migu/...; may remain available after refresh or upload failure."
+          },
+          "size_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "checksum": {
+            "type": "string",
+            "description": "SHA-256 of the local snapshot whose remote content was verified."
+          },
+          "uploaded_at": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Unix timestamp of last successful cloud confirmation."
+          },
+          "error_category": {
+            "type": "string"
+          },
+          "result_code": {
+            "type": "string"
+          },
+          "last_error": {
+            "type": "string"
+          }
+        }
+      }
+
+    MetadataCoverRecord:
+      {
+        "type": "object",
+        "required": [
+          "owner_type",
+          "resource_id",
+          "source_ref_id",
+          "status",
+          "available",
+          "local_url",
+          "cloud"
+        ],
+        "properties": {
+          "owner_type": {
+            "type": "string",
+            "enum": [
+              "singer",
+              "album"
+            ]
+          },
+          "resource_id": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 1
+          },
+          "source_ref_id": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 1
+          },
+          "source": {
+            "type": "string"
+          },
+          "source_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer",
+            "enum": [
+              0,
+              1,
+              2,
+              3
+            ],
+            "description": "Download state: pending, running, complete, failed. A previous committed file may remain available while refreshing."
+          },
+          "available": {
+            "type": "boolean"
+          },
+          "local_url": {
+            "type": "string",
+            "nullable": true,
+            "description": "Owned local content route, present only while the committed file is available."
+          },
+          "local_path": {
+            "type": "string"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "checksum": {
+            "type": "string"
+          },
+          "error_category": {
+            "type": "string"
+          },
+          "result_code": {
+            "type": "string"
+          },
+          "last_error": {
+            "type": "string"
+          },
+          "cloud": {
+            "$ref": "#/components/schemas/MetadataCoverCloud"
+          }
+        }
+      }
+    MetadataCoverRequest:
+      {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "owner_type"
+        ],
+        "properties": {
+          "owner_type": {
+            "type": "string",
+            "enum": [
+              "singer",
+              "album"
+            ]
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "migu"
+            ],
+            "default": "migu"
+          },
+          "resource_ids": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 1
+            }
+          },
+          "status": {
+            "type": "array",
+            "maxItems": 4,
+            "items": {
+              "type": "integer",
+              "enum": [
+                0,
+                1,
+                2,
+                3
+              ]
+            }
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 20
+          },
+          "async": {
+            "type": "boolean",
+            "default": true
+          },
+          "refresh": {
+            "type": "boolean",
+            "default": false,
+            "description": "Requires explicit resource_ids; keeps the previous committed image when refresh fails."
+          },
+          "concurrency": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 32,
+            "default": 3
+          },
+          "retries": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 5,
+            "default": 1
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 600000,
+            "default": 15000,
+            "description": "Local download timeout. Cloud upload and verification use server CRAWLER_RESOURCE_CLOUD_TIMEOUT_MS, default 120000."
+          },
+          "stale_after_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 604800,
+            "default": 1800
+          },
+          "cloud_status": {
+            "type": "array",
+            "maxItems": 5,
+            "items": {
+              "type": "integer",
+              "enum": [
+                0,
+                1,
+                2,
+                3,
+                4
+              ]
+            },
+            "description": "Filter independent cloud state. Processing still obeys local eligibility and active-claim protection."
+          }
+        }
+      }
+    MetadataCoverPage:
+      {
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "page",
+          "page_size"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MetadataCoverRecord"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          }
+        }
+      }
+    MetadataCoverProcessResponse:
+      {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/MetadataCoverRecord"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "skipped": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "success_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "failed_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "skipped_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    MetadataCoverAccepted:
+      {
+        "type": "object",
+        "required": [
+          "batch_id",
+          "message"
+        ],
+        "properties": {
+          "batch_id": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    MetadataCoverRecovery:
+      {
+        "type": "object",
+        "required": [
+          "owner_type",
+          "recovered_count"
+        ],
+        "properties": {
+          "owner_type": {
+            "type": "string",
+            "enum": [
+              "singer",
+              "album"
+            ]
+          },
+          "recovered_count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Total local and cloud stale claims recovered while cloud storage is enabled; local claims only while disabled."
+          }
+        }
+      }
     ErrorResponse:
       type: object
       required: [error_code, message, error]
@@ -1142,6 +1843,7 @@ components:
         source_song_total: { nullable: true, type: integer, minimum: 0, description: "Migu-declared singer song total from singer/info. Null means not refreshed yet and full completion cannot be confirmed." }
         source_album_total: { nullable: true, type: integer, minimum: 0, description: "Migu-declared singer album total from singer/info. Null means not refreshed yet and full completion cannot be confirmed." }
         avatar_url: { type: string, description: "Remote singer image URL stored in singer_resources; metadata collection does not download the image." }
+        cover: {allOf: [{"$ref": "#/components/schemas/MetadataCoverRecord"}], nullable: true}
         songs_sync_status:
           allOf:
             - $ref: '#/components/schemas/SyncStatus'
@@ -1190,6 +1892,7 @@ components:
         source_artist_id: { type: string }
         source_artist_name: { type: string }
         cover_url: { type: string, description: "Remote album image URL stored in album_resources; metadata collection does not download the image." }
+        cover: {allOf: [{"$ref": "#/components/schemas/MetadataCoverRecord"}], nullable: true}
         total_count: { type: string }
         publish_date: { type: string }
         play_num: { type: integer, minimum: 0 }

@@ -1,6 +1,6 @@
 # Migu 元数据 API 对接说明
 
-当前 HTTP API 只保留本阶段已经落库的 Migu 元数据链路和歌曲资源处理链路：歌手、歌手歌曲、歌手专辑、专辑详情、专辑歌曲、歌曲音频和歌词资源。
+当前 HTTP API 覆盖 Migu 元数据、歌曲资源处理，以及歌手头像/专辑封面本地下载与配置驱动的云端存储：歌手、歌手歌曲、歌手专辑、专辑详情、专辑歌曲、歌曲音频和歌词资源。当前契约版本为 `1.9.0`。
 
 OpenAPI：
 
@@ -21,18 +21,19 @@ OpenAPI：
 10. 资源队列治理前先调用 `POST /api/migu/resources/preview` 预览影响范围。
 11. 批量处理资源前，前端可先调用 `POST /api/migu/pacmtoken/refresh` 传入当前 `pacmtoken`；长跑任务可轮询 `GET /api/migu/pacmtoken/state`，必要时调用 `POST /api/migu/pacmtoken/current` 同步本地 token。
 12. 需要实际下载歌曲资源时调用 `POST /api/migu/resources/process`；同步接口建议先用较小 `limit` 实测，长时间任务使用 `async=true`。
-13. 按业务阶段调用专用 crawl API、backfill retry API、资源治理 API 或资源处理 API。
-14. 保存响应中的 `batch_id`，列表页可继续用 `GET /api/migu/tasks` 刷新持久化进度，并用 `GET /api/migu/tasks/summary` 展示全局批次指标。
-15. 点开批次时调用 `GET /api/migu/tasks/{batch_id}`、`GET /api/migu/tasks/{batch_id}/items`、`GET /api/migu/tasks/{batch_id}/events`。
-16. 批次失败后优先用 `rerun-failed`、`clone` 或 `backfill-retry` 创建新批次，不原地重跑旧批次。
-17. 需要内存级实时当前项时调用 `GET /api/migu/tasks/progress?batch_id=...`。
-18. 需要停止时调用 `POST /api/migu/tasks/stop`。
+13. 下载歌手头像或专辑封面时，先调用 `GET /api/migu/covers/queue?owner_type=singer` 或 `owner_type=album` 读取资源 ID，再调用 `POST /api/migu/covers/process`；成功后使用返回的 `cover.local_url` 读取本地图片，详见[本地封面下载](#歌手头像与专辑封面本地下载)。此流程读取已入库 URL，不需要歌曲 listen/pacmtoken。
+14. 按业务阶段调用专用 crawl API、backfill retry API、资源治理 API 或资源处理 API。
+15. 保存响应中的 `batch_id`，列表页可继续用 `GET /api/migu/tasks` 刷新持久化进度，并用 `GET /api/migu/tasks/summary` 展示全局批次指标。
+16. 点开批次时调用 `GET /api/migu/tasks/{batch_id}`、`GET /api/migu/tasks/{batch_id}/items`、`GET /api/migu/tasks/{batch_id}/events`。
+17. 元数据批次失败后按支持的类型使用 `rerun-failed`、`clone` 或 `backfill-retry` 创建新批次；封面失败项再次调用 `covers/process`，不原地重跑旧批次。
+18. 需要内存级实时当前项时调用 `GET /api/migu/tasks/progress?batch_id=...`。
+19. 需要停止时调用 `POST /api/migu/tasks/stop`。
 
 `POST /api/migu/singers/crawl` 的 `limit=0` 表示每个分类全部获取。歌手目录主入口使用 `max_targets` 控制认领歌手数、`limit_per_singer` 控制每个歌手抓取数量，后者默认 `0` 表示在分页保护内全量获取，正数范围为 `1..500`。补池 retry 使用 `limit` 控制目标数、`limit_per_target` 控制每个歌手的抓取数量。
 
 ## 当前 API 清单
 
-| API | 用途 | 入库重点 |
+| API | 用途 | 数据与关键行为 |
 | --- | --- | --- |
 | `POST /api/migu/singers/crawl` | 获取歌手分类列表 | `singers`、`singer_source_refs` |
 | `POST /api/migu/singer-songs/crawl-from-db` | 从库中认领未同步歌曲的歌手并批量获取歌曲 | `singer_source_refs.songs_sync_status`、歌曲来源表、批次表 |
@@ -42,14 +43,18 @@ OpenAPI：
 | `GET /api/migu/schema/status` | Schema 检查 | 返回 MySQL schema 版本、缺失表和缺失关键列 |
 | `POST /api/migu/maintenance/recover-stale` | 回收 stale running | 把超时停留在 `1 同步中` 的元数据/批次标为失败 |
 | `GET /api/migu/singers` | 歌手列表 | 支持 `q` 模糊搜索、`source_singer_id` 精确 ID、`gender`、`country`、`songs_sync_status`、`albums_sync_status`、`min/max_songs_count`、`min/max_albums_count`；`q` 命中完整歌手 ID 时精确项优先；歌曲/专辑汇总按真实关联表派生，并返回 Migu 声明总数和剩余数 |
-| `GET /api/migu/singers/{source_singer_id}` | 歌手详情 | 按 Migu 歌手 ID 查询，并返回真实歌曲/专辑汇总、Migu 声明总数和是否完成 |
+| `GET /api/migu/singers/{source_singer_id}` | 歌手详情 | 按 Migu 歌手 ID 查询，并返回真实歌曲/专辑汇总、Migu 声明总数、是否完成及本地 `cover` 信息 |
 | `GET /api/migu/singers/{source_singer_id}/songs` | 歌手歌曲 | 查询该歌手的歌曲来源 |
-| `GET /api/migu/singers/{source_singer_id}/albums` | 歌手专辑 | 查询该歌手的专辑来源 |
+| `GET /api/migu/singers/{source_singer_id}/albums` | 歌手专辑 | 查询该歌手的专辑来源及本地 `cover` 信息 |
 | `GET /api/migu/albums` | 专辑列表 | 支持 `q`、`artist`、`kind`、`detail_sync_status`、`songs_sync_status`、`min/max_songs_count`；专辑歌曲数按 `album_song_refs` 实时统计 |
-| `GET /api/migu/albums/{source_album_id}` | 专辑详情 | 按 Migu 专辑 ID 查询 |
+| `GET /api/migu/albums/{source_album_id}` | 专辑详情 | 按 Migu 专辑 ID 查询，并返回本地 `cover` 信息 |
 | `GET /api/migu/albums/{source_album_id}/songs` | 专辑歌曲 | 查询该专辑的歌曲来源 |
 | `GET /api/migu/songs` | 歌曲列表 | 支持 `q`、`artist`、`album`、`resource_status`、`format` |
 | `GET /api/migu/songs/{source_song_id}` | 歌曲详情 | 按 Migu songId 或 contentId 查询 |
+| `GET /api/migu/covers/queue` | 歌手/专辑封面队列 | 查询资源 ID、本地可用性和独立云端状态，支持 `cloud_status` 筛选 |
+| `POST /api/migu/covers/process` | 歌手/专辑封面下载及云端存储 | 本地成功后，按开关自动上传百度或 Google 并核验回写；已下载项仅补传，默认后台批次 |
+| `POST /api/migu/covers/recover-stale` | 封面超时恢复 | 恢复本地及已启用云端的超时认领，使旧代次失效并保留成功回执 |
+| `GET /api/migu/covers/{owner_type}/{resource_id}/content` | 本地封面图片 | 按资源归属返回图片，支持 MIME、ETag/304；缺失或损坏返回 404 |
 | `GET /api/migu/resources/queue` | 资源任务队列 | 查看资源任务，不下载资源 |
 | `POST /api/migu/pacmtoken/refresh` | 运行期刷新 `pacmtoken` | 调用 Migu `checkPacMtoken`，成功后把 token 写入后端内存 |
 | `GET /api/migu/pacmtoken/state` | 查询 token 脱敏状态 | 只返回长度和更新时间，不返回 token 明文 |
@@ -105,6 +110,9 @@ GET /api/migu/albums/600927015009001083/songs
 
 GET /api/migu/songs?q=搁浅&artist=周杰伦&format=HQ
 GET /api/migu/songs/1140736758
+GET /api/migu/covers/queue?owner_type=singer&status=0,3&page_size=20
+GET /api/migu/covers/queue?owner_type=album&status=0,3&page_size=20
+POST /api/migu/covers/process
 GET /api/migu/resources/queue?status=0,3&kind=audio&format=HQ
 POST /api/migu/pacmtoken/refresh
 GET /api/migu/pacmtoken/state
@@ -1070,4 +1078,62 @@ GET /api/migu/governance/events?page=1&page_size=20&target_type=batch&batch_id=b
 
 歌手索引、歌手资料、专辑列表和专辑详情响应中的图片地址，分别保存到 `singer_resources.remote_url`、`album_resources.remote_url`，与本批实体、关系在同一事务提交。新资源只登记为 `status=0`，不生成本地文件，也不把已完成资源重置为待下载。空地址不清除已有地址，列表缩略图不覆盖已采集详情的封面地址。
 
-元数据采集完成后不再自动下载歌手头像、专辑封面、歌曲封面或 `lrc/mrc/trc`。歌曲资源任务仍正常生成，音频、歌曲封面及歌词继续由现有 `POST /api/migu/resources/process` 获取，歌曲远端地址仍由 listen 提供，不新增歌曲 URL 持久字段。该接口本轮不增加歌手或专辑资源处理能力，两者的下载接入后续单独完成。
+元数据采集完成后不再自动下载歌手头像、专辑封面、歌曲封面或 `lrc/mrc/trc`。歌曲资源任务仍正常生成，音频、歌曲封面及歌词继续由现有 `POST /api/migu/resources/process` 获取，歌曲远端地址仍由 listen 提供，不新增歌曲 URL 持久字段。歌手和专辑封面使用独立的 `/api/migu/covers` 路由族处理，见下方“歌手头像与专辑封面本地下载”。
+
+## 歌手头像与专辑封面本地下载
+
+元数据采集继续只保存图片 URL。此独立流程读取 `singer_resources.remote_url` 或 `album_resources.remote_url` 下载到本地，当前生产装配支持 MySQL。开启云端后，同一 process 自动上传百度或 Google 并核验回写，详情见[云端存储](../../roadmap/metadata-cover-cloud-storage.md)。图片来源与本地认领边界见[资源说明](../../migu/resources.md#歌手头像与专辑封面本地下载)。
+
+| 接口 | 作用 |
+| --- | --- |
+| `GET /api/migu/covers/queue` | 查询指定所有者类型的图片状态及本地可用性 |
+| `POST /api/migu/covers/process` | 下载库中 URL，默认创建后台批次；指定 `async=false` 可顺序处理小批次 |
+| `POST /api/migu/covers/recover-stale` | 恢复超时认领并使旧代次失效 |
+| `GET /api/migu/covers/{owner_type}/{resource_id}/content` | 按资源归属返回已提交图片，支持 ETag/304；文件缺失或损坏返回 404 |
+
+`owner_type` 必须为 `singer` 或 `album`；`resource_id` 属于对应资源表，不是名称池 ID 或平台 ID。队列 query 支持 `source=migu`、逗号分隔的 `resource_ids/status/cloud_status` 以及 `page/page_size`，每页最多 200 项。参数格式、类型或范围不合法返回 400；未配置或持久化不可用返回 503。
+
+下载示例：
+
+```json
+{
+  "owner_type": "singer",
+  "source": "migu",
+  "limit": 20,
+  "async": true,
+  "concurrency": 3,
+  "retries": 1,
+  "timeout_ms": 15000
+}
+```
+
+关闭云端时默认处理本地待获取 `0` 与失败 `3`，认领后为 `1`，完整文件和数据库回执确认后为 `2`。开启云端后，还会选择本地 `2` 且缺失、失败、待核对或目标已变化的云端回执，直接补传已有完整文件；无需 `refresh`。`resource_ids` 最多 200 项；`limit` 为 `1..200`，后台 `concurrency` 为 `1..32`，额外重试 `retries` 为 `0..5`，本地单图超时为 `100..600000` 毫秒，大小上限为 8 MiB。请求只接受声明字段，不接受任意 URL 或文件路径。
+
+后台返回 `202` 和 `batch_id`，复用既有进度、任务明细、事件与停止接口。任务类型为 `metadataCovers`，明细类型为 `singerCover/albumCover`，payload 包含 `owner_type/resource_id/source_ref_id`，不包含远端图片 URL。同步返回 `200`、`items` 及 `success_count/failed_count/skipped_count`，单项失败由明细表达。
+
+对已完成封面换图或修复本地丢失文件时，必须显式指定资源：
+
+```json
+{
+  "owner_type": "album",
+  "resource_ids": [1, 2],
+  "refresh": true,
+  "async": true
+}
+```
+
+刷新期间及失败后保留旧成功文件，队列状态和 `available` 分别表达任务进展与图片是否可用。请求开始后 URL 已更新或代次已改变时，旧下载不能覆盖新结果；提交不确定返回 `writeback_uncertain`，新文件及日志保留待核对。失败项可直接再次 process，无需先 reset。
+
+超时恢复示例：`{"owner_type":"album","stale_after_seconds":1800}`。阈值范围 `1..604800` 秒，使用独立认领时间；普通元数据更新时间不延长认领。恢复后待处理/失败项可以重新下载，已有图片继续可用。
+
+歌手和专辑列表、详情增加可空的 `cover` 对象，包含 `owner_type/resource_id/source_ref_id/status/available/local_url/local_path/size_bytes/checksum` 及脱敏错误。`local_url` 在已提交文件存在时返回内容路由，否则为 null。原 `avatar_url/cover_url` 保持平台远端地址含义，`local_path` 是模块相对路径，绝对存储根不返回。
+
+本地内容接口按实际图片返回 MIME 和 SHA-256 ETag，缓存策略要求重新验证；`If-None-Match` 匹配时返回 304。两类所有者中相同的数字资源 ID 始终分别查询，不能跨所有者取图。
+
+HTTPS 默认校验证书链及主机名，Windows 额外只读加载系统 ROOT 信任库。平台可能返回与 URL 后缀不同的 WebP 等格式，保存后缀和内容 MIME 均按实际字节识别，HTTP adapter 保留该 MIME。
+
+云端配置：`CRAWLER_RESOURCE_CLOUD_UPLOAD_ENABLED=true`；后端 `CRAWLER_RESOURCE_CLOUD_UPLOAD_BACKEND=baidupcs` 使用已登录的 BaiduPCS-Go，`rclone` 使用现有 RC 与 Google Drive 命名 remote。百度路径为 `{CRAWLER_RESOURCE_CLOUD_ROOT}/{local_path}`；Google 路径为 `{CRAWLER_RCLONE_TARGET_FS}/{local_path}`，例如 `gcloud:Media/migu/albums/...`。云端上传及核验总超时由 `CRAWLER_RESOURCE_CLOUD_TIMEOUT_MS` 控制，默认 120000 ms。
+
+响应的 `cloud` 对象包含 `enabled/status/current/backend/path/size_bytes/checksum/uploaded_at` 及脱敏错误。云端状态独立为 `0 待上传、1 运行中、2 已确认、3 失败、4 待核对`。`current=true` 表示回执匹配当前文件及已启用的目标配置。百度回读完整文件比对 SHA-256；Google RC 核对远端大小与完整 SHA-256 或 MD5。只有核验和条件 DB 回写均成功才把 item 计为成功。
+
+云端失败时本地 `status=2`、文件和 `local_url` 保留，item 的 `success=false`、顶层错误与 `cloud` 错误描述云端阶段。再次 process 仅补云端。云端 `path` 保存最后一次确认的对象，刷新或后端切换时可能暂时过期，应同时检查 `current`；该路径不是公开图片 URL。`cloud_status` 请求数组最多 5 项，值域 `0..4`。stale 恢复开启云端时合计本地和云端恢复数；两类认领代次独立。
