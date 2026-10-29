@@ -99,7 +99,19 @@ int main(int argc, char *argv[])
         auto downloaded = workflow.process(**queue->find(target.owner, target.resource_id).data(), options);
         test::require(downloaded.success && store->read(downloaded.record.file).has_value(), "MySQL-to-local cover download failed");
         mysql::MySqlMetadataCoverQueue independent(pool);
-        const auto stored = **independent.find(target.owner, target.resource_id).data();
+        auto stored = **independent.find(target.owner, target.resource_id).data();
+        // SQL 写入失败后未读到成功回执，只能维持未知，不能变成可立即删文件的明确拒绝。
+        const auto uncertain_target = queue->claim(stored, true, "write-error");
+        test::require(uncertain_target.isSuccess() && uncertain_target.data()->has_value(), "write-error fixture could not claim cover");
+        const auto uncertain_file = store->save(model::MetadataCoverSaveRequest {**uncertain_target.data()});
+        test::require(uncertain_file.status == 2, "write-error fixture did not stage a complete file");
+        execute(pool, "CREATE TRIGGER cover_reject_local_write BEFORE UPDATE ON singer_resources FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='fixture local write failure'");
+        const auto uncertain_write = queue->succeed(**uncertain_target.data(), uncertain_file);
+        execute(pool, "DROP TRIGGER cover_reject_local_write");
+        store->defer(uncertain_file.local_path);
+        test::require(queue->fail(**uncertain_target.data(), model::MetadataResourceFile {}).isSuccess(), "write-error fixture cleanup failed");
+        test::require(!uncertain_write.isSuccess(), "SQL error without a confirmed receipt became definite non-commit");
+        stored = **independent.find(target.owner, target.resource_id).data();
         test::require(stored.file.status == 2 && stored.file.local_path == downloaded.record.file.local_path && stored.file.checksum == downloaded.record.file.checksum, "independent query lost cover receipt");
         const int calls = http->calls;
         test::require(workflow.process(stored, options).skipped && http->calls == calls, "successful MySQL cover was downloaded again");

@@ -66,10 +66,12 @@ application::result::ServiceResult<bool> MySqlMetadataCoverQueue::succeedCloud(c
     if (result.isSuccess()) return result;
     // 响应丢失后按已确认文件重读，不能把断线当作明确未提交。
     auto current = find(target.owner, target.resource_id);
-    if (!current.isSuccess()) return result;
-    if (!*current.data()) return application::result::ServiceResult<bool>::success(false);
-    const auto &record = **current.data();
-    return application::result::ServiceResult<bool>::success(record.cloud.status == 2 && record.file.local_path == target.file.local_path && record.file.checksum == target.file.checksum && record.cloud.receipt.backend == receipt.backend && record.cloud.receipt.path == receipt.path && record.cloud.receipt.checksum == receipt.checksum && record.cloud.receipt.size_bytes == receipt.size_bytes);
+    if (current.isSuccess() && current.data()->has_value()) {
+        const auto &record = **current.data();
+        if (record.file.status == 2 && record.cloud.status == 2 && record.file.local_path == target.file.local_path && record.file.size_bytes == target.file.size_bytes && record.file.checksum == target.file.checksum && record.cloud.receipt.backend == receipt.backend && record.cloud.receipt.path == receipt.path && record.cloud.receipt.checksum == receipt.checksum && record.cloud.receipt.size_bytes == receipt.size_bytes) return application::result::ServiceResult<bool>::success(true);
+    }
+    // 响应失败而未读到成功时，继续保留未知，不能伪装成明确的代次拒绝。
+    return result;
 }
 
 application::result::ServiceResult<bool> MySqlMetadataCoverQueue::failCloud(const application::model::MetadataCoverRecord &target, const application::model::CloudFileResult &error)

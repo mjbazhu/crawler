@@ -24,6 +24,22 @@ bool retryable(const model::MetadataResourceFile &file)
     return file.result_code == "network_failed" || file.result_code == "timeout" || file.result_code == "http_429" || file.result_code.starts_with("http_5");
 }
 
+// 本次失败与持久化快照分开；旧 worker 不以自己的旧记录伪造当前资源状态。
+void reloadRecord(ports::MetadataCoverQueue &queue, ports::MetadataCoverReader *reader, model::MetadataCoverItem &item)
+{
+    const auto current = queue.find(item.record.owner, item.record.resource_id);
+    if (current.isSuccess() && current.data()->has_value()) item.record = **current.data();
+    item.record.available = reader && reader->available(item.record.file);
+}
+
+// 错误描述属于本次操作，不替换仍可用于读取的最后成功文件回执。
+void setFailure(model::MetadataCoverItem &item, std::string code, std::string category = "persistence")
+{
+    item.result_code = std::move(code);
+    item.error_category = std::move(category);
+    item.last_error = "metadata cover processing failed";
+}
+
 } // namespace
 
 MetadataCoverDownloadWorkflow::MetadataCoverDownloadWorkflow(std::shared_ptr<ports::MetadataCoverQueue> queue, std::shared_ptr<ports::MetadataCoverStore> store, std::shared_ptr<ports::MetadataCoverReader> reader) : queue_(std::move(queue)), store_(std::move(store)), reader_(std::move(reader))
@@ -35,23 +51,27 @@ model::MetadataCoverItem MetadataCoverDownloadWorkflow::process(model::MetadataC
     item.record = target;
     const auto stopped = [&] { return cancelled && cancelled(); };
     if (stopped()) {
-        item.record.file = failed("cancelled", "resource");
+        setFailure(item, "cancelled", "resource");
+        item.record.available = reader_ && reader_->available(target.file);
         return item;
     }
     if (!options.refresh && target.file.status == 2) {
-        item.skipped = true;
-        item.success = reader_ && reader_->available(target.file);
-        if (!item.success) item.record.file = failed("local_file_missing");
+        // 复用属于处理成功，必须验证内容与摘要，不能仅凭同大小文件存在。
+        item.record.available = reader_ && reader_->read(target.file).has_value();
+        item.success = item.skipped = item.record.available;
+        if (!item.success) setFailure(item, "local_file_missing");
         return item;
     }
     auto claimed = queue_->claim(target, options.refresh, batch_id);
     if (!claimed.isSuccess()) {
-        item.record.file = failed("cover_claim_failed");
+        setFailure(item, "cover_claim_failed");
+        reloadRecord(*queue_, reader_.get(), item);
         return item;
     }
     if (!*claimed.data()) {
         item.skipped = true;
-        item.record.file.result_code = "cover_not_claimed";
+        setFailure(item, "cover_not_claimed", "resource");
+        reloadRecord(*queue_, reader_.get(), item);
         return item;
     }
     target = **claimed.data();
@@ -75,16 +95,22 @@ model::MetadataCoverItem MetadataCoverDownloadWorkflow::process(model::MetadataC
             const auto confirmation = queue_->succeed(target, saved);
             if (!confirmation.isSuccess()) {
                 store_->defer(saved.local_path);
-                item.record.file.result_code = "writeback_uncertain";
-                item.record.file.error_category = "persistence";
-                item.record.file.last_error = "cover writeback could not be confirmed";
+                setFailure(item, "writeback_uncertain");
+                reloadRecord(*queue_, reader_.get(), item);
                 return item;
             }
             if (*confirmation.data()) {
                 store_->accept(saved.local_path);
                 item.success = true;
                 item.record.file = std::move(saved);
-                item.record.available = true;
+                // 本地换图使旧云端运行态失效，但保留最后确认的对象回执。
+                auto previous_cloud = std::move(item.record.cloud);
+                item.record.cloud = {};
+                item.record.cloud.receipt = std::move(previous_cloud.receipt);
+                item.record.cloud.uploaded_at = previous_cloud.uploaded_at;
+                item.record.cloud.claim_generation = previous_cloud.claim_generation + 1;
+                reloadRecord(*queue_, reader_.get(), item);
+                item.result_code = "ok";
                 return item;
             }
             store_->discard(saved.local_path);
@@ -93,19 +119,15 @@ model::MetadataCoverItem MetadataCoverDownloadWorkflow::process(model::MetadataC
     } catch (const std::exception &) {
         if (saved.status == 2 && !saved.local_path.empty()) {
             store_->defer(saved.local_path);
-            item.record.file = failed("writeback_uncertain");
+            setFailure(item, "writeback_uncertain");
+            reloadRecord(*queue_, reader_.get(), item);
             return item;
         }
         saved = failed("cover_processing_failed");
     }
     const auto ended = queue_->fail(target, saved);
-    // 新文件失败时只更新错误，旧成功回执继续用于读取。
-    item.record.file = target.file;
-    item.record.file.status = target.file.local_path.empty() ? 3 : 2;
-    item.record.file.error_category = saved.error_category;
-    item.record.file.result_code = ended.isSuccess() ? saved.result_code : "cover_failure_writeback_failed";
-    item.record.file.last_error = saved.last_error;
-    item.record.available = reader_ && reader_->available(item.record.file);
+    setFailure(item, ended.isSuccess() ? saved.result_code : "cover_failure_writeback_failed", saved.error_category);
+    reloadRecord(*queue_, reader_.get(), item);
     return item;
 }
 

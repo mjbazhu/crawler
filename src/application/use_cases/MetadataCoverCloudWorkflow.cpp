@@ -44,15 +44,16 @@ model::MetadataCoverItem MetadataCoverCloudWorkflow::process(model::MetadataCove
     target.cloud.enabled = true;
     target.available = reader_->available(target.file);
     item.record = target;
+    if (cancelled && cancelled()) return fail("cancelled", "resource");
+    if (target.file.status != 2) return fail("cloud_local_not_ready");
+    auto content = reader_->read(target.file);
+    item.record.available = content.has_value();
+    if (!content) return fail("local_file_missing");
     if (matches(target)) {
         item.success = item.skipped = true;
         item.record.cloud.current = true;
         return item;
     }
-    if (cancelled && cancelled()) return fail("cancelled", "resource");
-    if (target.file.status != 2) return fail("cloud_local_not_ready");
-    auto content = reader_->read(target.file);
-    if (!content) return fail("local_file_missing");
     const model::CloudFileReceipt planned {store_->backend(), store_->prefix() + target.file.local_path, target.file.size_bytes, target.file.checksum};
     auto claimed = queue_->claimCloud(target, planned, batch_id);
     if (!claimed.isSuccess()) return fail("cloud_claim_failed");

@@ -3,6 +3,7 @@
 #include "migu/support/MetadataCoverCloudTestSupport.h"
 
 #include <chrono>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -36,6 +37,21 @@ int main()
         test::require(singer.file.status == 2 && singer.cloud.status == 2 && singer.cloud.receipt.path == "/Media/" + singer.file.local_path, "cloud receipt was not independently persisted");
         auto repeated = service.process(options);
         test::require(repeated.isSuccess() && remote->calls == 1 && http->calls == 1, "completed cover repeated local or remote download");
+
+        // 云端回执已确认也不能掩盖本地同大小损坏；不重新上传错误字节。
+        auto damaged_bytes = test::png();
+        damaged_bytes[20] ^= 1;
+        {
+            std::ofstream output(files->getFullPath(singer.file.local_path), std::ios::binary | std::ios::trunc);
+            output.write(damaged_bytes.data(), static_cast<std::streamsize>(damaged_bytes.size()));
+        }
+        const auto damaged = cloud->process(singer, 0, "");
+        test::require(!damaged.success && !damaged.record.available && damaged.result_code == "local_file_missing" && remote->calls == 1, "confirmed cloud receipt masked a corrupt local image");
+        {
+            const auto restored = test::png();
+            std::ofstream output(files->getFullPath(singer.file.local_path), std::ios::binary | std::ios::trunc);
+            output.write(restored.data(), static_cast<std::streamsize>(restored.size()));
+        }
 
         // 后端切换复用同一图片；同数字 ID 的专辑仍有独立归属。
         remote->provider = "rclone";

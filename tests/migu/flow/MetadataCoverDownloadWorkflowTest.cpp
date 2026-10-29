@@ -3,6 +3,7 @@
 #include "migu/support/MetadataCoverTestSupport.h"
 
 #include <future>
+#include <fstream>
 #include <iostream>
 
 namespace test = orchestrator::modules::crawler::tests::cover;
@@ -30,6 +31,20 @@ int main()
         test::require(store->read(downloaded.record.file).has_value(), "saved image cannot be read or verified");
         const int calls = http->calls;
         test::require(workflow->process(downloaded.record, options).skipped && http->calls == calls, "completed cover was downloaded twice");
+        // 同大小损坏不能被复用为成功，也不能伪装成普通跳过或改写旧回执。
+        const auto complete_bytes = test::png();
+        auto damaged_bytes = complete_bytes;
+        damaged_bytes[20] ^= 1;
+        {
+            std::ofstream output(files->getFullPath(downloaded.record.file.local_path), std::ios::binary | std::ios::trunc);
+            output.write(damaged_bytes.data(), static_cast<std::streamsize>(damaged_bytes.size()));
+        }
+        const auto damaged = workflow->process(downloaded.record, options);
+        test::require(!damaged.success && !damaged.skipped && !damaged.record.available && damaged.result_code == "local_file_missing" && damaged.record.file.status == 2 && damaged.record.file.local_path == downloaded.record.file.local_path && http->calls == calls, "same-size corrupt cover was reused or its last receipt was changed");
+        {
+            std::ofstream output(files->getFullPath(downloaded.record.file.local_path), std::ios::binary | std::ios::trunc);
+            output.write(complete_bytes.data(), static_cast<std::streamsize>(complete_bytes.size()));
+        }
         const auto album_file = workflow->process(album, options);
         test::require(album_file.success && album_file.record.file.local_path != downloaded.record.file.local_path && album_file.record.file.local_path.starts_with("migu/albums/"), "same ID in two owner tables was mixed");
 
@@ -59,18 +74,32 @@ int main()
         test::require(!failed.success && failed.record.file.result_code == "cancelled" && files->exists(current_path), "cancellation committed a cover or lost old image");
         http->on_get = {};
 
+        // 新代次先完成后，旧 worker 必须保留新图并返回最新 DB 快照。
+        const auto race_target = **queue->find(singer.owner, 1).data();
+        const auto winner = store->save(model::MetadataCoverSaveRequest {race_target});
+        test::require(winner.status == 2, "race winner did not stage complete bytes");
+        queue->before_success = [&](const auto &) {
+            auto &row = queue->rows.at({singer.owner, 1});
+            ++row.claim_generation;
+            row.file = winner;
+            store->accept(winner.local_path);
+        };
+        failed = workflow->process(race_target, options);
+        queue->before_success = {};
+        test::require(!failed.success && failed.result_code == "cover_claim_changed" && failed.record.file.local_path == winner.local_path && failed.record.file.status == 2 && failed.record.available, "old worker returned its stale file snapshot instead of the winning receipt");
+
         // 成功响应丢失时保留独占文件与日志，启动核对按真实回执结束补偿。
         queue->uncertain = true;
         queue->committed_before_disconnect = true;
         failed = workflow->process(**queue->find(singer.owner, 1).data(), options);
-        test::require(!failed.success && failed.record.file.result_code == "writeback_uncertain", "uncertain commit was reported as confirmed");
+        test::require(!failed.success && failed.result_code == "writeback_uncertain", "uncertain commit was reported as confirmed");
         const auto committed = **queue->find(singer.owner, 1).data();
         test::require(files->exists(committed.file.local_path), "uncertain committed file was deleted");
         const auto recovered = files->recoverOwnedResourceWrites([&](const std::string &owner, std::uint64_t id, std::uint64_t, const std::string &path) -> std::optional<model::ResourceWriteDisposition> {
             test::require(owner == "singer" && id == 1, "journal lost cover owner or resource ID");
             return path == committed.file.local_path ? model::ResourceWriteDisposition::Committed : model::ResourceWriteDisposition::Discard;
         });
-        test::require(recovered == 1 && files->exists(committed.file.local_path) && !files->exists(current_path), "confirmed journal recovery failed");
+        test::require(recovered == 1 && files->exists(committed.file.local_path) && !files->exists(winner.local_path), "confirmed journal recovery failed");
 
         // 两个任务读取同一待处理快照，只有一个能认领；恢复后旧代次被拒绝。
         const auto pending = test::target(model::CoverOwner::Singer, 2);
@@ -86,7 +115,7 @@ int main()
         files->remove(committed.file.local_path);
         options.refresh = false;
         const auto missing = workflow->process(committed, options);
-        test::require(!missing.success && missing.record.file.result_code == "local_file_missing", "missing completed file was reported as available");
+        test::require(!missing.success && !missing.skipped && missing.result_code == "local_file_missing" && missing.record.file.status == 2 && missing.record.file.local_path == committed.file.local_path, "missing completed file was skipped or its saved receipt was discarded");
         std::cout << "PASS: cover ownership, file acknowledgement, reuse, refresh, URL race, cancellation, uncertain recovery, concurrent claims and missing files\n";
         return 0;
     } catch (const std::exception &error) {

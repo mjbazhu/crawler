@@ -79,6 +79,18 @@ int main()
             test::require(saved.success, "local image not ready before cloud test");
             auto target = **queue->find(owner, saved.record.resource_id).data();
             const model::CloudFileReceipt receipt {remote->backend(), remote->prefix() + target.file.local_path, target.file.size_bytes, target.file.checksum};
+            if (owner == model::CoverOwner::Singer) {
+                const auto uncertain_target = queue->claimCloud(target, receipt, "write-error");
+                test::require(uncertain_target.isSuccess() && uncertain_target.data()->has_value(), "cloud write-error fixture could not claim");
+                execute(pool, "CREATE TRIGGER cover_reject_cloud_write BEFORE UPDATE ON singer_resources FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='fixture cloud write failure'");
+                const auto uncertain_write = queue->succeedCloud(**uncertain_target.data(), receipt);
+                execute(pool, "DROP TRIGGER cover_reject_cloud_write");
+                test::require(!uncertain_write.isSuccess(), "cloud SQL error without confirmed receipt became definite non-commit");
+                model::CloudFileResult unknown;
+                unknown.uncertain = true;
+                test::require(queue->failCloud(**uncertain_target.data(), unknown).isSuccess(), "cloud write-error fixture cleanup failed");
+                target = **queue->find(owner, target.resource_id).data();
+            }
             auto one = std::async(std::launch::async, [&] { return queue->claimCloud(target, receipt, "one"); });
             auto two = std::async(std::launch::async, [&] { return queue->claimCloud(target, receipt, "two"); });
             auto a = one.get(), b = two.get();
@@ -113,6 +125,7 @@ int main()
                 test::require(!*queue->succeedCloud(active_cloud, receipt).data(), "old upload confirmed after local refresh");
                 auto current = **queue->find(owner, target.resource_id).data();
                 test::require(current.cloud.status == 0 && current.cloud.receipt.path == receipt.path, "refresh did not invalidate cloud intent or erased last receipt");
+                test::require(refreshed.record.cloud.status == current.cloud.status && refreshed.record.cloud.receipt.path == current.cloud.receipt.path, "local refresh response retained a stale confirmed cloud status");
             }
         }
         // 规范专辑接收物料回执后，确认云端对象与本地文件一起保留。

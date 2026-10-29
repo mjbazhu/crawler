@@ -141,7 +141,16 @@ public:
         std::lock_guard lock(mutex);
         auto &row = rows.at({target.owner, target.resource_id});
         if (row.claim_generation != target.claim_generation || row.file.status != 1 || row.remote_url != target.remote_url) return Result<bool>::success(false);
-        if (!uncertain || committed_before_disconnect) row.file = file;
+        if (!uncertain || committed_before_disconnect) {
+            row.file = file;
+            auto previous_cloud = std::move(row.cloud);
+            row.cloud = {};
+            row.cloud.receipt = std::move(previous_cloud.receipt);
+            row.cloud.uploaded_at = previous_cloud.uploaded_at;
+            row.cloud.claim_generation = previous_cloud.claim_generation + 1;
+            row.claimed_at = 0;
+            row.running_batch_id.clear();
+        }
         if (uncertain) return Result<bool>::failure(application::result::ServiceErrorType::CommitUncertain, "fixture uncertain");
         return Result<bool>::success(true);
     }
@@ -155,6 +164,8 @@ public:
         row.file.error_category = error.error_category;
         row.file.result_code = error.result_code;
         row.file.last_error = error.last_error;
+        row.claimed_at = 0;
+        row.running_batch_id.clear();
         return Result<bool>::success(true);
     }
     // 由测试显式模拟超时，不使用真实时钟等待。

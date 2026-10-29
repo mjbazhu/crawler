@@ -51,10 +51,12 @@ application::result::ServiceResult<bool> MySqlMetadataCoverQueue::succeed(const 
     if (written.isSuccess()) return written;
     // 断线不等于回滚；先按独占文件路径重新读取事实。
     auto current = find(target.owner, target.resource_id);
-    if (!current.isSuccess()) return written;
-    if (!*current.data()) return application::result::ServiceResult<bool>::success(false);
-    const auto &receipt = (**current.data()).file;
-    return application::result::ServiceResult<bool>::success(receipt.local_path == file.local_path && receipt.size_bytes == file.size_bytes && receipt.checksum == file.checksum);
+    if (current.isSuccess() && current.data()->has_value()) {
+        const auto &receipt = (**current.data()).file;
+        if (receipt.status == 2 && receipt.local_path == file.local_path && receipt.size_bytes == file.size_bytes && receipt.checksum == file.checksum) return application::result::ServiceResult<bool>::success(true);
+    }
+    // 未读到成功不能证明未提交；别名迁移或在途提交仍可能持有该文件。
+    return written;
 }
 
 application::result::ServiceResult<bool> MySqlMetadataCoverQueue::fail(const application::model::MetadataCoverRecord &target, const application::model::MetadataResourceFile &error)
