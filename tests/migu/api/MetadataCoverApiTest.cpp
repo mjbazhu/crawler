@@ -1,10 +1,13 @@
 #include "crawler/api/controllers/CrawlerController.h"
 #include "crawler/api/dto/MetadataCoverDto.h"
 #include "crawler/api/routing/CrawlerRoutes.h"
+#include "crawler/application/use_cases/MetadataCoverCloudWorkflow.h"
 #include "migu/support/MetadataCoverTaskSupport.h"
 #include "migu/support/MetadataCoverTestSupport.h"
+#include "migu/support/MetadataCoverCloudTestSupport.h"
 
 #include <iostream>
+#include <chrono>
 
 namespace crawler = orchestrator::modules::crawler;
 namespace test = crawler::tests::cover;
@@ -104,9 +107,40 @@ int main()
         test::require(routes.call(request.path, request).status_code == 400, "oversized integer bypassed request validation");
         const auto singer_file = (**queue->find(model::CoverOwner::Singer, 1).data()).file;
         files->remove(singer_file.local_path);
+        // 云端候选中的旧文件丢失必须计为失败，保留 DB 状态和原回执供显式修复。
+        auto cloud_queue = std::make_shared<test::CloudQueue>(queue);
+        auto remote = std::make_shared<test::CloudStore>();
+        auto cloud = std::make_shared<use::MetadataCoverCloudWorkflow>(cloud_queue, store, remote, 1000);
+        auto cloud_service = std::make_shared<use::MetadataCoverService>(queue, store, workflow, nullptr, nullptr, nullptr, std::chrono::seconds(20), cloud);
+        api::controllers::CrawlerController cloud_controller(nullptr, {}, nullptr, cloud_service);
+        request.body = R"({"owner_type":"singer","async":false})";
+        response = cloud_controller.handleProcessMiguCovers(request);
+        const auto missing = json::parse(response.body);
+        test::require(response.status_code == 200 && missing["failed_count"] == 1 && missing["skipped_count"] == 0 && missing["items"][0]["status"] == 2 && missing["items"][0]["available"] == false && missing["items"][0]["local_path"] == singer_file.local_path && remote->calls == 0, "missing local cover was counted as a skip or lost its saved receipt");
         request.body = R"({"owner_type":"singer","resource_ids":[1],"refresh":true,"async":false})";
         response = routes.call(request.path, request);
         test::require(response.status_code == 200 && json::parse(response.body)["success_count"] == 1, "explicit refresh could not repair missing local file");
+        // 服务销毁后手动推进仍排队的 worker，不能再引用已销毁管理器或下载新目标。
+        queue->rows[{model::CoverOwner::Singer, 3}] = test::target(model::CoverOwner::Singer, 3);
+        auto retiring = std::make_shared<use::MetadataCoverService>(queue, store, workflow, executor, nullptr, batches);
+        model::MetadataCoverOptions retiring_options;
+        retiring_options.query.resource_ids = {3};
+        const auto retiring_batch = retiring->start(retiring_options);
+        test::require(retiring_batch.isSuccess(), "retiring service did not create pending batch");
+        const int retiring_calls = http->calls;
+        retiring.reset();
+        executor->drain();
+        test::require(http->calls == retiring_calls && queue->rows.at({model::CoverOwner::Singer, 3}).file.status == 0 && batches->records.at(*retiring_batch.data()).state == "Cancelled", "destroyed cover service continued queued work");
+        // 在下载回调中销毁服务，在途 worker 仍须安全写失败并结束批次。
+        queue->rows[{model::CoverOwner::Singer, 4}] = test::target(model::CoverOwner::Singer, 4);
+        auto active_service = std::make_shared<use::MetadataCoverService>(queue, store, workflow, executor, nullptr, batches);
+        retiring_options.query.resource_ids = {4};
+        const auto active_batch = active_service->start(retiring_options);
+        test::require(active_batch.isSuccess(), "active lifetime fixture did not start");
+        http->on_get = [&] { active_service.reset(); };
+        executor->drain();
+        http->on_get = {};
+        test::require(!active_service && queue->rows.at({model::CoverOwner::Singer, 4}).file.status == 3 && batches->records.at(*active_batch.data()).state == "Cancelled", "in-flight worker used destroyed service state or committed after shutdown");
         batches->reject_create = true;
         request.body = R"({"owner_type":"album"})";
         test::require(routes.call(request.path, request).status_code == 503 && executor->pending.empty(), "unpersisted batch was accepted or executed");

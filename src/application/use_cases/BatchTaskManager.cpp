@@ -43,6 +43,21 @@ bool isFinished(application::model::BatchState state)
     return state == application::model::BatchState::Completed || state == application::model::BatchState::Failed || state == application::model::BatchState::Cancelled;
 }
 
+// 后台任务仅访问自己的进度及已复制的读取器，不依赖管理器地址。
+bool taskTimedOut(const std::shared_ptr<application::model::BatchProgress> &progress, const BatchTaskManager::TimeoutReader &reader)
+{
+    const auto timeout = reader ? reader() : std::chrono::milliseconds(0);
+    return progress && timeout.count() > 0 && std::chrono::system_clock::now() - progress->start_time >= timeout;
+}
+
+// 错误只保存在共享进度内，管理器销毁后仍可安全收尾。
+void appendError(const std::shared_ptr<application::model::BatchProgress> &progress, const std::string &message)
+{
+    if (!progress || message.empty()) return;
+    std::lock_guard<std::mutex> lock(progress->mutex_);
+    if (progress->error_logs.size() < kMaxErrorLogs) progress->error_logs.push_back(message);
+}
+
 // 当前 Unix 秒时间戳。
 std::uint64_t nowSeconds()
 {
@@ -104,6 +119,14 @@ BatchTaskManager::BatchTaskManager(
     max_batch_concurrency_(std::move(max_batch_concurrency)),
     task_timeout_(std::move(task_timeout))
 {}
+
+BatchTaskManager::~BatchTaskManager()
+{
+    stopping_->store(true);
+    std::lock_guard<std::mutex> lock(tasks_mutex_);
+    for (const auto &[id, progress] : batch_tasks_)
+        if (!isFinished(progress->state.load())) progress->cancel_requested = true;
+}
 
 std::string BatchTaskManager::start(
     const std::vector<application::model::CrawlBatchItemRecord> &items,
@@ -212,15 +235,18 @@ std::string BatchTaskManager::startImpl(const std::vector<application::model::Cr
     const int configured_concurrency = concurrency > 0 ? concurrency : (max_batch_concurrency_ ? max_batch_concurrency_() : 1);
     const int worker_count = (std::min)((std::max)(1, configured_concurrency), static_cast<int>(item_list->size()));
     const int retry_limit = std::clamp(max_retries, 0, 10);
+    const auto timed_out = [progress, stopping = stopping_, reader = task_timeout_] {
+        return !stopping->load() && taskTimedOut(progress, reader);
+    };
 
     for (int worker = 0; worker < worker_count; ++worker) {
         const bool submitted = batch_runner_.submitDetached(
-            [this, progress, item_list, next_index, normalized_limit, handler, cancel_remaining, retry_limit]() {
+            [repository = batch_repository_, stopping = stopping_, timed_out, progress, item_list, next_index, normalized_limit, handler, cancel_remaining, retry_limit]() {
                 for (;;) {
-                    if (progress->cancel_requested.load()) {
+                    if (progress->cancel_requested.load() || stopping->load()) {
                         progress->state = application::model::BatchState::Cancelled;
                         cancel_remaining();
-                        if (batch_repository_) {
+                        if (repository) {
                             application::model::CrawlBatchRecord batch;
                             batch.batch_id = progress->batch_id;
                             batch.state = "Cancelled";
@@ -231,17 +257,17 @@ std::string BatchTaskManager::startImpl(const std::vector<application::model::Cr
                             batch.cancel_requested = true;
                             batch.finished_at = nowSeconds();
                             batch.updated_at = batch.finished_at;
-                            (void)batch_repository_->updateBatchProgress(batch);
+                            (void)repository->updateBatchProgress(batch);
                         }
                         return;
                     }
 
-                    if (isTaskTimedOut(progress)) {
+                    if (timed_out()) {
                         cancel_remaining();
                         progress->cancel_requested = true;
                         progress->state = application::model::BatchState::Failed;
                         appendError(progress, "Task timed out");
-                        if (batch_repository_) {
+                        if (repository) {
                             const std::uint64_t event_time = nowSeconds();
                             application::model::CrawlBatchRecord batch;
                             batch.batch_id = progress->batch_id;
@@ -254,8 +280,8 @@ std::string BatchTaskManager::startImpl(const std::vector<application::model::Cr
                             batch.last_error = "Task timed out";
                             batch.finished_at = event_time;
                             batch.updated_at = event_time;
-                            (void)batch_repository_->updateBatchProgress(batch);
-                            (void)batch_repository_->appendEvent(application::model::CrawlBatchEventRecord {progress->batch_id, std::nullopt, "timeout", "Task timed out", "{}", event_time});
+                            (void)repository->updateBatchProgress(batch);
+                            (void)repository->appendEvent(application::model::CrawlBatchEventRecord {progress->batch_id, std::nullopt, "timeout", "Task timed out", "{}", event_time});
                         }
                         return;
                     }
@@ -272,16 +298,16 @@ std::string BatchTaskManager::startImpl(const std::vector<application::model::Cr
                     }
 
                     const std::uint64_t item_start = nowSeconds();
-                    if (batch_repository_) {
+                    if (repository) {
                         item.state = "Running";
                         item.started_at = item_start;
                         item.updated_at = item_start;
-                        (void)batch_repository_->updateItem(item);
-                        (void)batch_repository_->appendEvent(application::model::CrawlBatchEventRecord {progress->batch_id, static_cast<int>(index), "itemStarted", item.item_key, itemEventPayload(item, "started", 0, {}, {}, {}), item_start});
+                        (void)repository->updateItem(item);
+                        (void)repository->appendEvent(application::model::CrawlBatchEventRecord {progress->batch_id, static_cast<int>(index), "itemStarted", item.item_key, itemEventPayload(item, "started", 0, {}, {}, {}), item_start});
                     }
 
                     TargetResult target_result;
-                    const std::function<bool()> stopped = [this, progress] { return progress->cancel_requested.load() || isTaskTimedOut(progress); };
+                    const std::function<bool()> stopped = [progress, stopping, timed_out] { return progress->cancel_requested.load() || stopping->load() || timed_out(); };
                     for (;;) {
                         try {
                             target_result = handler ? handler(item.item_key, normalized_limit, progress->batch_id, stopped) : TargetResult {};
@@ -290,13 +316,13 @@ std::string BatchTaskManager::startImpl(const std::vector<application::model::Cr
                         } catch (...) {
                             target_result = {false, 0, "Unknown exception", "unknown", "failed"};
                         }
-                        if (target_result.success || !target_result.retryable || item.retry_count >= retry_limit || progress->cancel_requested.load()) break;
+                        if (target_result.success || !target_result.retryable || item.retry_count >= retry_limit || (progress->cancel_requested.load() || stopping->load())) break;
                         const auto delay = std::clamp(target_result.retry_delay * (1 << (std::min)(item.retry_count, 4)), std::chrono::milliseconds(0), std::chrono::milliseconds(20000));
                         const auto retry_at = std::chrono::steady_clock::now() + delay;
                         // 短间隔协作等待，取消或超时后不再发起下一次外部请求。
-                        while (std::chrono::steady_clock::now() < retry_at && !progress->cancel_requested.load() && !isTaskTimedOut(progress)) std::this_thread::sleep_for(std::chrono::milliseconds(50));
-                        if (progress->cancel_requested.load()) break;
-                        if (isTaskTimedOut(progress)) {
+                        while (std::chrono::steady_clock::now() < retry_at && !(progress->cancel_requested.load() || stopping->load()) && !timed_out()) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                        if (progress->cancel_requested.load() || stopping->load()) break;
+                        if (timed_out()) {
                             target_result = {false, 0, "Task timed out", "timeout", "timeout"};
                             break;
                         }
@@ -305,9 +331,9 @@ std::string BatchTaskManager::startImpl(const std::vector<application::model::Cr
                         item.error_category = target_result.error_category;
                         item.result_code = target_result.result_code;
                         item.updated_at = nowSeconds();
-                        if (batch_repository_) {
-                            (void)batch_repository_->updateItem(item);
-                            (void)batch_repository_->appendEvent(application::model::CrawlBatchEventRecord {progress->batch_id, static_cast<int>(index), "itemRetryScheduled", item.item_key, itemEventPayload(item, "retry", 0, item.last_error, item.error_category, item.result_code), item.updated_at});
+                        if (repository) {
+                            (void)repository->updateItem(item);
+                            (void)repository->appendEvent(application::model::CrawlBatchEventRecord {progress->batch_id, static_cast<int>(index), "itemRetryScheduled", item.item_key, itemEventPayload(item, "retry", 0, item.last_error, item.error_category, item.result_code), item.updated_at});
                         }
                     }
 
@@ -330,19 +356,19 @@ std::string BatchTaskManager::startImpl(const std::vector<application::model::Cr
                         target_result.result_code = "ok";
                     }
 
-                    if (batch_repository_) {
-                        item.state = target_result.success ? "Completed" : (progress->cancel_requested.load() && target_result.result_code == "cancelled" ? "Cancelled" : "Failed");
+                    if (repository) {
+                        item.state = target_result.success ? "Completed" : ((progress->cancel_requested.load() || stopping->load()) && target_result.result_code == "cancelled" ? "Cancelled" : "Failed");
                         item.written_count = (std::max)(0, target_result.written_count);
                         item.error_category = target_result.success ? "" : target_result.error_category;
                         item.result_code = target_result.result_code;
                         item.finished_at = item_finish;
                         item.updated_at = item_finish;
-                        (void)batch_repository_->updateItem(item);
-                        (void)batch_repository_->appendEvent(application::model::CrawlBatchEventRecord {progress->batch_id, static_cast<int>(index), target_result.success ? "itemCompleted" : "itemFailed", item.item_key, itemEventPayload(item, target_result.success ? "completed" : "failed", target_result.written_count, item.last_error, item.error_category, item.result_code), item_finish});
+                        (void)repository->updateItem(item);
+                        (void)repository->appendEvent(application::model::CrawlBatchEventRecord {progress->batch_id, static_cast<int>(index), target_result.success ? "itemCompleted" : "itemFailed", item.item_key, itemEventPayload(item, target_result.success ? "completed" : "failed", target_result.written_count, item.last_error, item.error_category, item.result_code), item_finish});
                     }
 
                     const int processed = ++progress->processed_count;
-                    if (batch_repository_) {
+                    if (repository) {
                         application::model::CrawlBatchRecord batch;
                         batch.batch_id = progress->batch_id;
                         batch.state = toStateString(progress->state.load());
@@ -354,16 +380,16 @@ std::string BatchTaskManager::startImpl(const std::vector<application::model::Cr
                             batch.last_error = item.last_error;
                         }
                         batch.updated_at = item_finish;
-                        (void)batch_repository_->updateBatchProgress(batch);
+                        (void)repository->updateBatchProgress(batch);
                     }
 
                     if (processed >= progress->total_items.load()) {
-                        if (progress->cancel_requested.load()) {
+                        if (progress->cancel_requested.load() || stopping->load()) {
                             progress->state = application::model::BatchState::Cancelled;
                         } else {
                             progress->state = progress->failure_count.load() == 0 ? application::model::BatchState::Completed : application::model::BatchState::Failed;
                         }
-                        if (batch_repository_) {
+                        if (repository) {
                             const std::uint64_t finished = nowSeconds();
                             application::model::CrawlBatchRecord batch;
                             batch.batch_id = progress->batch_id;
@@ -374,8 +400,8 @@ std::string BatchTaskManager::startImpl(const std::vector<application::model::Cr
                             batch.failure_count = progress->failure_count;
                             batch.finished_at = finished;
                             batch.updated_at = finished;
-                            (void)batch_repository_->updateBatchProgress(batch);
-                            (void)batch_repository_->appendEvent(application::model::CrawlBatchEventRecord {progress->batch_id, std::nullopt, "batchFinished", batch.state, "{}", finished});
+                            (void)repository->updateBatchProgress(batch);
+                            (void)repository->appendEvent(application::model::CrawlBatchEventRecord {progress->batch_id, std::nullopt, "batchFinished", batch.state, "{}", finished});
                         }
                         return;
                     }
@@ -474,29 +500,6 @@ std::optional<application::model::BatchProgressSnapshot> BatchTaskManager::progr
     }
 
     return snapshot;
-}
-
-bool BatchTaskManager::isTaskTimedOut(const std::shared_ptr<application::model::BatchProgress> &progress) const
-{
-    const auto timeout = task_timeout_ ? task_timeout_() : std::chrono::milliseconds(0);
-    if (!progress || timeout.count() <= 0) {
-        return false;
-    }
-
-    const auto now = std::chrono::system_clock::now();
-    return now - progress->start_time >= timeout;
-}
-
-void BatchTaskManager::appendError(const std::shared_ptr<application::model::BatchProgress> &progress, const std::string &message) const
-{
-    if (!progress || message.empty()) {
-        return;
-    }
-
-    std::lock_guard<std::mutex> lock(progress->mutex_);
-    if (progress->error_logs.size() < kMaxErrorLogs) {
-        progress->error_logs.push_back(message);
-    }
 }
 
 void BatchTaskManager::cleanupFinishedTasks()

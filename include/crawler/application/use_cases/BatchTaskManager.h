@@ -8,6 +8,7 @@
 #include "crawler/application/use_cases/TaskRunner.h"
 
 #include <chrono>
+#include <atomic>
 #include <functional>
 #include <map>
 #include <memory>
@@ -47,6 +48,9 @@ public:
         TimeoutReader task_timeout
     );
 
+    // 标记停止并请求协作取消，后台任务持有独立上下文，不引用管理器本身。
+    ~BatchTaskManager();
+
     // 启动批量任务，并用 handler 处理单个目标。
     std::string start(
         const std::vector<application::model::CrawlBatchItemRecord> &items,
@@ -81,21 +85,16 @@ public:
 private:
     // 两种处理器共享同一生命周期和事件实现。
     std::string startImpl(const std::vector<application::model::CrawlBatchItemRecord> &items, int normalized_limit, std::string task_type, std::string request_params, std::string settings_snapshot, std::string parent_batch_id, ContextualTargetHandler handler, bool allow_empty, int concurrency, int max_retries);
-    // 判断任务是否超过当前配置的超时时间。
-    bool isTaskTimedOut(const std::shared_ptr<application::model::BatchProgress> &progress) const;
-
-    // 追加任务错误日志，最多保留固定数量。
-    void appendError(const std::shared_ptr<application::model::BatchProgress> &progress, const std::string &message) const;
-
     // 清理已结束超过保留期的任务。
     void cleanupFinishedTasks();
 
-    TaskRunner batch_runner_;                                                               // 批量任务执行器
-    std::shared_ptr<application::ports::BatchTaskRepository> batch_repository_;             // 批次持久化 port
-    BatchConcurrencyReader max_batch_concurrency_;                                          // 批量并发读取器
-    TimeoutReader task_timeout_;                                                            // 任务超时读取器
-    std::mutex tasks_mutex_;                                                                // 任务表锁
-    std::map<std::string, std::shared_ptr<application::model::BatchProgress>> batch_tasks_; // 任务表
+    TaskRunner batch_runner_;                                                                  // 批量任务执行器
+    std::shared_ptr<application::ports::BatchTaskRepository> batch_repository_;                // 批次持久化 port
+    BatchConcurrencyReader max_batch_concurrency_;                                             // 批量并发读取器
+    TimeoutReader task_timeout_;                                                               // 任务超时读取器
+    std::shared_ptr<std::atomic<bool>> stopping_ = std::make_shared<std::atomic<bool>>(false); // 脱离管理器生命周期的停止标记
+    std::mutex tasks_mutex_;                                                                   // 任务表锁
+    std::map<std::string, std::shared_ptr<application::model::BatchProgress>> batch_tasks_;    // 任务表
 };
 
 } // namespace orchestrator::modules::crawler::application::use_cases
