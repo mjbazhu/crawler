@@ -10,19 +10,46 @@
 | 组合根 | 创建 HTTP client、Migu provider/parser、存储、执行器和服务，通过窄 port 装配 | [ServerApplication.cpp](../../src/infrastructure/app/ServerApplication.cpp) |
 | 入站 HTTP | Drogon adapter 接入请求，项目路由与 controller 转换协议并调用 application | [DrogonHttpServer.h](../../include/crawler/infrastructure/http/server/DrogonHttpServer.h)、[CrawlerRoutes.h](../../include/crawler/api/routing/CrawlerRoutes.h) |
 | 持久化 | 默认装配 MySQL repository 和事务 writer；显式 SQLite 调试配置保留同步 DAO | [PersistenceAssembly.cpp](../../src/infrastructure/app/PersistenceAssembly.cpp) |
-| 资源存储 | 默认使用本地文件 adapter；保留显式配置的 rclone adapter；采集装配关闭独立百度云自动上传 | [ServerApplication.cpp](../../src/infrastructure/app/ServerApplication.cpp) |
+| 歌曲资源存储 | 默认 filesystem，保留显式选择的 rclone 远端 copyurl；正式装配不挂本地成功后的歌曲 uploader | [ServerApplication.cpp](../../src/infrastructure/app/ServerApplication.cpp) |
+| 歌手/专辑封面 | 独立服务与本地/云端 workflow；先保存本地，按配置选百度或 rclone 上传核验，独立条件回写 | [MetadataCoverComposition.cpp](../../src/infrastructure/app/MetadataCoverComposition.cpp)、[CloudFileStoreComposition.cpp](../../src/infrastructure/app/CloudFileStoreComposition.cpp) |
 
-现状基于 2026-10-26 的源码静态核对，未在本次文档复核中启动服务。元数据关系见 [数据模型](../migu/metadata.md)，资源处理见 [资源流程](../migu/resources.md)。
+现状核对日期为 2026-10-29，源码基线 `967bc67`，已包含 main `69a157f` 的歌手资料改动及本分支封面实现。元数据关系见[数据模型](../migu/metadata.md)，资源规则见[资源流程](../migu/resources.md)，配置与运行从[配置说明](../configuration.md)、[快速启动](../getting-started.md)和[恢复指南](../operations/service-lifecycle.md)进入；实际验证范围另见各主题验收记录。
+
+### 当前封面数据流
+
+```mermaid
+flowchart TD
+    Metadata[元数据采集与事务 writer] --> URL[资源表登记 remote_url]
+    API[covers/process 协议入口] --> Service[MetadataCoverService 与批次管理]
+    Service --> Local[MetadataCoverDownloadWorkflow]
+    URL --> Claim[MySQL 短事务认领与代次]
+    Local --> Claim
+    Claim --> File[存储 port 下载 校验 完整提交]
+    File --> Receipt[比较代次与 URL 条件回写本地回执]
+    Receipt --> Enabled{启用云端}
+    Enabled -->|是| Cloud[MetadataCoverCloudWorkflow]
+    Cloud --> Store[CloudFileStore port]
+    Store --> Baidu[Baidu adapter]
+    Store --> Rclone[rclone RC adapter]
+    Baidu --> Verified[远端内容核验]
+    Rclone --> Verified
+    Verified --> CloudReceipt[比较云端代次与本地快照 回写云端回执]
+    Enabled -->|否| Done[本地阶段完成]
+```
+
+网络及文件 I/O 不持有认领事务。用例依赖队列、保存/读取和云端窄 port，厂商选择只在组合根；API 不接触 SQL、文件系统或客户端。图片读取另经受控 content 路由，不把云端路径当公开 URL。
+
+本地和云端成功状态独立，云端失败保留可读本地图片；刷新、取消、stale 恢复和专辑别名归一保留代次及快照保护。当前两张封面资源表各保存一组最后确认的 `cloud_*`；一张多平台回执表是[待实施方案](../roadmap/resource-cloud-receipts.md)，不属于本图现状。逐项状态和验收以[封面云端专项](../roadmap/metadata-cover-cloud-storage.md)维护，避免在架构页复制接口和 SQL 全文。
 
 ## 模块定位
 
-`modules/crawler` 只负责音乐数据采集、音乐元数据解析、音乐参数信息整理，以及把这些数据可靠地写入本地存储。
+`modules/crawler` 负责音乐数据采集、音乐元数据解析与整理、可靠本地存储，以及按配置完成相关资源的云端归档与核验。
 
 允许的职责：
 
 - 从受支持的音乐数据源获取歌曲、专辑、歌手、榜单或搜索结果等音乐数据。
 - 解析外部响应为本模块领域模型，例如 `Song`、`Album`、`Singer` 和明确命名的参数对象。
-- 通过 MySQL 生产 adapter 或 SQLite 调试兼容 adapter 保存音乐元数据，保存必要的二进制资源到本地文件系统。
+- 通过 MySQL 生产 adapter 或 SQLite 调试兼容 adapter 保存音乐元数据；正式封面服务先保存本地二进制，再按开关经窄存储 port 上传核验，保留可靠回执。
 - 提供最小 HTTP/CLI 入口，用于触发爬取、查询任务进度和返回执行结果。
 - 管理爬虫任务的并发、失败回滚、重试、超时和进度快照。
 
