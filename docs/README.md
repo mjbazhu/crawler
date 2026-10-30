@@ -8,7 +8,7 @@
 
 ## 按目的查找
 
-云端实施进度见[统一资源云端回执重构](roadmap/resource-cloud-receipts.md)：持久三路、版本确认、历史跳过、旧 process 桥接及受控规模验证已实现。实际开发 `crawler` 已完成 V2912 扩展和45,558条旧完成资源的双端回执/本地 skip 补建。当前源码新增 V2913，将云读写统一到 `resource_cloud_receipts`，封存后删除31个旧物理云列及2索引，保留旧 HTTP JSON 投影和三张 legacy 映射表；实际库已完成本轮收缩及前后逐值核对，进度见[迁移记录](operations/resource-database-migration.md#v2913-物理云列收缩状态)。[本次物理收缩](operations/resource-schema-retirement.md)与未来全部旧协议退役分别验收，业务运行另行执行。
+资源后续以[四类云回执拆分与运行精简方案](roadmap/resource-receipts-four-tables.md)为准：歌曲回执原位更名，另外三类新建空表；保留统一三路任务、MRC生成和关联下载，退役10张历史治理/兼容表，旧crawl任务暂留且不重放。当前实际库仍为V2913，91,116条回执及本地路径已保全；四表方案尚未实施。[原方案](roadmap/resource-cloud-receipts.md)与[迁移记录](operations/resource-database-migration.md#v2913-物理云列收缩状态)保留已完成的阶段事实，业务启用不再沿用旧基线封存前置。
 
 | 目的 | 现有入口 | 覆盖情况 |
 | --- | --- | --- |

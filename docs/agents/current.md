@@ -1,35 +1,42 @@
-# 当前交接：V2913 检查点与四类独立回执收缩目标
+# 当前交接：四表回执与统一三路执行的精简方案讨论
 
-更新日期：2026-10-30。worktree `C:/Users/nidie/.codex/worktrees/crawler-main-20261029/crawler`，分支 `codex/resource-cloud-receipts`，HEAD基线 `83e72e9040151f29f271a9edfbb604e27c4bfb13`。本分支保存已验证的 V2913 阶段检查点；此前推送的两笔大提交已在本地重分为10批，本轮不更新远端，不创建 PR 或合并 main。全部原有改动保留。
+更新日期：2026-10-30。worktree `C:/Users/nidie/.codex/worktrees/crawler-main-20261029/crawler`，分支`codex/resource-cloud-receipts`。当前检查点`6d59b668919a05af359ea8b179aced3445a5fc75`的10笔本地提交已通过精确force-with-lease推送，两端SHA一致；未创建PR或合并main。旧两笔历史保存在`codex/checkpoint-v2913-before-resplit-20261030`。本轮按用户授权提交并推送5份方案文档，再从包含本交接的最新HEAD新建`codex/resource-receipts-four-tables`及独立worktree，准备新会话；不修改代码、执行迁移、创建PR或合并main。实际路径和分支创建结果以交付记录及git worktree list为准。
 
-此前两笔大检查点提交已撤回并按审阅后的v2清单重新整理为10笔本地提交；本文件所在文档提交为这组检查点最终起点。远端`origin/codex/resource-cloud-receipts`仍保持旧检查点`ee4291c6320f702cf4b2ed5fe9b7237536854e8d`，本轮未强推、未创建PR或合并。旧历史另由本地`codex/checkpoint-v2913-before-resplit-20261030`保留。接续以当前分支实际HEAD为准，不再从旧两笔提交继续开发。
+## 当前权威方案
 
-本轮只重分Git历史及更新交接，生产代码、SQL和测试与已实测版本保持一致；按用户要求不重跑数据库、云端、性能或逐提交编译。只核对每批暂存范围、最终Git树及文件完整性、45份迁移检出字节。此前实测仍是原日期/条件的证据，不把它写成这轮重新实测。完整源码检查点位于包含本交接的本地最终HEAD；实际crawler数据库仍为V2913，Git历史调整不恢复或修改数据库。
+后续先读[四类云回执拆分与资源运行精简](../roadmap/resource-receipts-four-tables.md)。旧roadmap保留V2913设计/验收历史，旧基线/发现/兼容要求不自动延续为新目标。
 
-## 最新目标与接续边界
+已确认：song/singer/album/song_artifact四类各一张云回执表，表内用baidu/gdrive区分平台；下载、生成和关联资源保持一个统一任务体系，不按资源类型再拆任务表。用户明确保留MRC派生生成和音频关联下载；旧crawl_batches/items/events记录本轮暂留，不迁移、不重放。
 
-用户已澄清原意：song、singer、album、song_artifact 各使用一张独立云回执表，分别直接关联自己的资源表；每表以cloud_provider区分baidu/gdrive。本检查点实际仍是单张resource_cloud_receipts与18张新增表的阶段实现，尚未进行四表拆分，不能把检查点误读为最终架构认可。
+实际91,116条回执全部属于song、resource_id=song_resource_id，其余归属键全NULL；百度/Google各45,558条。因此歌曲回执采用原表RENAME及约束收缩，保留原id/数据；另3张新建空表。代码仍须改四表读写/绑定，但不导出重灌、不重新采信或重算旧摘要。命名和直接FK见权威方案。
 
-下一阶段从本检查点另建分支/worktree并新会话接续，范围为四表拆分、解除多余历史治理的运行依赖、收口不再需要的兼容链路。历史发现/导入/审阅/封存优先收缩为一次性迁移工作；操作/任务/互斥占用确实承担并发、取消及恢复，按实际必要性保留或复用，不因表为空直接删除。旧接口移除的具体范围须在收缩方案中列清，不把“完全保留兼容”继续当成固定目标。
+其余16张表中保留6张正常运行表(destination、operations、tasks、slots、producer、related)，退役10张历史治理/兼容表。历史backfills8行、audit1,551,513行先一次性归档；其余待删表为空。现有skip和来源标记转为当前事实，移除基线准入，不自动把1,460,397个旧excluded排成下载任务。普通旧任务原表有484批/124,523明细/525,022事件，原样保留。
 
-保留既有三路独立、逐端配置/取消/有限重试及来源/内容/目标围栏；91,116条回执、45,558条本地路径和跳过事实迁入新结构，原业务数据与旧校验值保持。实际crawler已是V2913，已执行migration保持冻结，后续用前向迁移处理，不从旧main代码直接操作新库。备份和历史审计先归档保存，再依赖清理、克隆验证、实际库迁移。
+## 本次方案复审补充
 
-当前不落实旧方案的常驻启动配置、不封存或激活现有基线、不进行小批真实写入。首批范围先记录，四表版本完成后再完成配置、必要启用检查及真实写入验收；已有rclone登录复用。未来是否保留基线机制须按最小必要性重审，不能把它自动列为启动前置。下面结果描述的是已完成的V2913阶段事实。
+已对照6d59b66源码/SQL补齐四表及退役依赖：混合owner批量ensure/PreparedQueries/status映射、普通任务与producer的legacyClaimAllowed共用调用、baseline在claim/current/producer中的全端闸门、capture内的删除guard、MRC/关联子操作完整事务及冻结父子JSON。明确新表真实FK、rename中断状态矩阵、子表先DROP及错误半成品拒绝；详细边界和针对性验收已写入权威方案。
 
-提交检查发现V2911冻结迁移按CRLF执行，Git属性已为该文件单独设置`-text diff`以保留原字节并允许文本审查；不要统一换行。V2903既有末尾空行同样保留，仅设置该文件EOF空行检查例外。其余迁移沿用既定LF，45份迁移在Git存储/检出后必须与执行字节一致。
+保留受控封面内容读取、目录/只读preview和正常元数据任务查询/停止；只移除旧资源写链及其投影，避免按legacy字样误删共用功能。完整新版本上线前才检查改动相关行为，本次不运行数据库/云端/性能测试、不执行DDL。
 
-## 本轮结果
+## 实施边界
 
-1. 歌曲、歌手/专辑封面、artifact的运行云端读写统一到resource_cloud_receipts，旧HTTP字段由新回执投影。显式provider区分baidu/gdrive，rclone不猜平台；历史skip、强SHA确认、在途意图、占用及来源/内容/目标围栏保留。弱旧工具结果不覆盖强确认，旧单端接口不再依赖原表cloud列。
-2. 新增V2026102913，先精确归档非默认旧云值并事务封存，再替换两类来源trigger并逐表删31旧cloud列/2索引；sealed标记允许分表DDL中断后续迁。原44份冻结migration不改，schema快照及正式准入同步至2913。HTTP JSON和3张resource_legacy映射表保留，不能把合法兼容符号算物理旧列依赖。
-3. 用户已明确授权实际库清理。先从1,401,699,123字节同轮备份恢复克隆、迁移并全量核验，后在实际crawler执行同样步骤。两处37表6,037,061行保留字段逐值一致，1,505,955条歌曲及45,558条本地路径保留，91,116条回执原字段/证据键保持；旧云非默认45,558条精确归档，仅百度附加retired_legacy，新增审计仅45,558条。原1,505,955历史审计及快照差异0，原清单重放数量/时间戳不变。
+原表更名只省数据搬运，不能省四表SQL/参数/查询/删除合并调整。继续复用ResourceTransferFactory、独立来源/worker、逐端预算/取消及既有校验，移除legacyCloud/legacyProvider、旧单端流程、旧资源API/DTO/映射/observer等第二套逻辑。保留元数据采集、目录、授权等正常业务；资源写入以统一v2服务为唯一链路。旧URL和字段的断约处理见方案，实施前按调用方清单复核。
 
-## 验证与当前状态
+不再执行旧全历史preview/apply/review/seal/activate。目标状态使用现有destination行和最小维护CLI，单端暂停不阻断其他端；先在克隆按新前向迁移验证再处理实际库，已有45份migration冻结，V2911换行例外不变。完成新结构后才落实配置、必要启用检查和少量真实写入。MRC/关联表不删，正常并发/恢复不重写为另一套引擎。
 
-本轮32项相关回归最终通过（20项MySQL、12项离线），34项工具自测通过。克隆与实际库最终各422份运行SQL prepare通过，重复迁移元数据/时间戳不变。首次发现整数COALESCE被推导DECIMAL及JSON_TABLE锁错误，已修复并用新库复测；另补强确认不可降级和四owner超过32位云大小删除捕获断言。物理SQL依赖0，广义旧协议符号仍保留，未来全部旧协议退出另议。
+## 已完成事实与证据
 
-实际schema2913/API1.14.0，39张表，31旧列/2旧索引为0。三目标maintenance、baseline_ready=0；HTTP/worker未启动，transfer task/operation0，内容请求/上传/远端删除0。本地文件按用户要求不验存在性，仅保留路径。基线封存/激活和实际业务运行属于另行明确任务，不把不存在的生产窗口作为本轮数据库完善阻碍。
+实际crawler仍V2026102913/API1.14.0、39张表，三端maintenance、baseline_ready=0，统一operation/tasks等当前为0；业务服务未启动。歌曲1,505,955条，本地路径/skip各45,558，回执91,116；历史本地文件存在性按用户要求不验，路径和旧校验值保留。Google未解析路径仍45,558，不伪造SHA/上传成功。
 
-公开证据 `D:/codex-runs/crawler-cloud-receipts-20261029/cloud-retirement-20261030`；备份、清单和原始日志在E盘对应受限目录。自持6111经UUID/PID/datadir核验后关闭，原3306保留，现场数据未清除。主agent及三个子agent实际turn_context均gpt-6.1-sol/xhigh，模型核验保存于agent-model-proof.json。上一交接保存在本轮证据previous-history-handoff.md，前序历史补建和并发4/RSS/staging结果继续有效，不重跑或重列缺口。
+此前克隆和实际库37表6,037,061行保留字段逐值一致、原1,505,955条历史快照差异0、31旧列/2索引已删；32项相关回归、34项工具自测、422份SQL prepare通过。这些是此前日期/代码的实测，本轮只读核对和文档检查，不重复实测或冒称四表版本已通过。
 
-详见[迁移实录](../operations/resource-database-migration.md#v2913-物理云列收缩状态)、[收缩范围](../operations/resource-schema-retirement.md)、[历史导入](../operations/resource-cloud-import.md)与[方案](../roadmap/resource-cloud-receipts.md)。接续先核对Git和这些最终证据，不重新导入1.5m历史、不恢复物理旧列、不删除仍在使用的HTTP兼容字段/映射表；旧二进制与新SQL不能混用。
+公开证据`D:/codex-runs/crawler-cloud-receipts-20261029/cloud-retirement-20261030`；本轮只读方案证据`D:/codex-runs/crawler-cloud-receipts-20261029/four-table-plan-20261030/plan-inspection.json`。备份及原始日志在E盘受限目录。重分批与推送记录在`resplit-20261030`；这轮之前的交接已备份为`four-table-plan-20261030/handoff-before-plan.md`。原3306运行，自持6111已关闭，数据与失败现场保留。
+
+## 新会话接续顺序
+
+1. 选择新worktree，确认分支为`codex/resource-receipts-four-tables`、工作区干净，起点是包含这5份方案文档的共同HEAD。源分支`codex/resource-cloud-receipts`保留方案检查点，不在原目录继续四表实现。
+2. 先读AGENTS.md、docs/agents/README.md、任务分类和本交接，再读权威四表方案。方案已经过源码/SQL复审，目标是原位更名歌曲回执、另建3表、保留6运行表、退役10治理/兼容表，MRC及关联下载继续共用任务系统。
+3. 本轮仅准备新分支/worktree和交接，没有实施代码或新DDL。新会话先核对现状与方案，收到实施指令后才开始改代码；实际库清理、业务启用仍按用户授权范围和克隆先行步骤处理。
+4. 不重新导入1.5m历史，不将旧crawl任务迁移/重放，不直接DROP全部16表，不启动旧二进制或按旧基线封存/激活流程继续开发。保留原业务、本地路径/旧摘要、91,116回执和45,558跳过事实。
+5. 独立worktree不复制忽略的.env、数据库、构建缓存或网盘认证。本次不要求重新登录；后续显式选择既有私有配置和独立验证库，避免dotenv默认回退到实际crawler。不得在源码或日志写入认证。
+6. 先前32项回归、34项工具自测、422份SQL及并发/云端实测属于6d59b66实现的历史证据。单纯Git与文档交接不重跑；实现变更后只验证受影响行为，尤其混合owner批量原子性、MRC/关联事务、单端隔离、删除guard和新迁移数据保全。
