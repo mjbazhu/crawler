@@ -2,6 +2,7 @@
 
 #include "crawler/application/model/SongResourceQueue.h"
 #include "crawler/application/result/ServiceResult.h"
+#include "crawler/application/ports/persistence/ResourceTransferAccess.h"
 
 #include <memory>
 
@@ -18,7 +19,8 @@ public:
 
 // 资源后处理依赖组，后续扩展不继续增加下载构造函数的独立参数。
 struct ResourceProcessingExtensions {
-    std::shared_ptr<ResourcePostProcessor> post_processor; // 可选产物处理器
+    std::shared_ptr<ResourcePostProcessor> post_processor;   // 可选产物处理器
+    std::shared_ptr<ResourceTransferAccess> transfer_access; // 正式装配的实时维护及历史跳过检查
 };
 
 } // namespace orchestrator::modules::crawler::application::ports

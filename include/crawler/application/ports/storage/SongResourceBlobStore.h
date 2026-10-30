@@ -15,6 +15,12 @@ class SongResourceBlobWriteSession {
 public:
     virtual ~SongResourceBlobWriteSession() = default;
 
+    // 新编排在正式发布前登记实际独占路径；旧替身返回空表示不支持该能力。
+    virtual std::string plannedPath() const
+    {
+        return {};
+    }
+
     // 写入一个二进制分片；失败时返回 false 并填充脱敏错误。
     virtual bool write(std::string_view chunk, std::string &error) = 0;
 

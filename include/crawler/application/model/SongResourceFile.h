@@ -90,7 +90,7 @@ struct SongResourceBlobStreamSaveRequest {
     bool require_database_ack = false;  // workflow 写入在数据库确认前保留补偿能力
     std::string relative_path_hint;     // 期望保存的相对路径
     std::string content_type;           // 资源 Content-Type
-    std::string owner_kind = "song";    // 文件日志归属：song、singer、album；旧日志默认为 song
+    std::string owner_kind = "song";    // 文件日志归属包含 song_artifact；旧日志默认为 song
 };
 
 // 歌曲资源字节保存结果，用于成功回写 song_resources。
@@ -170,6 +170,8 @@ struct SongResourceRemoteCopyResult {
     std::string error_category;   // 失败分类，例如 network、timeout、persistence
     std::string result_code;      // 结果编码，例如 ok、rclone_job_failed
     std::string message;          // 脱敏后的诊断说明
+    std::string cloud_backend;    // 实际复制工具，不能据此猜测平台
+    std::string cloud_path;       // 已完成的远端对象路径
 };
 
 } // namespace orchestrator::modules::crawler::application::model

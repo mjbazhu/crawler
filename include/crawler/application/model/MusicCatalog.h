@@ -358,6 +358,7 @@ struct MiguSchemaStatus {
     std::vector<std::string> checksum_mismatches; // checksum 不一致的 migration 版本
     std::vector<std::string> missing_tables;      // 缺失的核心表
     std::vector<std::string> missing_columns;     // 缺失的关键列
+    std::vector<std::string> missing_constraints; // 缺失的唯一键、引用约束或身份校验触发器
     std::uint64_t checked_at = 0;                 // 检查时间，Unix 秒时间戳
 };
 

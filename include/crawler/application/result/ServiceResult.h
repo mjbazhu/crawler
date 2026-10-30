@@ -17,7 +17,8 @@ enum class ServiceErrorType {
     ExternalApiError,          // 外部依赖失败 (对应 502/500)
     InternalError,             // 内部错误 (对应 500)
     TransientExternalApiError, // 网络、临时空实体或平台服务故障，可有限重试
-    ExternalRateLimited        // 外部平台明确限流，重试前需等待
+    ExternalRateLimited,       // 外部平台明确限流，重试前需等待
+    ResourceRestricted         // 明确永久来源限制，独立于单端 I/O 失败
 };
 
 // 业务层通用返回结果

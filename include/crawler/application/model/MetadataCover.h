@@ -72,9 +72,10 @@ struct MetadataCoverOptions {
 
 // 下载保存上下文，用于把文件日志绑定到正确所有者及认领代次。
 struct MetadataCoverSaveRequest {
-    MetadataCoverRecord target;      // 已认领资源与旧文件回执
-    int timeout_ms = 15000;          // 本次总超时
-    std::function<bool()> cancelled; // 协作取消检查
+    MetadataCoverRecord target;                // 已认领资源与旧文件回执
+    int timeout_ms = 15000;                    // 本次总超时
+    std::function<bool()> cancelled;           // 协作取消检查
+    std::uint64_t max_bytes = 8 * 1024 * 1024; // 单次内容上限，不能超过既有图片上限
 };
 
 // 已验证的本地图片内容，不包含绝对路径。

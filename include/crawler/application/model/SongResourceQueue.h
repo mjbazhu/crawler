@@ -88,6 +88,7 @@ struct SongResourceSuccessUpdate {
     std::string result_code = "ok";     // 结果编码
     std::string batch_id;               // 当前处理批次 ID
     std::uint64_t claim_generation = 0; // 认领代次，拒绝过期 worker 的回写
+    bool remote_only = false;           // 旧copyurl仅有远端对象，不声明本轮filesystem确认
 };
 
 // 歌曲资源失败回写请求。
@@ -135,6 +136,7 @@ struct SongResourceProcessItem {
     std::string error_category;           // 失败或跳过分类，成功时为空
     std::string result_code;              // 结果编码
     std::string message;                  // 诊断说明
+    std::uint64_t claim_generation = 0;   // 内部回写围栏，不改变旧响应字段
 };
 
 // 批量资源处理结果。
