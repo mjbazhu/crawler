@@ -1,6 +1,6 @@
 # Migu 元数据 API 对接说明
 
-当前 HTTP API 覆盖 Migu 元数据、歌曲资源处理，以及歌手头像/专辑封面本地下载与配置驱动的云端存储：歌手、歌手歌曲、歌手专辑、专辑详情、专辑歌曲、歌曲音频和歌词资源。当前契约版本为 `1.9.0`。
+当前 HTTP API 覆盖 Migu 元数据、歌曲资源处理，以及歌手头像/专辑封面本地下载与配置驱动的云端存储：歌手、歌手歌曲、歌手专辑、专辑详情、专辑歌曲、歌曲音频和歌词资源。当前契约版本为 `1.14.0`，新增独立 `/api/v2/migu/` 持久传输接口，旧同步接口不改为异步受理。
 
 OpenAPI：
 
@@ -45,7 +45,7 @@ OpenAPI：
 | `POST /api/migu/singer-albums/crawl-from-db/preview` | 预览歌手专辑目录采集范围 | 返回命中及可处理目标，不认领或采集 |
 | `GET /api/migu/overview` | 控制台总览 | 从 `singers`、`songs`、`albums`、来源表和同步状态聚合 |
 | `GET /api/migu/integrity` | 状态一致性检查 | 歌手缺歌曲/缺专辑按真实关联表判断，并返回 stale running 计数 |
-| `GET /api/migu/schema/status` | Schema 检查 | 返回 MySQL schema 版本、缺失表和缺失关键列 |
+| `GET /api/migu/schema/status` | Schema 检查 | 返回 MySQL schema 版本、缺失表/关键列及身份约束 |
 | `POST /api/migu/maintenance/recover-stale` | 回收 stale running | 把超时停留在 `1 同步中` 的元数据/批次标为失败 |
 | `GET /api/migu/singers` | 歌手列表 | 支持 `q` 模糊搜索、`source_singer_id` 精确 ID、`gender`、`country`、`songs_sync_status`、`albums_sync_status`、`min/max_songs_count`、`min/max_albums_count`；`q` 命中完整歌手 ID 时精确项优先；歌曲/专辑汇总按真实关联表派生，并返回 Migu 声明总数和剩余数 |
 | `GET /api/migu/singers/{source_singer_id}` | 歌手详情 | 按 Migu 歌手 ID 查询，并返回真实歌曲/专辑汇总、Migu 声明总数、是否完成及本地 `cover` 信息 |
@@ -240,6 +240,10 @@ GET /api/migu/schema/status
 
 ## Schema 检查
 
+MySQL 服务已接入资源维护准入。schema 不完整、任一目标处于 maintenance、活动目标基线未就绪或准入查询失败时，资源新受理返回 HTTP 503；读取、停止与只读预览保持可用。legacy 模式保留旧写入口的准入装饰器；parallel 模式只放行已实现的兼容 process，其他可能触发旧 writer 的写入口明确拒绝，登录态接口保留自身规则。旧兼容需要 local 配置及原固定封面目标，不能以额外云端代替旧完成范围；未知 stop 仍返回 404。v2 的模式、结构、维护等错误由各自稳定 error_code 区分。
+
+维护 CLI 已支持历史声明导入、目标配置、基线 review/seal/activate 与显式过期认领恢复；独立 target-probe 只读核实目标。三路 worker、parallel 配置及 v2 已装配，正式库切换仍须按[维护操作](../../operations/resource-cloud-import.md)和[方案](../../roadmap/resource-cloud-receipts.md)完成停写、迁移、历史审阅及验收，不能只凭某个 migration 已应用就启用传输。
+
 `GET /api/migu/schema/status`
 
 返回：
@@ -247,22 +251,25 @@ GET /api/migu/schema/status
 ```json
 {
   "source": "migu",
-  "schema_version": 2026052109,
-  "latest_applied_version": 2026052109,
-  "latest_available_version": 2026052109,
-  "schema_name": "song artist refs relationship only",
+  "schema_version": 2026102902,
+  "latest_applied_version": 2026102910,
+  "latest_available_version": 2026102910,
+  "schema_name": "resource cloud receipts expand",
   "ok": true,
   "pending_migrations": [],
   "checksum_mismatches": [],
   "missing_tables": [],
   "missing_columns": [],
+  "missing_constraints": [],
   "checked_at": 1779300000
 }
 ```
 
 当前正式入口是 `sql/mysql/migrations/`。服务启动时会自动应用未执行 migration；如果迁移失败或已执行版本 checksum 与文件不一致，MySQL schema 初始化失败，服务不可用。后续 DDL 变更必须新增 migration 文件。
 
-可通过 `CRAWLER_MYSQL_MIGRATIONS_PATH` 指定 migration 目录，默认 `sql/mysql/migrations`。前端只根据 `ok=false`、`pending_migrations`、`checksum_mismatches`、`missing_tables` 或 `missing_columns` 提示环境异常，不应自行修改数据库。
+`schema_version/schema_name` 来自组件结构标记，可能仍为 2026102902；完整升级以 `latest_applied_version/latest_available_version`、待执行列表及对象校验共同判断，不能只比较组件标记。
+
+可通过 `CRAWLER_MYSQL_MIGRATIONS_PATH` 指定 migration 目录，默认 `sql/mysql/migrations`。前端根据 `ok=false`、`pending_migrations`、`checksum_mismatches`、`missing_tables`、`missing_columns` 或 `missing_constraints` 提示环境异常，不应自行修改数据库。新增 `missing_constraints` 检查双端回执的资源外键、唯一索引和身份触发器，原字段与路由保持不变；API/OpenAPI `1.11.0` 增加 v2 持久传输。扩展版本存在不表示统一调度已启用，实施边界见[方案](../../roadmap/resource-cloud-receipts.md)。
 
 错误响应统一包含稳定字段：
 
@@ -377,7 +384,7 @@ POST /api/migu/backfill/album-details/preview
 
 retry 使用数据库 claim 语义：后端会生成本次 `claim_token`，先把命中的目标原子置为 `1 同步中`，再只按同一个 `claim_token` 回查目标创建批次。连续或并发 retry 不会重复认领同一条可治理目标。已完成、不存在或当前状态不允许认领的显式 ID 会计入 `skipped_count`。
 
-retry/reset 都会返回汇总和明细。显式 ID 场景下，`items` 会包含每个 ID 的处理结果；筛选批量场景下，reset 会返回最多 20 条样例：
+retry/reset 都会返回汇总和明细。 被历史策略、排除、统一任务占用或未决云端意图保护的资源不更新；明细重读到未完成重置时返回实际状态及 `protected_or_changed`，不把预测的 pending 计为成功。显式 ID 场景下，`items` 会包含每个 ID 的处理结果；筛选批量场景下，reset 会返回最多 20 条样例：
 
 ```json
 {
@@ -462,7 +469,7 @@ retry/reset 都会返回汇总和明细。显式 ID 场景下，`items` 会包�
 
 `POST /api/migu/resources/process`
 
-该接口是歌曲资源正式处理入口：从 MySQL `song_resources` 条件认领待处理记录，音频资源先换取本次临时 URL，再流式下载、校验并提交本地文件，最后按认领代次回写 `local_path`、大小、checksum、状态和批次结果。同步入口与异步入口复用同一编排，主流程不自动上传百度网盘，不持久化远端 URL。文件使用独立尝试路径，数据库确认前保留补偿与启动核对日志；客户端应使用返回的实际路径。完整字段归属、事务和恢复说明见 [持久化流程](../../architecture/persistence-flow.md)。
+legacy 模式下，该接口从 MySQL `song_resources` 条件认领记录，音频先取得本次临时 URL，再流式下载、校验、提交本地文件并按认领代次回写；同步与异步共用编排，filesystem 歌曲流程不自动上传云端。parallel 兼容模式将相同旧请求映射到统一任务，各启用目标独立取得来源和传输，旧响应只等待冻结的原完成范围，见[版本化传输及兼容范围](#v2-持久资源传输)。两种模式均不持久化临时远端 URL，文件使用独立尝试身份；parallel 的未决副作用通过持久任务/repair 核对，不调用旧启动 journal 自动恢复。完整字段归属见[持久化流程](../../architecture/persistence-flow.md)。
 
 请求：
 
@@ -1114,7 +1121,7 @@ GET /api/migu/governance/events?page=1&page_size=20&target_type=batch&batch_id=b
 
 ## 歌手头像与专辑封面本地下载
 
-元数据采集继续只保存图片 URL。此独立流程读取 `singer_resources.remote_url` 或 `album_resources.remote_url` 下载到本地，当前生产装配支持 MySQL。开启云端后，同一 process 自动上传百度或 Google 并核验回写，详情见[云端存储](../../roadmap/metadata-cover-cloud-storage.md)。图片来源与本地认领边界见[资源说明](../../migu/resources.md#歌手头像与专辑封面本地下载)。
+元数据采集继续只保存图片 URL。封面流程从 `singer_resources.remote_url` 或 `album_resources.remote_url` 取得来源，当前支持 MySQL。下文的本地完成后云上传、复用本地文件及旧 stale 恢复描述适用于 legacy 模式；parallel 使用独立目标队列及固定旧完成视图，旧 recover-stale 关闭，改用停写后的显式持久任务恢复。共享响应和读取接口保持兼容，差异见[版本化传输及兼容范围](#v2-持久资源传输)。
 
 | 接口 | 作用 |
 | --- | --- |
@@ -1170,10 +1177,77 @@ queue/catalog 的 `available` 是路径边界、文件存在及长度的轻量�
 
 HTTPS 默认校验证书链及主机名，Windows 额外只读加载系统 ROOT 信任库。平台可能返回与 URL 后缀不同的 WebP 等格式，保存后缀和内容 MIME 均按实际字节识别，HTTP adapter 保留该 MIME。
 
-云端配置：`CRAWLER_RESOURCE_CLOUD_UPLOAD_ENABLED=true`；后端 `CRAWLER_RESOURCE_CLOUD_UPLOAD_BACKEND=baidupcs` 使用已登录的 BaiduPCS-Go，`rclone` 使用现有 RC 与 Google Drive 命名 remote。百度路径为 `{CRAWLER_RESOURCE_CLOUD_ROOT}/{local_path}`；Google 路径为 `{CRAWLER_RCLONE_TARGET_FS}/{local_path}`，例如 `gcloud:Media/migu/albums/...`。云端上传及核验总超时由 `CRAWLER_RESOURCE_CLOUD_TIMEOUT_MS` 控制，默认 120000 ms。
+legacy 云端开关为 `CRAWLER_RESOURCE_CLOUD_UPLOAD_ENABLED=true`；工具 `CRAWLER_RESOURCE_CLOUD_UPLOAD_BACKEND=baidupcs` 使用已登录的 BaiduPCS-Go，`rclone` 复用现有 RC 与 remote，并须通过 `CRAWLER_RESOURCE_CLOUD_PROVIDER=baidu|gdrive` 明确平台，不能从工具名或 remote 别名推断 Google。BaiduPCS 根与 rclone target 路径、parallel 各端配置和核验要求见[配置说明](../../configuration.md)。legacy 上传及核验预算由 `CRAWLER_RESOURCE_CLOUD_TIMEOUT_MS` 控制，默认 120000 ms。
 
 响应的 `cloud` 对象包含 `enabled/status/current/backend/path/size_bytes/checksum/uploaded_at` 及脱敏错误。云端状态独立为 `0 待上传、1 运行中、2 已确认、3 失败、4 待核对`。`current=true` 表示回执匹配当前文件及已启用的目标配置。百度回读完整文件比对 SHA-256；Google RC 核对远端大小与完整 SHA-256 或 MD5。只有核验和条件 DB 回写均成功才把 item 计为成功。
 
 云端失败时本地 `status=2`、文件和 `local_url` 保留，item 的 `success=false`、顶层错误与 `cloud` 错误描述云端阶段。再次 process 仅补云端。云端 `path` 保存最后一次确认的对象，刷新或后端切换时可能暂时过期，应同时检查 `current`；该路径不是公开图片 URL。`cloud_status` 请求数组最多 5 项，值域 `0..4`。stale 恢复开启云端时合计本地和云端恢复数；两类认领代次独立。
 
 本地成功刷新使当前云端任务置待确认，返回的 `cloud.status` 同步为 0，并保留最后确认的对象路径；关闭上传时也不会返回旧的“当前已确认”状态。云端写入响应不确定且未读到成功回执时继续保留未知；数据库无法写入收尾状态时，通过后续重读及 stale 恢复核对，不能保证断库期间立即持久化为 4。
+
+## v2 持久资源传输
+
+这组接口使用 `/api/v2/migu/`，返回真实持久操作 ID，与旧 `/api/migu/` 批次分开。需要 MySQL 兼容 schema；启动配置、基线和目标身份的放行规则见[配置说明](../../configuration.md)及[持久传输](../../operations/resource-transfer-tasks.md)。读取和取消不要求 parallel 开关或基线激活；新处理要求 parallel 模式和写入准入，未启用返回 503。数据库提交响应未知返回 `resource_transfer_commit_uncertain`，使用相同幂等键核对，不能盲目换键重发。
+
+| 方法与相对路径 | 当前支持 |
+| --- | --- |
+| `POST resources/process` | 显式 `owner_type=song` 的文件资源 ID，最多 200 项 |
+| `POST covers/process` | 显式 singer/album 文件资源 ID，最多 200 项 |
+| `POST artifacts/process` | 显式 song_artifact 文件 ID；缺少已生成且可读取输入时保持 waiting_input，不接收任意文件路径 |
+| `GET tasks/{batch_id}` | 查询真实操作、逐端任务、按端状态计数及冻结预算 |
+| `POST tasks/stop` | `{batch_id,destinations?}`；省略/空目标取消该操作全部目标，明确目标必须属于该操作 |
+| `GET cloud/receipts` | 必填 owner_type；可选 resource_id/provider/task_state/verification，按 after_id 游标，limit 默认 100、最大 200 |
+| `GET settings` | 可写预算与只读目标/核验策略分开；不返回认证、路径或目标指纹 |
+| `PATCH settings` | 一次更新一个已启用目标，完整提交 timeout_ms/retries/max_bytes/bytes_per_second，仅新受理操作生效 |
+
+处理 body 示例：
+
+```json
+{"resources":[{"owner_type":"song","resource_id":123}],"destinations":["local","baidu","gdrive"],"action":"process","idempotency_key":"client-request-123"}
+```
+
+resource_id 指各类文件资源表的主键，不能用歌曲目录 ID 替代。支持 process、retry、repair_destination、refresh_content；省略 destinations 使用首次受理时的启用配置。重复目标、未知字段、浮点 ID、任意路径、超过 200 个资源或无效 action 返回 400。明确选择未配置目标返回 503；已启用但当前不可用的单端可记录其独立错误，不将整次受理伪装成传输成功。
+
+新操作返回 202，相同幂等请求重放返回 200 和原操作；都不能当作上传完成。维护期间已存在的匹配幂等键仍可重放，键对应不同请求返回 409，新键返回 503 且不留下新操作或内容刷新。任务含 destination、adapter、content_generation、target_revision、state、result_code、busy_task_id、cancel_requested、strict_sha256 和冻结 policy。父状态可能 partial；skipped、busy、uncertain 与 succeeded 含义不同。取消返回实际持久状态，在途任务可继续报告 cancelling/uncertain；尚未认领但携带旧未决对象的修复任务也保留 uncertain 与独占槽，不能因取消重新上传。
+
+MRC producer 是独立持久计划，拥有自己的预算、失败状态和认领；父下载结束不表示生成结束。`GET tasks/{batch_id}/producers` 返回该真实操作直属的计划、waiting_input/failed/result_code、冻结预算及 child_batch_id；维护和 legacy 模式可读。`POST producers/retry` 的 body 为 `{"producer_id":123}`，只补排原有计划，返回 202 表示受理，仍检查原来源/目标/处理版本和维护状态；不隐式恢复还在运行的认领。过期认领恢复继续使用停写后的维护流程。 已取消的生成计划不借 retry 复活；需要重新生成时显式提交 produce_artifacts 和新的幂等键。
+
+响应通过 parent_batch_id、parent_task_id、child_batch_ids 暴露直接关联；支持受控的 audio→相关文件→MRC 产物两层关系，父 state 聚合所属 producer/子任务，destination_counts 仍只统计当前操作直接文件任务。取消父操作按所选目标递归取消这两层以及 producer，不影响其他端或无关联操作；迟到的登记必须通过当前版本/取消围栏。HTTP 不接受内部父身份和来源控制字段。
+
+历史 MRC 即使声明跳过，也可显式请求生成产物，不必清除原文件的历史策略：`POST resources/process` body 为 `{"resources":[{"owner_type":"song","resource_id":123}],"destinations":["local"],"action":"produce_artifacts","idempotency_key":"historical-mrc-123"}`。只接受实际 MRC 文件，登记无 MRC 传输副作用的父项及独立 producer；缺少合法输入/处理配置保持可见失败或等待。普通 process 的历史 skip 仍不触发来源读取或生成；covers/artifacts 不接受此动作。
+
+父子关系保留 request_snapshot，并通过生成列 parent_operation_id/parent_task_id 及父索引查询；遍历最多两层。旧批次每 200 个文件分块，旧 limit=1000 仍有效，整批登记及映射在一个事务提交。大规模历史、锁等待及数据库成本仍需独立压测。
+
+回执查询保留人工声明、弱 hash 匹配和 SHA-256 核验的区别；`current` 是持久版本与内容证据匹配，不表示实时在线。配置了 strict_sha256 的目标还要求已确认 sha256_verified，弱证据仍原样返回但 current=false。legacy 或未配置目标没有运行策略时，只依据持久版本与证据判断。缺少本地可比摘要时 `matches_local=null`，未知 uploaded_at/verified_at 保持 null。接口返回 path_resolved，不暴露内部对象路径。目录页可调用 resources/status 一次批量附加本地及双端事实和 all_requested_targets_current，既有目录响应结构保留；操作终止不自动表示全部目标 current。
+
+settings 的并发、启用平台、工具、认证、目录和核验强度属于启动配置。PATCH 必须一次给齐四个预算字段，避免读后合并的并发覆盖；不能通过 PATCH 降低已冻结的严格核验策略，不改排队/执行中的任务，也不写私有 env。公共 API 的 max_bytes 和 bytes_per_second 上限均为 4 GiB（后者单位 bytes/s），比内部启动限速配置允许的 1 TiB/s 更窄；bytes_per_second=0 表示不增加此项限速。
+
+### 列表批量附加本地与双端状态
+
+`POST /api/v2/migu/resources/status` 是只读接口，在 legacy 和维护中也可使用。目录页取得文件资源ID后，以一次请求附加至多200个不同身份的事实；不逐条请求数据库，不创建下载/上传任务，不访问本地文件或网盘。实体歌曲ID不能替代 song_resources.id，四类owner的同数字ID互不混用。既有目录响应结构保留，调用方按完整身份附加本接口结果。
+
+```json
+{"resources":[{"owner_type":"song","resource_id":123},{"owner_type":"song_artifact","resource_id":45}],"destinations":["local","baidu","gdrive"]}
+```
+
+结果包含 requested_targets 和按输入顺序返回的 items。每项有 found、local、cloud_receipts.baidu/gdrive、all_requested_targets_current；缺失资源仍返回 found=false 占位，缺失云端回执为null。local含原生status、最后确认/当前版本、兼容checksum、大小、path_resolved、current、transfer_skipped；云端使用现有回执模型。内部路径和来源URL不返回。
+
+省略或清空 destinations 均按全部三端汇总，不受开关影响；明确子集仅改变汇总范围，仍返回三端事实。current核对持久版本、大小、完整SHA256参考及证据，不表示此刻在线。当前严格SHA256配置可收紧对应云端current；未知时间保持null。历史skip/人工声明不变成current，旧MD5不会冒充SHA256，后续任务失败不抹掉同版本最后确认事实。没有全部满足时聚合为false；资源缺失时也为false。重复身份、超过200项、无效/额外字段返回400；结构不兼容503；读取失败500。
+
+### parallel 下的旧客户端兼容
+
+旧歌曲 process 保留调用方提供的 batch_id（至多128字节，不含控制字符），未提供时生成编号；重复编号返回409，不能覆盖已有任务。v2 GET tasks/{batch_id} 同样可查无固定前缀的自定义编号；停止旧批次仍使用旧 stop，v2 stop 使用真实操作ID。
+
+旧客户端兼容需在 parallel 模式显式设置 `CRAWLER_RESOURCE_LEGACY_VIEW_PROVIDER=local|baidu|gdrive` 并完成 schema/基线准入；空值继续返回 `legacy_parallel_unsupported`（503）。已接入 `POST /api/migu/resources/process`、`POST /api/migu/covers/process`、旧进度/任务明细/停止和封面列表、目录封面字段。已知 metadata/backfill、批次元数据治理、设置及原生 retry/reset/recover 入口已按原语义接入持久维护准入；retry/reset 只改旧状态，不创建传输任务，不清除历史 skip；原生恢复跳过被统一任务占用或存在未决云端意图的资源。metadata 仍只登记资源，不自动下载。未知新增 writer 继续 503；旧读/预览和登录态入口保留。legacy 模式原流程不变。
+
+受理将旧批次持久映射到真实操作，没有第二次上传。响应 body、同步默认值、异步 202 和逻辑资源计数保持；成功、失败、历史跳过分别统计，同一关联文件只计一次。`X-Resource-Operation-Ids` 是实际操作 ID 的 JSON 数组；封面另有 `X-Resource-Batch-Id`。`GET /api/v2/migu/tasks/{batch_id}` 返回旧视图终态及 operation_ids，重启或切回 legacy 仍可查询；v2 定向停止使用解析出的真实 ID，旧 stop 取消原批次拥有的全部真实操作及后代。
+
+旧 process 是一次明确的新处理请求，可继续先前取消的筛选范围；未知提交或仍占用的对象不会被新请求接管，必须按原工具核对。
+
+旧歌曲只等待 local 及请求原本启用的关联文件；仅首次 local producer 已装配且 key 可用时等待原 MRC 后处理。生成失败只记录后处理事件，不把已完成 MRC 改成失败。缺 key 的新计划仍能在 v2 查询，但不拖住旧完成。旧封面等待 local 和首次固定的旧云平台；额外平台独立运行。固定平台首次受理后写入 resource_legacy_profiles，重启不能暗中切到另一平台，停止执行也不改变历史读取归属。封面列表和目录附加字段读取该平台的统一回执，`current` 保留证据/代次/严格核验约束。
+
+并发、来源 token/440013/周期刷新、关联选项和总批次预算按有效旧请求冻结；旧并发上限约束其必要范围内运行的传输和 local producer，额外平台使用自己的预算。超过总截止只取消 local/固定封面云端及同端后代，将旧视图持久化为 Failed 并记录 timeout，额外云端继续；单独后处理等待超时保留 MRC 成功并记录失败事件。同步等待未完成、关闭或超时返回 503 及可查询 batch_id，不能将受理改写为同步成功；终态旧结果随后保持不可变。
+
+持久队列由数据库按local/baidu/gdrive分别限制文件和producer活动占用；新请求任一目标超限整笔回滚，包含兼容旧批次，返回503/error_code=resource_queue_full、Retry-After: 2（CORS可读）。已受理幂等重放及不新增活动工作的历史skip不受容量拒绝；客户端使用同幂等键有界重试，2秒不保证有空位。配置和占用见[队列容量](../../operations/resource-transfer-tasks.md#持久队列容量)。历史发现仅提供维护CLI及独立报告，见[历史自动发现](../../operations/resource-history-discovery.md)，不增加公共HTTP扫描或直接采信入口。
+
+parallel 中已登记的元数据及治理写入口保持原处理器、参数与响应，维护关闭时返回503/resource_maintenance。资源 retry/reset 保留原生状态重置语义；v2 retry 才受理逐端传输，不能互换。混合 stale 恢复继续处理元数据、旧批次和未被占用的旧原生资源；不代替统一任务的逐端 recover-tasks，不释放其槽或未决意图。已接入来源/内容代次触发器的元数据更新会使旧版本确认失效；基线排除及 skip 不被普通重置解除。未知 writer 或缺失正式准入依赖仍返回503/legacy_parallel_unsupported，并附迁移指导。详见[兼容与清理预演](../../operations/resource-compatibility-cleanup.md)。

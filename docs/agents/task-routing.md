@@ -66,7 +66,7 @@
 - **必读范围**：[资源流程](../migu/resources.md) 的受影响阶段、状态码与重试规则；改事件读 [批次事件规范](../observability/resource-batch-events.md)，改 SQL 或认领同时读元数据类。
 - **首查代码**：正式异步流程是 [AsyncSongResourceDownloadWorkflow.cpp](../../src/application/use_cases/AsyncSongResourceDownloadWorkflow.cpp)，同步兼容流程在 [SongResourceDownloadWorkflow.cpp](../../src/application/use_cases/SongResourceDownloadWorkflow.cpp)。按失败阶段再定位 [MiguAsyncSongResourceProvider.cpp](../../src/infrastructure/music/migu/provider/MiguAsyncSongResourceProvider.cpp)、[MiguSongResourceParsing.cpp](../../src/infrastructure/music/migu/parser/MiguSongResourceParsing.cpp)、[FileStorage.cpp](../../src/infrastructure/storage/filesystem/FileStorage.cpp) 和 [MySqlSongResourceQueue.cpp](../../src/infrastructure/music/persistence/mysql/MySqlSongResourceQueue.cpp)。
 - **封面专项入口**：歌手/专辑图片从 [MetadataCoverService.cpp](../../src/application/use_cases/MetadataCoverService.cpp) → [MetadataCoverDownloadWorkflow.cpp](../../src/application/use_cases/MetadataCoverDownloadWorkflow.cpp) → [封面队列](../../src/infrastructure/music/persistence/mysql/MySqlMetadataCoverQueue.cpp) 与 [保存器](../../src/infrastructure/storage/filesystem/MetadataCoverStore.cpp) 查起，协议在 [MetadataCoverController.cpp](../../src/api/controllers/MetadataCoverController.cpp)；读取[本地封面流程](../migu/resources.md#歌手头像与专辑封面本地下载)，不套用歌曲 listen/token 流程。
-- **封面云端入口**：本地成功后由 [MetadataCoverCloudWorkflow.cpp](../../src/application/use_cases/MetadataCoverCloudWorkflow.cpp) 编排；后端装配见 [CloudFileStoreComposition.cpp](../../src/infrastructure/app/CloudFileStoreComposition.cpp)，再按所选后端查百度/rclone adapter。读[云端专项](../roadmap/metadata-cover-cloud-storage.md)及[配置区别](../configuration.md#存储模式与封面云端)，联动两张封面表的 cloud/process SQL；当前仅保存单份最后回执，统一回执表尚未实施。
+- **封面云端入口**：获准执行后仍由 [MetadataCoverCloudWorkflow.cpp](../../src/application/use_cases/MetadataCoverCloudWorkflow.cpp) 在本地成功后编排单端；目标装配见 [ResourceTransferFactory.cpp](../../src/infrastructure/app/ResourceTransferFactory.cpp)，内部复用 `CloudFileStoreComposition`。读[云端专项](../roadmap/metadata-cover-cloud-storage.md)及[配置区别](../configuration.md#存储模式与封面云端)。V2902 历史 skip 已经 `ResourceTransferPreflight` / `MySqlResourceTransferAccess` 接入歌曲和封面，正式认领 SQL 另有维护闸门；库内持久三路、独立来源、本地及双端文件策略和版本确认已实施，显式 parallel 已接目标身份/后台调度/配置、旧 process 兼容投影与独立 producer，仍需真实部署和规模验收，见[方案进度](../roadmap/resource-cloud-receipts.md)和[维护工具](../operations/resource-cloud-import.md)，库内执行与真实网盘服务要区分，见[持久任务与三路传输](../operations/resource-transfer-tasks.md)。
 - **处理步骤**：按认领、换取 URL、解析、下载、完整提交、状态回写逐段核对，保留稳定错误分类。传输失败再定位 HTTP client；参数或解析错误不通过加重试掩盖。
 - **联动修改**：同步和异步流程、path planner、blob store、关联歌词去重、事件及各自资源表 SQL 按实际影响同步检查；元数据继续只存图片 URL，歌曲主装配不因封面云端开关而接回 uploader。
 - **验证与完成标准**：按验证表选资源 workflow；流式或存储变更加本机 I/O 测试。完整对象提交后才写成功，失败清理本次 staging，重试重新获取临时音频 URL，永久跳过不会被普通认领、retry 或 reset 拉回。
@@ -106,6 +106,10 @@
 - **处理步骤**：先确认改动范围与预期，再核对成功、失败、边界和回滚路径，区分新增问题与既有风险。没有可复现证据时标明推断依据，不用个人风格替代项目规则。
 - **联动修改**：只读审查不顺手改文件、暂存或提交；用户明确要求修复后，转到相应开发类别并遵循既有授权范围。
 - **验证与完成标准**：结论包含可操作的问题、文件/行号、影响与依据；没有发现也说明检查范围和未验证项。实际运行、仅阅读和未运行的测试分别列明。
+
+历史盘点任务首查 [ResourceDiscoveryWorkflow.cpp](../../src/application/use_cases/ResourceDiscoveryWorkflow.cpp)、[发现操作](../operations/resource-history-discovery.md)及 MySqlResourceDiscovery；容量任务首查 [MySqlResourceQueueCapacity.cpp](../../src/infrastructure/music/persistence/mysql/MySqlResourceQueueCapacity.cpp)与统一 enqueue，联动 producer 重试和旧批次。按验证表选择对应隔离测试。
+
+单端采信接续首查 [ResourceHistoryCli.cpp](../../src/infrastructure/app/ResourceHistoryCli.cpp)、MySqlResourceHistoryAdoption及[采信操作](../operations/resource-history-adoption.md)，联动基线supplement和导入控制；旧writer/清理首查ResourceLegacyMigrationGuide与MySqlResourceCloudCleanup。业务启动及整个旧协议退役先读[证据门禁](../operations/resource-release-readiness.md)；旧云物理列清理先读[收缩说明](../operations/resource-schema-retirement.md)，按已获授权在克隆库逐值核验后再执行实际库，不以服务运行或未来旧协议退出窗口为前提。不得把准备自测写成实际执行。
 
 ## 新会话与交接
 

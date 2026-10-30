@@ -41,7 +41,7 @@ flowchart TD
 
 封面后台 worker 拥有独立上下文和必要 port，批次管理器销毁时通过共享停止标记请求取消；worker 不捕获管理器裸地址。该机制保证局部生命周期安全，全服务关闭及恢复仍按运行指南处理，不等同于分布式持久队列或完整排空。
 
-本地和云端成功状态独立，云端失败保留可读本地图片；刷新、取消、stale 恢复和专辑别名归一保留代次及快照保护。当前两张封面资源表各保存一组最后确认的 `cloud_*`；一张多平台回执表是[待实施方案](../roadmap/resource-cloud-receipts.md)，不属于本图现状。逐项状态和验收以[封面云端专项](../roadmap/metadata-cover-cloud-storage.md)维护，避免在架构页复制接口和 SQL 全文。
+本图描述 legacy 封面流程，旧 API 投影一组最后确认的 `cloud_*`。显式 parallel 模式由 ResourceTransferComposition 装配三端独立来源、worker、配额与目标身份围栏，持久任务在同一短事务登记后分别执行；云端不等待正式 local。多平台回执、基线封存和 v2 接口见[实施方案](../roadmap/resource-cloud-receipts.md)。平台与工具分别选择，rclone 可复用既有 WebDAV 配置；parallel 可显式固定旧视图平台，桥接旧歌曲/封面 process、进度/停止及封面字段；已知元数据/补建/治理入口保持原语义并受维护及资源占用保护，未知写入口仍明确拒绝。MRC producer 独立执行，产物登记与子操作受理同事务，不依赖正式 local。legacy 行为与历史验收仍见[封面云端专项](../roadmap/metadata-cover-cloud-storage.md)。
 
 ## 模块定位
 

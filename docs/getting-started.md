@@ -1,11 +1,13 @@
 # Windows 快速启动
 
-适用基线：2026-10-29，`967bc67`，API/OpenAPI `1.9.0`。目标是用独立 MySQL 库完成构建、启动、只读最小调用和停止；首次演练关闭云端，不触发平台采集或真实下载。配置含义统一见[配置说明](configuration.md)，恢复及备份见[服务运行与恢复](operations/service-lifecycle.md)。
+适用日期：2026-10-30；当前实施分支 `codex/resource-cloud-receipts`，API/OpenAPI `1.14.0`。目标是用独立 MySQL 库完成构建、启动、只读最小调用和停止；首次演练关闭云端，不触发平台采集或真实下载。配置含义统一见[配置说明](configuration.md)，恢复及备份见[服务运行与恢复](operations/service-lifecycle.md)。
+
+本分支的新库升级至 V2026102913 并保持维护关闭：以下默认 legacy 只读演练仍适用，写请求预期为 `503/resource_maintenance`，正式本地根不会仅因启动而创建。V2913 删除31个旧物理云列及2索引，云读写转到统一回执；旧 HTTP JSON 和三张 legacy 映射表保留。已有库先按[独立数据库迁移](operations/resource-database-migration.md)备份、克隆核对后升级，实际 `crawler` 状态以该记录为准。工具已提供目标探测和基线 review/seal/activate；按[维护说明](operations/resource-cloud-import.md)演练，不能手工改 active/baseline_ready 绕过门槛。parallel 使用 v2 接口；显式固定 legacy view 后可桥接旧歌曲/封面 process，已知元数据、补建和治理入口保留原语义并接入持久准入，未知写入口仍拒绝；retry/reset 不自动入队或解除历史 skip；切换条件见[方案](roadmap/resource-cloud-receipts.md)。
 
 ## 准备工具和工作目录
 
 - Windows x64、MSVC C++20 开发环境、Windows SDK、Ninja，以及支持 preset version 6 的 CMake 3.25 或更高版本。
-- vcpkg 的 `x64-windows` 依赖可被 CMake 找到：Drogon、Boost.Asio、Boost.MySQL、OpenSSL、Zlib、nlohmann_json、SQLite3。依赖来源是 [CMakeLists.txt](../CMakeLists.txt)；本仓库没有自动安装依赖的 manifest。
+- vcpkg 的 `x64-windows` 依赖可被 CMake 找到：Drogon、Boost.Asio、Boost.MySQL、OpenSSL、Zlib、nlohmann_json、SQLite3。Boost.MySQL 需提供 `pipeline_request/any_connection::async_run_pipeline`，用于入队中的只读查询对；本轮构建验证版本为 Boost 1.90。依赖来源是 [CMakeLists.txt](../CMakeLists.txt)；本仓库没有自动安装依赖的 manifest。
 - 可达的 MySQL 8.0，以及能创建独立演练库和执行其 migration 的账号。运行程序不自动创建数据库。
 
 使用 Developer PowerShell for VS，进入 crawler 模块根目录；下面的 `C:/work/crawler`、`D:/crawler-build` 都是需按实际位置替换的示例。不是从 `Debug` 目录切换过去直接运行 exe。
@@ -91,6 +93,8 @@ $env:CRAWLER_LOG_TEXT_FILE = "D:/crawler-runs/$taskDatabase/service.log"
 
 当前进程内已有的其他 MySQL 连接变量也优先于文件；核对它们的来源，避免连错实例。端口须未被占用。首次启动按升序执行未应用 migration；同一 MySQL 实例上的其他初始化任务应等待本次完成。迁移已执行的文件不能改字节，结构查询以迁移和[SQL 说明](../sql/mysql/README.md)为准。
 
+仅完善数据库时，到这里即可改走[独立数据库迁移](operations/resource-database-migration.md)的 `schema-status/schema-migrate/schema-check-sql`，无需启动下述服务或 worker。
+
 ## 启动和最小调用
 
 在原终端前台启动，保留它用于 Ctrl+C 停止：
@@ -111,7 +115,7 @@ Invoke-RestMethod "$taskBase/api/migu/covers/queue?owner_type=singer&page_size=1
 (Invoke-RestMethod "$taskBase/api/openapi.json").info.version
 ```
 
-预期：接口为 HTTP 200，health 表示存活，schema 返回 `ok=true` 且最新可用版本为 `2026102901`，settings 包含 `mutable/readonly`，新库的歌手和封面列表为空，OpenAPI 版本为 `1.9.0`。health 不能替代数据库/schema 检查。没有预置数据时空列表是正常结果，不需要触发真实采集才能验收启动。
+预期：接口为 HTTP 200，health 表示存活，schema 返回 `ok=true` 且最新可用版本为 `2026102913`，settings 包含 `mutable/readonly`，新库的歌手和封面列表为空，OpenAPI 版本为 `1.14.0`。health 不能替代数据库/schema 检查。没有预置数据时空列表是正常结果，不需要触发真实采集才能验收启动。
 
 需要核对热更新时，先保存原值，再更新并恢复：
 

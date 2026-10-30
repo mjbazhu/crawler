@@ -1,17 +1,19 @@
 # 服务运行与恢复
 
-核对日期：2026-10-29；源码基线 `967bc67`，API/OpenAPI `1.9.0`。本指南针对单个 crawler 进程和明确的 MySQL/文件根。启动步骤见[快速启动](../getting-started.md)，开关与优先级见[配置说明](../configuration.md)，完整请求见[API 说明](../api/mg/migu-api.md)。
+核对日期：2026-10-30；当前实施分支 `codex/resource-cloud-receipts`，API/OpenAPI `1.12.0`。本指南针对单个 crawler 进程和明确的 MySQL/文件根；后文历史演练保留原版本。启动步骤见[快速启动](../getting-started.md)，开关见[配置说明](../configuration.md)，请求见[API 说明](../api/mg/migu-api.md)。
 
 ## 启动前与就绪检查
 
 1. 确认运行版本、工作目录、私有 env 的实际来源、数据库名、文件根和云端目标。路径不同不代表文件已迁移；更换网盘账号也不代表旧回执仍有效。
 2. 确认目标库已存在。升级前保留可用的库和文件备份；初始化会执行 migration，并可能恢复超时状态，不是只读探测。
-3. 首次用前台 `demo.exe` 启动。等待 schema 初始化、文件日志核对、一般 stale 恢复及 HTTP 监听；失败先读该进程日志，不同时反复启动多个实例。
+3. 首次用前台 `demo.exe` 启动。等待 schema 初始化、文件日志核对及 HTTP 监听；一般旧 stale 恢复仅在 legacy 执行，parallel 保留持久传输意图；失败先读该进程日志，不同时反复启动多个实例。
 4. 依次检查 `/api/health`、`/api/migu/schema/status`、`/api/migu/settings` 和一项 catalog 查询。schema 应兼容当前版本，settings 的只读后端应符合预期；health 只证明 HTTP 存活。
 
-服务没有持久化的全局“暂停调度”开关。维护前先停止调用方提交新任务；多个实例共享文件根和认领时需要另外的恢复协调，不能仅依赖单实例启动核对。
+持久维护状态可由 baseline-maintenance 原子关闭三端准入，再按基线维护流程重新审阅、封存和激活。维护前先停止调用方提交新任务；多个实例共享文件根和认领时需要另外的恢复协调，不能仅依赖单实例启动核对。
 
 ## 正常停止与任务取消
+
+本分支已加入 MySQL 持久准入：任一目标 maintenance、schema/基线不就绪或故障时拒绝新写入，读取、明确只读 preview 和停止入口保持。legacy 的 local 暂停拒绝旧处理/恢复；parallel 使用逐端持久 worker，禁用旧通用 stale 恢复，未启用兼容或其余旧 writer 返回 `legacy_parallel_unsupported`。启用固定 legacy view 后旧歌曲/封面 process 仍须通过相同维护闸门。工具的 review/seal/activate 会复核四类范围、排除、目标与未决任务，不能约束旧二进制和独立脚本；导入与切换仍须停旧 writer。步骤见[基线维护](resource-cloud-import.md)。
 
 维护前查询 `GET /api/migu/tasks?state=Running`，保存需要跟踪的 batch_id；对仍在当前进程内的任务请求协作取消：
 
@@ -26,9 +28,9 @@ Invoke-RestMethod "$taskBase/api/migu/tasks/$taskBatchId/events?page=1&page_size
 
 取消返回 200 表示已请求，不能据此认定在途网络、文件提交或数据库回写已经结束；继续观察 item/event 与资源状态。封面尚未开始的目标不再认领，在途目标按用例取消检查收尾。任务终态可能先于在途工作完成；维护前还需确认没有活跃 I/O 和认领。
 
-任务静止后在前台终端按 Ctrl+C，等待 HTTP 停止及进程退出，再确认原 PID 和监听端口消失。当前 stop 关闭 HTTP 并取消 MySQL 池，没有“所有在途任务必然排空后再停库”的保证；不要把直接退出当作有任务时的完整优雅排空。`Stop-Process`、关闭窗口或系统断电属于中断路径，恢复按下一节处理。
+任务静止后按 Ctrl+C，等待 HTTP 停止及进程退出，再确认 PID 和监听端口消失。parallel 会停止认领，等待配置的宽限，再请求在途取消；未排空时保留依赖及持久意图并报告需要恢复，之后取消 MySQL 池。legacy 仍没有全服务排空保证；本机 runtime 单元测试也不等于真实云端停止证明。`Stop-Process`、关闭窗口或断电属于中断路径，恢复按下一节处理。
 
-`tasks/progress` 和 `tasks/stop` 依赖内存任务，重启后可能返回 404；持久化历史通过 tasks 详情、items、events 查询。没有 HTTP 全服务 shutdown 路由。
+旧 legacy 内存批次的 `tasks/progress` 和 `tasks/stop` 重启后仍可能返回404；parallel 兼容批次已有持久映射，可跨重启查询进度和请求停止。v2 真实操作也持久化，停止按所选目标传递到两层子操作及独立producer；旧编号停止使用旧入口，v2停止使用映射的真实操作ID。其他持久历史通过 tasks 详情、items、events 查询。没有 HTTP 全服务 shutdown 路由。
 
 封面服务释放时请求协作取消，已排队及在途 worker 持有独立的进度、停止标记和所需 port，不再访问已析构的批次管理器。该生命周期保护不构成全服务排空协议，也不保证 MySQL 池取消前所有目标已经完成回写；维护窗口仍按上述顺序等待静止。
 
