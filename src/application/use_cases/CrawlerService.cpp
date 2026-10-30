@@ -2323,10 +2323,15 @@ application::model::MiguResourceActionResult CrawlerService::retryMiguResources(
     const int requested_count = static_cast<int>(result.items.size());
     result.skipped_count = requested_count == 0 ? 0 : (std::max)(0, requested_count - result.updated_count);
     std::vector<application::model::MiguGovernanceEventRecord> events;
-    for (const auto &item : result.items) {
+    for (auto &item : result.items) {
         std::optional<application::model::MiguResourceQueueRecord> resource;
         if (item.resource_id != 0) {
             resource = catalog_query_service_->findResource(item.resource_id);
+        }
+        // SQL保护或并发变化可能拒绝原候选；明细不得把预测的pending当实际结果。
+        if (item.reason == "retry" && (!resource || resource->status != 0)) {
+            item.reason = resource ? "protected_or_changed" : "not_found";
+            if (resource) item.status = resource->status;
         }
         events.push_back(resourceGovernanceEvent("resource.retry", item, resource, "retry"));
     }
@@ -2372,10 +2377,15 @@ application::model::MiguResourceActionResult CrawlerService::resetMiguResources(
     const int requested_count = static_cast<int>(result.items.size());
     result.skipped_count = requested_count == 0 ? 0 : (std::max)(0, requested_count - result.updated_count);
     std::vector<application::model::MiguGovernanceEventRecord> events;
-    for (const auto &item : result.items) {
+    for (auto &item : result.items) {
         std::optional<application::model::MiguResourceQueueRecord> resource;
         if (item.resource_id != 0) {
             resource = catalog_query_service_->findResource(item.resource_id);
+        }
+        // 与retry一致，汇总成功数来自实际更新，逐项状态来自提交后的重读。
+        if (item.reason == "reset" && (!resource || resource->status != 0)) {
+            item.reason = resource ? "protected_or_changed" : "not_found";
+            if (resource) item.status = resource->status;
         }
         events.push_back(resourceGovernanceEvent("resource.reset", item, resource, "reset"));
     }
@@ -2879,6 +2889,11 @@ application::model::CrawlerRuntimeSettings CrawlerService::getRuntimeSettings() 
 {
     std::lock_guard<std::mutex> lock(settings_mutex_);
     return runtime_settings_;
+}
+
+application::model::SongResourceProcessOptions CrawlerService::resourceProcessOptions(const application::model::SongResourceProcessOptionOverrides &overrides) const
+{
+    return effectiveResourceProcessOptions(getRuntimeSettings(), overrides);
 }
 
 std::optional<std::string> CrawlerService::updateRuntimeSettings(const application::model::CrawlerRuntimeSettingsUpdate &update)

@@ -48,7 +48,8 @@ application::async::Task<void> AsyncSongResourceDownloadWorkflow::processRelated
             if (related_target) {
                 co_await notifyItemStarted(listener, makeStartedItem(*related_target, true));
                 co_await notifyItemEvent(listener, makeStartedItem(*related_target, true), "relatedResourceClaimed", stagePayload(*related_target, "related_resource_claimed", "\"related_kind\":\"" + escapeJson(kind) + "\""));
-                item = co_await processDirectResource(*related_target, batch_id, state->options, listener);
+                const auto blocked = co_await checkAdmission(*related_target, listener);
+                item = blocked ? *blocked : co_await processDirectResource(*related_target, batch_id, state->options, listener);
             }
         } catch (...) {
             failed = true;
@@ -111,13 +112,13 @@ application::async::Task<bool> AsyncSongResourceDownloadWorkflow::refreshPacmtok
         co_return false;
     }
 
-    auto refreshed = co_await runtime_->postBlocking<application::model::MiguPacmtokenRefreshResult>([store = pacmtoken_store_, refresher = pacmtoken_refresher_]() {
+    auto refreshed = co_await runtime_->postBlocking<application::model::MiguPacmtokenRefreshResult>([store = pacmtoken_store_, refresher = pacmtoken_refresher_, force, interval = state->options.pacmtoken_refresh_interval_seconds]() {
         application::model::MiguPacmtokenRefreshResult result;
         auto current = store->currentPacmtoken();
         if (!current || current->empty()) {
             return result;
         }
-        result = refresher->refreshPacmtoken(*current);
+        result = refresher->refreshPacmtokenWithPolicy(*current, force, interval);
         if (!result.success) {
             return result;
         }

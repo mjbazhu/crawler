@@ -1,6 +1,7 @@
 #pragma once
 
 #include "crawler/application/use_cases/AsyncSongResourceDownloadWorkflow.h"
+#include "crawler/application/model/SongResourcePolicy.h"
 
 #include <algorithm>
 #include <array>
@@ -112,7 +113,7 @@ inline bool isKnownDigitalAlbum(const application::model::SongResourceQueueTarge
 
 inline bool isPermanentResourceSkip(const std::string &code)
 {
-    return code == "210001" || code == "440000" || code == "440015" || code == "440016";
+    return application::model::isPermanentSongResourceSkip(code);
 }
 
 inline std::string permanentResourceSkipCategory(const std::string &code)
@@ -132,6 +133,7 @@ inline application::model::SongResourceProcessItem makeItem(const application::m
 {
     application::model::SongResourceProcessItem item;
     item.resource_id = target.resource_id;
+    item.claim_generation = target.claim_generation;
     item.song_source_ref_id = target.song_source_ref_id;
     item.source = target.source;
     item.source_song_id = target.source_song_id;

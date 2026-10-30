@@ -250,6 +250,8 @@ public:
 
     // 获取当前运行设置快照，供 API 层返回给前端。
     application::model::CrawlerRuntimeSettings getRuntimeSettings() const;
+    // 旧与统一队列共用默认设置和单次覆盖的解析规则。
+    application::model::SongResourceProcessOptions resourceProcessOptions(const application::model::SongResourceProcessOptionOverrides &overrides) const;
 
     // 更新支持热变更的运行设置；返回错误信息表示更新失败。
     std::optional<std::string> updateRuntimeSettings(const application::model::CrawlerRuntimeSettingsUpdate &update);

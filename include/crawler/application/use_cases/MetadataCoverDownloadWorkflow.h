@@ -2,6 +2,7 @@
 
 #include "crawler/application/model/MetadataCover.h"
 #include "crawler/application/ports/persistence/MetadataCoverQueue.h"
+#include "crawler/application/ports/persistence/ResourceTransferAccess.h"
 #include "crawler/application/ports/storage/MetadataCoverReader.h"
 #include "crawler/application/ports/storage/MetadataCoverStore.h"
 
@@ -16,14 +17,15 @@ namespace orchestrator::modules::crawler::application::use_cases {
 class MetadataCoverDownloadWorkflow {
 public:
     // 保存线程安全 port，无任务内共享可变状态。
-    MetadataCoverDownloadWorkflow(std::shared_ptr<ports::MetadataCoverQueue> queue, std::shared_ptr<ports::MetadataCoverStore> store, std::shared_ptr<ports::MetadataCoverReader> reader);
+    MetadataCoverDownloadWorkflow(std::shared_ptr<ports::MetadataCoverQueue> queue, std::shared_ptr<ports::MetadataCoverStore> store, std::shared_ptr<ports::MetadataCoverReader> reader, std::shared_ptr<ports::ResourceTransferAccess> access = nullptr);
     // 每次调用处理一条已查询资源，取消与重试均保留旧文件。
     model::MetadataCoverItem process(model::MetadataCoverRecord target, const model::MetadataCoverOptions &options, const std::string &batch_id = {}, std::function<bool()> cancelled = {});
 
 private:
-    std::shared_ptr<ports::MetadataCoverQueue> queue_;   // 条件认领与回写
-    std::shared_ptr<ports::MetadataCoverStore> store_;   // 下载及文件补偿
-    std::shared_ptr<ports::MetadataCoverReader> reader_; // 检查旧文件
+    std::shared_ptr<ports::MetadataCoverQueue> queue_;      // 条件认领与回写
+    std::shared_ptr<ports::MetadataCoverStore> store_;      // 下载及文件补偿
+    std::shared_ptr<ports::MetadataCoverReader> reader_;    // 检查旧文件
+    std::shared_ptr<ports::ResourceTransferAccess> access_; // 内容 I/O 前的持久策略
 };
 
 } // namespace orchestrator::modules::crawler::application::use_cases

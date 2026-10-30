@@ -1,4 +1,5 @@
 #include "crawler/application/use_cases/MetadataCoverCloudWorkflow.h"
+#include "crawler/application/use_cases/ResourceTransferPreflight.h"
 
 #include <algorithm>
 #include <chrono>
@@ -8,7 +9,7 @@
 
 namespace orchestrator::modules::crawler::application::use_cases {
 
-MetadataCoverCloudWorkflow::MetadataCoverCloudWorkflow(std::shared_ptr<ports::MetadataCoverCloudQueue> queue, std::shared_ptr<ports::MetadataCoverReader> reader, std::shared_ptr<ports::CloudFileStore> store, int timeout_ms) : queue_(std::move(queue)), reader_(std::move(reader)), store_(std::move(store)), timeout_ms_((std::clamp)(timeout_ms, 100, 600000))
+MetadataCoverCloudWorkflow::MetadataCoverCloudWorkflow(std::shared_ptr<ports::MetadataCoverCloudQueue> queue, std::shared_ptr<ports::MetadataCoverReader> reader, std::shared_ptr<ports::CloudFileStore> store, int timeout_ms, std::shared_ptr<ports::ResourceTransferAccess> access, std::optional<model::ResourceDestination> destination) : queue_(std::move(queue)), reader_(std::move(reader)), store_(std::move(store)), timeout_ms_((std::clamp)(timeout_ms, 100, 600000)), access_(std::move(access)), destination_(destination)
 {
     if (!queue_ || !reader_ || !store_) throw std::invalid_argument("cover cloud dependencies are required");
 }
@@ -37,6 +38,14 @@ model::MetadataCoverItem MetadataCoverCloudWorkflow::process(model::MetadataCove
         item.last_error = "metadata cover cloud processing failed";
         return item;
     };
+    if (access_ && !destination_) return cancelled && cancelled() ? fail("cancelled", "resource") : fail("legacy_cloud_provider_required", "invalid_target");
+    const auto checked = preflightResourceTransfer(access_.get(), {target.owner == model::CoverOwner::Singer ? model::ResourceOwner::Singer : model::ResourceOwner::Album, target.resource_id}, destination_.value_or(model::ResourceDestination::Baidu), cancelled && cancelled());
+    if (!checked.isSuccess()) return fail("resource_admission_failed");
+    if (checked.data()->decision != ResourceWorkDecision::Transfer) {
+        item.skipped = checked.data()->decision == ResourceWorkDecision::SkipPolicy || checked.data()->decision == ResourceWorkDecision::Restricted;
+        item.result_code = checked.data()->result_code;
+        return item.skipped ? item : fail(item.result_code, "resource");
+    }
     const auto current = queue_->find(target.owner, target.resource_id);
     if (!current.isSuccess()) return fail("cloud_queue_read_failed");
     if (!*current.data()) return fail("cloud_resource_missing");

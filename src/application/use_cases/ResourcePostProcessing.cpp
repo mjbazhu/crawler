@@ -34,6 +34,13 @@ std::string eventPayload(const Result &processed)
 application::async::Task<void> AsyncSongResourceDownloadWorkflow::postProcessCompleted(const application::model::SongResourceProcessItem &item, SongResourceProcessListener *listener)
 {
     if (!item.ok || !extensions_.post_processor) co_return;
+    if (extensions_.transfer_access) {
+        const auto allowed = co_await runtime_->postBlocking<Result>([access = extensions_.transfer_access] { return access->writesAllowed(); });
+        if (!allowed.isSuccess() || !*allowed.data()) {
+            co_await notifyItemEvent(listener, item, "resourcePostProcessingFailed", "{\"result_code\":\"resource_maintenance\"}");
+            co_return;
+        }
+    }
     Result processed = Result::failure(application::result::ServiceErrorType::InternalError, "resource_post_processing_failed");
     try {
         processed = co_await runtime_->postBlocking<Result>([processor = extensions_.post_processor, item] { return processResource(*processor, item); });

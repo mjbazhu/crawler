@@ -78,6 +78,7 @@ application::async::Task<void> AsyncSongResourceDownloadWorkflow::uploadBatchClo
         }
         application::model::SongResourceSuccessUpdate update;
         update.resource_id = it->resource_id;
+        update.claim_generation = it->claim_generation;
         update.local_path = it->local_path;
         update.cloud_backend = uploaded.backend;
         update.cloud_path = uploaded_object.cloud_path;

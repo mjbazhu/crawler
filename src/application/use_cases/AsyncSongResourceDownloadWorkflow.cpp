@@ -50,9 +50,7 @@ application::async::Task<application::model::SongResourceProcessResult> AsyncSon
     }
     state->result.batch_id = query.batch_id;
 
-    if (state->options.auto_refresh_pacmtoken) {
-        (void)co_await refreshPacmtoken(state, listener, true);
-    }
+    co_await requireWritesAllowed();
 
     co_await notifyBatchEvent(listener, "resourceClaimStarted", claimPayload(query, "resource_claim_started"));
     std::vector<application::model::SongResourceQueueTarget> targets;
@@ -80,6 +78,11 @@ application::async::Task<application::model::SongResourceProcessResult> AsyncSon
         co_await notifyBatchEvent(listener, "resourceClaimEmpty", claimPayload(query, "resource_claim_empty"));
         co_return state->result;
     }
+
+    // 空队列或全部历史跳过不能为 token 刷新而产生额外网络请求。
+    targets = co_await filterAdmission(std::move(targets), state, listener);
+    if (targets.empty()) co_return state->result;
+    if (state->options.auto_refresh_pacmtoken) (void)co_await refreshPacmtoken(state, listener, true);
 
     auto shared_targets = std::make_shared<std::vector<application::model::SongResourceQueueTarget>>(std::move(targets));
     auto next_index = std::make_shared<std::atomic<std::size_t>>(0);
@@ -126,14 +129,24 @@ application::async::Task<application::model::SongResourceProcessResult> AsyncSon
 {
     auto state = std::make_shared<ProcessRunState>();
     state->options.auto_refresh_pacmtoken = false;
-    if (runtime_ && resource_queue_ && content_fetcher_ && blob_store_) co_await processRelatedResources(song, resources, {}, state, nullptr);
+    if (runtime_ && resource_queue_ && content_fetcher_ && blob_store_) {
+        co_await requireWritesAllowed();
+        if (!co_await checkAdmission(song, nullptr)) co_await processRelatedResources(song, resources, {}, state, nullptr);
+    }
     co_return state->result;
 }
 
 application::async::Task<application::model::SongResourceProcessItem> AsyncSongResourceDownloadWorkflow::processClaimed(application::model::SongResourceQueueTarget target, std::string batch_id)
 {
+    co_return co_await processClaimed(std::move(target), std::move(batch_id), application::model::SongResourceProcessOptions {});
+}
+
+application::async::Task<application::model::SongResourceProcessItem> AsyncSongResourceDownloadWorkflow::processClaimed(application::model::SongResourceQueueTarget target, std::string batch_id, application::model::SongResourceProcessOptions options)
+{
     auto state = std::make_shared<ProcessRunState>();
+    state->options = std::move(options);
     state->options.process_related_resources = false;
+    if (const auto blocked = co_await checkAdmission(target, nullptr)) co_return *blocked;
     co_return isAudioResource(target.resource_kind) ? co_await processAudio(std::move(target), batch_id, state, nullptr) : co_await processDirectResource(std::move(target), batch_id, state->options, nullptr);
 }
 
@@ -142,9 +155,11 @@ application::async::Task<void> AsyncSongResourceDownloadWorkflow::processWorker(
     application::model::SongResourceProcessItem item;
     try {
         co_await notifyItemStarted(listener, makeStartedItem(target, false));
-        const bool cancelled = listener && co_await runtime_->postBlocking<bool>([listener] { return listener->isCancellationRequested(); });
-        if (cancelled)
+        const auto blocked = co_await checkAdmission(target, listener);
+        if (blocked && blocked->result_code == "cancelled")
             item = co_await fail(target, "cancelled", "cancelled", "resource batch cancelled", batch_id, listener);
+        else if (blocked)
+            item = *blocked;
         else
             item = isAudioResource(target.resource_kind) ? co_await processAudio(target, batch_id, state, listener) : co_await processDirectResource(target, batch_id, state->options, listener);
     } catch (const std::exception &e) {

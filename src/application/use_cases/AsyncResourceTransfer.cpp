@@ -45,6 +45,9 @@ application::async::Task<application::model::SongResourceProcessItem> AsyncSongR
         update.resource_id = target.resource_id;
         update.claim_generation = target.claim_generation;
         update.local_path = saved_path;
+        update.cloud_backend = copied.cloud_backend;
+        update.cloud_path = copied.cloud_path;
+        update.remote_only = true;
         update.size_bytes = saved_size;
         update.checksum = saved_checksum;
         update.result_code = "ok";

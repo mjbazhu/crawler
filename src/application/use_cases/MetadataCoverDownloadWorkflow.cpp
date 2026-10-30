@@ -1,4 +1,5 @@
 #include "crawler/application/use_cases/MetadataCoverDownloadWorkflow.h"
+#include "crawler/application/use_cases/ResourceTransferPreflight.h"
 
 #include <algorithm>
 #include <exception>
@@ -42,7 +43,7 @@ void setFailure(model::MetadataCoverItem &item, std::string code, std::string ca
 
 } // namespace
 
-MetadataCoverDownloadWorkflow::MetadataCoverDownloadWorkflow(std::shared_ptr<ports::MetadataCoverQueue> queue, std::shared_ptr<ports::MetadataCoverStore> store, std::shared_ptr<ports::MetadataCoverReader> reader) : queue_(std::move(queue)), store_(std::move(store)), reader_(std::move(reader))
+MetadataCoverDownloadWorkflow::MetadataCoverDownloadWorkflow(std::shared_ptr<ports::MetadataCoverQueue> queue, std::shared_ptr<ports::MetadataCoverStore> store, std::shared_ptr<ports::MetadataCoverReader> reader, std::shared_ptr<ports::ResourceTransferAccess> access) : queue_(std::move(queue)), store_(std::move(store)), reader_(std::move(reader)), access_(std::move(access))
 {}
 
 model::MetadataCoverItem MetadataCoverDownloadWorkflow::process(model::MetadataCoverRecord target, const model::MetadataCoverOptions &options, const std::string &batch_id, std::function<bool()> cancelled)
@@ -50,9 +51,15 @@ model::MetadataCoverItem MetadataCoverDownloadWorkflow::process(model::MetadataC
     model::MetadataCoverItem item;
     item.record = target;
     const auto stopped = [&] { return cancelled && cancelled(); };
-    if (stopped()) {
-        setFailure(item, "cancelled", "resource");
-        item.record.available = reader_ && reader_->available(target.file);
+    const auto checked = preflightResourceTransfer(access_.get(), {target.owner == model::CoverOwner::Singer ? model::ResourceOwner::Singer : model::ResourceOwner::Album, target.resource_id}, model::ResourceDestination::Local, stopped());
+    if (!checked.isSuccess()) {
+        setFailure(item, "resource_admission_failed");
+        return item;
+    }
+    if (checked.data()->decision != ResourceWorkDecision::Transfer) {
+        item.skipped = checked.data()->decision == ResourceWorkDecision::SkipPolicy || checked.data()->decision == ResourceWorkDecision::Restricted;
+        item.result_code = checked.data()->result_code;
+        if (!item.skipped) setFailure(item, item.result_code, "resource");
         return item;
     }
     if (!options.refresh && target.file.status == 2) {

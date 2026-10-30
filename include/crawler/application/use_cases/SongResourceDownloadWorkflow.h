@@ -93,6 +93,8 @@ public:
 
     // 处理单条已认领资源，供测试或手动编排使用。
     application::model::SongResourceProcessItem processClaimed(application::model::SongResourceQueueTarget target, std::string batch_id);
+    // 在独立快照临时区使用同一流程及显式预算，保持两参数兼容入口。
+    application::model::SongResourceProcessItem processClaimed(application::model::SongResourceQueueTarget target, std::string batch_id, application::model::SongResourceProcessOptions options);
 
 private:
     std::shared_ptr<application::ports::AsyncRuntime> runtime_;   // 同步适配器的内联续体执行器

@@ -22,8 +22,10 @@
 #include <atomic>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_set>
+#include <vector>
 
 namespace orchestrator::modules::crawler::application::use_cases {
 
@@ -55,6 +57,8 @@ public:
 
     // 同步兼容入口处理已认领目标，复用同一下载、补偿和回写实现。
     application::async::Task<application::model::SongResourceProcessItem> processClaimed(application::model::SongResourceQueueTarget target, std::string batch_id);
+    // 独立来源获取复用既有合法下载链，显式冻结单次预算并禁用关联扩展。
+    application::async::Task<application::model::SongResourceProcessItem> processClaimed(application::model::SongResourceQueueTarget target, std::string batch_id, application::model::SongResourceProcessOptions options);
 
 private:
     struct ProcessRunState;
@@ -63,6 +67,12 @@ private:
     application::ports::ResourceProcessingExtensions extensions_; // 创建后不变的后处理依赖组
 
     application::async::Task<void> processWorker(std::shared_ptr<ProcessRunState> state, application::model::SongResourceQueueTarget target, std::string batch_id, SongResourceProcessListener *listener);
+    // 在来源解析、文件读取和后处理前检查持久策略。
+    application::async::Task<std::optional<application::model::SongResourceProcessItem>> checkAdmission(const application::model::SongResourceQueueTarget &target, SongResourceProcessListener *listener);
+    // 批次认领和自动 token 刷新前检查来源写入闸门。
+    application::async::Task<void> requireWritesAllowed();
+    // token 刷新前结束跳过/阻断项，兼容不自行过滤历史策略的队列 port。
+    application::async::Task<std::vector<application::model::SongResourceQueueTarget>> filterAdmission(std::vector<application::model::SongResourceQueueTarget> targets, std::shared_ptr<ProcessRunState> state, SongResourceProcessListener *listener);
     application::async::Task<application::model::SongResourceProcessItem> processAudio(application::model::SongResourceQueueTarget target, const std::string &batch_id, std::shared_ptr<ProcessRunState> state, SongResourceProcessListener *listener);
     application::async::Task<application::model::SongResourceProcessItem> processDirectResource(application::model::SongResourceQueueTarget target, const std::string &batch_id, const application::model::SongResourceProcessOptions &options, SongResourceProcessListener *listener);
     application::async::Task<application::model::SongResourceProcessItem> downloadAndStoreAttempt(application::model::SongResourceQueueTarget target, std::string remote_url, const std::string &batch_id, const application::model::SongResourceProcessOptions &options, bool write_failure, SongResourceProcessListener *listener);

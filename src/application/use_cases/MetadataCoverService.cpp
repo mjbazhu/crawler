@@ -11,7 +11,8 @@ namespace {
 model::MetadataCoverItem processTarget(MetadataCoverDownloadWorkflow &local, MetadataCoverCloudWorkflow *cloud, model::MetadataCoverRecord target, const model::MetadataCoverOptions &options, const std::string &batch = {}, std::function<bool()> cancelled = {})
 {
     auto item = local.process(std::move(target), options, batch, cancelled);
-    if (item.success && cloud) item = cloud->process(item.record, options.retries, batch, std::move(cancelled));
+    // 声明本地跳过也须检查旧契约要求的固定云端；不能只凭 local skip 结束整个旧视图。
+    if (cloud && (item.success || (item.skipped && item.result_code == "skip_existing"))) item = cloud->process(item.record, options.retries, batch, std::move(cancelled));
     item.record.cloud.enabled = cloud != nullptr;
     if (cloud) item.record.cloud.current = cloud->matches(item.record);
     return item;
@@ -27,6 +28,7 @@ MetadataCoverService::MetadataCoverService(std::shared_ptr<ports::MetadataCoverQ
 
 result::ServiceResult<model::MetadataCoverPage> MetadataCoverService::list(const model::MetadataCoverQuery &query)
 {
+    if (projection_) return projection_->list(query);
     auto page = queue_->list(query);
     if (!page.isSuccess()) return page;
     auto value = *page.data();
@@ -96,7 +98,7 @@ result::ServiceResult<std::string> MetadataCoverService::start(const model::Meta
             const auto item = processTarget(*workflow, cloud.get(), targets->at(key), options, batch_id, cancelled);
             BatchTaskManager::TargetResult result;
             const auto code = item.result_code.empty() ? item.record.file.result_code : item.result_code;
-            result.success = item.success || (item.skipped && code == "cover_not_claimed");
+            result.success = item.success || (item.skipped && (code == "cover_not_claimed" || code == "skip_existing" || code == "permanent_resource_restriction"));
             result.written_count = item.success && !item.skipped ? 1 : 0;
             result.error = item.last_error.empty() ? item.record.file.last_error : item.last_error;
             result.error_category = item.error_category.empty() ? item.record.file.error_category : item.error_category;

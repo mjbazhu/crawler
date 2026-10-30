@@ -125,4 +125,9 @@ application::model::SongResourceProcessItem SongResourceDownloadWorkflow::proces
     return runtime_->runForTest(workflow_->processClaimed(std::move(target), std::move(batch_id)));
 }
 
+application::model::SongResourceProcessItem SongResourceDownloadWorkflow::processClaimed(application::model::SongResourceQueueTarget target, std::string batch_id, application::model::SongResourceProcessOptions options)
+{
+    return runtime_->runForTest(workflow_->processClaimed(std::move(target), std::move(batch_id), std::move(options)));
+}
+
 } // namespace orchestrator::modules::crawler::application::use_cases

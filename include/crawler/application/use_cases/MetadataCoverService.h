@@ -6,6 +6,7 @@
 #include "crawler/application/ports/execution/TaskExecutor.h"
 #include "crawler/application/ports/persistence/BatchTaskRepository.h"
 #include "crawler/application/ports/persistence/MetadataCoverQueue.h"
+#include "crawler/application/ports/persistence/MetadataCoverProjection.h"
 #include "crawler/application/ports/storage/MetadataCoverReader.h"
 #include "crawler/application/result/ServiceResult.h"
 #include "crawler/application/use_cases/BatchTaskManager.h"
@@ -29,6 +30,11 @@ public:
     MetadataCoverService(std::shared_ptr<ports::MetadataCoverQueue> queue, std::shared_ptr<ports::MetadataCoverReader> reader, std::shared_ptr<MetadataCoverDownloadWorkflow> workflow, std::shared_ptr<ports::TaskExecutor> executor, std::shared_ptr<ports::DiagnosticsSink> diagnostics, std::shared_ptr<ports::BatchTaskRepository> batches, std::chrono::milliseconds timeout = std::chrono::minutes(30), std::shared_ptr<MetadataCoverCloudWorkflow> cloud = {});
     // 查询队列并补本地文件可用性。
     result::ServiceResult<model::MetadataCoverPage> list(const model::MetadataCoverQuery &query);
+    // 仅组合根启动前设置；目录页与旧封面查询共享固定平台事实。
+    void setProjection(std::shared_ptr<ports::MetadataCoverProjection> projection)
+    {
+        projection_ = std::move(projection);
+    }
     // 同步小批下载，复用相同的单资源用例。
     result::ServiceResult<std::vector<model::MetadataCoverItem>> process(const model::MetadataCoverOptions &options);
     // 创建持久化批次，下载在有界执行器执行。
@@ -46,6 +52,7 @@ private:
     // 将下载筛选收敛为有界候选页，不提前认领未开始的任务。
     result::ServiceResult<model::MetadataCoverPage> select(const model::MetadataCoverOptions &options);
     std::shared_ptr<ports::MetadataCoverQueue> queue_;        // 数据库队列
+    std::shared_ptr<ports::MetadataCoverProjection> projection_; // 可选并行只读视图
     std::shared_ptr<ports::MetadataCoverReader> reader_;      // 文件读取
     std::shared_ptr<MetadataCoverDownloadWorkflow> workflow_; // 单资源编排
     std::shared_ptr<MetadataCoverCloudWorkflow> cloud_;       // 可选的共用云端阶段
