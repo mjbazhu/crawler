@@ -1,4 +1,5 @@
 #include "crawler/api/controllers/CrawlerController.h"
+#include "crawler/api/http/ResourceTransferError.h"
 #include "crawler/api/dto/MetadataCoverDto.h"
 #include "crawler/application/model/AlbumCollectionPolicy.h"
 
@@ -1628,6 +1629,16 @@ http::HttpResponse CrawlerController::handleStopMiguBatch(http::HttpRequest req)
         return jsonError(400, *error);
     }
 
+    if (legacy_transfers_) {
+        const auto found = legacy_transfers_->find(request->batch_id);
+        if (!found.isSuccess()) return jsonError(503, found.message());
+        if (*found.data()) {
+            const auto stopped = legacy_transfers_->cancel(request->batch_id);
+            if (!stopped.isSuccess()) return jsonError(stopped.error() == application::result::ServiceErrorType::Conflict ? 409 : 503, stopped.message());
+            return http::HttpResponse::json(200, json {{"batch_id", request->batch_id}, {"message", "migu task stop requested"}}.dump());
+        }
+    }
+
     const bool cover_batch = cover_service_ && cover_service_->progress(request->batch_id).has_value();
     if (!cover_batch && !service_->getBatchProgress(request->batch_id)) {
         return jsonError(404, "batch_id not found");
@@ -1653,6 +1664,12 @@ http::HttpResponse CrawlerController::handleGetMiguBatchProgress(http::HttpReque
 
     if (batch_id.empty()) {
         return jsonError(400, "batch_id is required");
+    }
+
+    if (legacy_transfers_) {
+        const auto found = legacy_transfers_->find(batch_id);
+        if (!found.isSuccess()) return jsonError(503, found.message());
+        if (*found.data()) return http::HttpResponse::json(200, progressToJson((**found.data()).progress).dump());
     }
 
     auto progress_opt = cover_service_ ? cover_service_->progress(batch_id) : std::nullopt;
@@ -1703,6 +1720,10 @@ http::HttpResponse CrawlerController::handleGetMiguTask(http::HttpRequest req)
         return jsonError(400, "batch_id is required");
     }
 
+    if (legacy_transfers_) {
+        const auto refreshed = legacy_transfers_->find(batch_id);
+        if (!refreshed.isSuccess()) return jsonError(503, refreshed.message());
+    }
     auto batch = service_->findBatch(batch_id);
     if (!batch) {
         return jsonError(404, "batch_id not found");
@@ -1721,6 +1742,10 @@ http::HttpResponse CrawlerController::handleListMiguTaskItems(http::HttpRequest 
         return jsonError(400, "batch_id is required");
     }
 
+    if (legacy_transfers_) {
+        const auto refreshed = legacy_transfers_->find(batch_id);
+        if (!refreshed.isSuccess()) return jsonError(503, refreshed.message());
+    }
     application::model::CrawlBatchItemQuery query;
     query.page = intQuery(req, "page", 1);
     query.page_size = intQuery(req, "page_size", 50);
@@ -2082,6 +2107,31 @@ http::HttpResponse CrawlerController::handleProcessMiguResources(http::HttpReque
         selected_preview = service_->previewMiguResources(processPreviewQueryFromClaim(*query));
     }
 
+    if (legacy_transfers_) {
+        query->options = service_->resourceProcessOptions(query->option_overrides);
+        const bool async = resourceProcessAsyncRequested(req);
+        const auto accepted = legacy_transfers_->songs(std::move(*query), !async, service_->getRuntimeSettings().task_timeout_ms);
+        if (!accepted.isSuccess()) {
+            return http::resourceTransferError(accepted.error(), accepted.message());
+        }
+        const auto &batch = *accepted.data();
+        auto body = async ? resourceProcessAcceptedToJson(batch.batch_id) : resourceProcessResultToJson(batch.songs);
+        if (selected_preview) {
+            auto preview_body = resourcePreviewToJson(*selected_preview);
+            preview_body["action"] = "process";
+            preview_body["source"] = "migu";
+            addProcessPreviewAliases(preview_body, *selected_preview);
+            body["preview"] = std::move(preview_body);
+        }
+        if (!async && (!batch.terminal || batch.timed_out)) body = {{"error_code", batch.timed_out ? "legacy_batch_timeout" : "legacy_completion_pending"}, {"message", "resource processing did not complete within the legacy wait budget; query the persisted batch"}, {"error", batch.timed_out ? "legacy_batch_timeout" : "legacy_completion_pending"}, {"batch_id", batch.batch_id}};
+        auto response = http::HttpResponse::json(async ? 202 : batch.terminal && !batch.timed_out ? 200 :
+                                                                                                    503,
+                                                 body.dump());
+        response.headers["X-Resource-Operation-Ids"] = json(batch.operation_ids).dump();
+        response.headers["Access-Control-Expose-Headers"] = "X-Resource-Operation-Ids";
+        return response;
+    }
+
     if (resourceProcessAsyncRequested(req)) {
         const std::string batch_id = service_->startMiguResourcesProcessAsync(std::move(*query));
         if (batch_id.empty()) {
@@ -2432,6 +2482,7 @@ http::HttpResponse CrawlerController::handleGetMiguSchemaStatus(http::HttpReques
     body["checksum_mismatches"] = status.checksum_mismatches;
     body["missing_tables"] = status.missing_tables;
     body["missing_columns"] = status.missing_columns;
+    body["missing_constraints"] = status.missing_constraints;
     body["checked_at"] = status.checked_at;
     return http::HttpResponse {200, {{"Content-Type", "application/json"}}, body.dump()};
 }

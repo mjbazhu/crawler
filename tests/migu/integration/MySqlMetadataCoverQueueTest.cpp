@@ -1,6 +1,7 @@
 #include "crawler/infrastructure/music/persistence/mysql/MySqlMetadataCoverQueue.h"
 #include "crawler/infrastructure/music/persistence/mysql/MySqlMetadataBatchWriter.h"
 #include "crawler/infrastructure/music/persistence/mysql/MySqlMusicCatalogQueryRepository.h"
+#include "crawler/infrastructure/music/persistence/mysql/MySqlMigrationRunner.h"
 #include "crawler/application/use_cases/MetadataCoverDownloadWorkflow.h"
 #include "migu/support/MetadataCoverTestSupport.h"
 #include "migu/support/MetadataCoverMySqlTestSupport.h"
@@ -26,15 +27,11 @@ void execute(const std::shared_ptr<mysql::MySqlConnectionPool> &pool, const std:
     (void)support::runOnExecutor(pool->executor(), pool->coExecute(statement), "cover fixture SQL");
 }
 
-// 新迁移的全部语句在同一连接重跑，验证 prepared DDL 的可重入性。
+// 收缩后重复正式初始化保持当前结构，不重新执行历史扩展DDL。
 boost::asio::awaitable<bool> replayMigration(std::shared_ptr<mysql::MySqlConnectionPool> pool)
 {
     auto connection = co_await pool->coAcquire();
-    boost::mysql::results result;
-    for (const auto &statement : sql::SqlFileLoader::splitStatements(sql::SqlFileLoader::loadOrThrow("sql/mysql/migrations/V2026102802__metadata_cover_download_claims.sql"))) {
-        co_await connection->async_execute(statement, result, boost::asio::use_awaitable);
-    }
-    co_return true;
+    co_return co_await mysql::MySqlMigrationRunner::coRun(connection, "sql/mysql/migrations");
 }
 } // namespace
 
@@ -52,7 +49,7 @@ int main(int argc, char *argv[])
         auto pool = support::makeCoverTestPool();
         mysql::MySqlMusicCatalogQueryRepository catalog(pool);
         const auto schema = catalog.schemaStatus();
-        test::require(schema.ok && schema.latest_available_version == 2026102901 && schema.latest_applied_version >= 2026102901, "cover schema status is stale or inconsistent");
+        test::require(schema.ok && schema.latest_available_version == 2026102913 && schema.latest_applied_version >= 2026102913, "cover schema status is stale or inconsistent");
         test::require(support::runOnExecutor(pool->executor(), replayMigration(pool), "replay cover migration"), "cover migration could not be replayed");
         auto queue = std::make_shared<mysql::MySqlMetadataCoverQueue>(pool);
         mysql::MySqlMetadataBatchWriter writer(pool);
@@ -122,7 +119,8 @@ int main(int argc, char *argv[])
         http->status = 200;
         http->on_get = [&] { execute(pool, "UPDATE singer_resources SET remote_url='https://example.test/NEW.png' WHERE id=" + std::to_string(target.resource_id)); };
         downloaded = workflow.process(**queue->find(target.owner, target.resource_id).data(), options);
-        test::require(!downloaded.success && downloaded.record.file.result_code == "cover_claim_changed" && files->exists(stored.file.local_path), "old URL snapshot was allowed to replace the MySQL receipt");
+        const auto after_url_change = **queue->find(stored.owner, stored.resource_id).data();
+        test::require(!downloaded.success && downloaded.result_code == "cover_claim_changed" && files->exists(stored.file.local_path) && after_url_change.file.status == 2 && after_url_change.file.local_path == stored.file.local_path, "source change lost the previous confirmed file or accepted stale bytes");
         http->on_get = {};
 
         query.owner = model::CoverOwner::Album;

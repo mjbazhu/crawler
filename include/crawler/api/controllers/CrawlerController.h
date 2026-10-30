@@ -5,6 +5,7 @@
 #include "crawler/application/use_cases/CrawlerService.h"
 #include "crawler/application/use_cases/MiguPacmtokenService.h"
 #include "crawler/application/use_cases/MetadataCoverService.h"
+#include "crawler/application/use_cases/LegacyResourceTransferService.h"
 
 #include <memory>
 
@@ -21,6 +22,11 @@ public:
         std::shared_ptr<application::use_cases::MiguPacmtokenService> pacmtoken_service = nullptr,
         std::shared_ptr<application::use_cases::MetadataCoverService> cover_service = nullptr
     );
+    // 组合根启用并行兼容后注入，旧构造与旧部署保持不变。
+    void setLegacyResourceTransfers(std::shared_ptr<application::use_cases::LegacyResourceTransferService> service)
+    {
+        legacy_transfers_ = std::move(service);
+    }
 
     // 处理 Migu 歌手分类采集请求，创建后台任务后立即返回任务 ID。
     http::HttpResponse handleStartMiguSingerIndexCrawl(http::HttpRequest req);
@@ -180,6 +186,7 @@ public:
     http::HttpResponse handleOpenApi(http::HttpRequest req);
 
 private:
+    std::shared_ptr<application::use_cases::LegacyResourceTransferService> legacy_transfers_; // 持久旧视图
     std::shared_ptr<application::use_cases::MetadataCoverService> cover_service_;     // 独立封面用例
     std::shared_ptr<application::use_cases::CrawlerService> service_;                 // application 用例服务
     dto::CrawlerSettingsReadonlySnapshot readonly_settings_;                          // settings API 只读启动期快照

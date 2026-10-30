@@ -1,8 +1,11 @@
 #pragma once
 
+#include "crawler/application/model/ResourceTransfer.h"
+
 #include "crawler/application/ports/diagnostics/DiagnosticsSink.h"
 #include "crawler/application/ports/execution/TaskExecutor.h"
 #include "crawler/application/ports/persistence/BatchTaskRepository.h"
+#include "crawler/application/ports/persistence/ResourceTransferAccess.h"
 #include "crawler/application/ports/storage/CloudFileStore.h"
 #include "crawler/application/use_cases/MetadataCoverService.h"
 #include "crawler/infrastructure/http/client/HttpClient.h"
@@ -11,6 +14,7 @@
 
 #include <chrono>
 #include <memory>
+#include <optional>
 
 namespace orchestrator::modules::crawler::infrastructure::app {
 
@@ -24,7 +28,9 @@ std::shared_ptr<application::use_cases::MetadataCoverService> makeMetadataCoverS
     std::shared_ptr<application::ports::BatchTaskRepository> batches,
     std::chrono::milliseconds timeout,
     std::shared_ptr<application::ports::CloudFileStore> cloud = {},
-    int cloud_timeout_ms = 120000
+    int cloud_timeout_ms = 120000,
+    std::shared_ptr<application::ports::ResourceTransferAccess> access = {},
+    std::optional<application::model::ResourceDestination> legacy_provider = std::nullopt
 );
 
 } // namespace orchestrator::modules::crawler::infrastructure::app

@@ -41,7 +41,7 @@ int main()
         std::cerr << "OpenAPI route contract failed: " << error.what() << '\n';
         return EXIT_FAILURE;
     }
-    assert(doc["info"]["version"] == "1.9.0");
+    assert(doc["info"]["version"] == "1.14.0");
     requireDumpContains(doc["info"]["description"], "singer/album cover storage");
     // 可选导出真实运行期文档，供静态 OpenAPI 契约一致性核对。
     if (const char *output = std::getenv("CRAWLER_TEST_OPENAPI_OUTPUT"); output && *output) {

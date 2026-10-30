@@ -1,0 +1,49 @@
+{
+  "format": "crawler.resource-deployment-plan.v1",
+  "release_scope_sha256": null,
+  "initial_mode": "maintenance",
+  "history_local_files": "preserve_paths_only",
+  "legacy_view_provider": null,
+  "discovery": {
+    "coverage_complete": null,
+    "other_hosts_reviewed": null,
+    "unknown_callers": null,
+    "evidence_sha256": null
+  },
+  "callers": [
+    {
+      "caller_id": "fill-deployed-caller-id",
+      "kind": "script",
+      "owner": null,
+      "write_routes": [
+        {
+          "route": "/api/migu/resources/retry",
+          "decision": "unknown",
+          "replacement": null,
+          "equivalent": null,
+          "starts_transfer_accepted": null,
+          "evidence_sha256": null
+        }
+      ]
+    }
+  ],
+  "stop_window": {
+    "basis": "operator_attestation",
+    "attested_by": null,
+    "started_at": null,
+    "finished_at": null,
+    "running_claims": null,
+    "uncertain_tasks": null,
+    "external_writers": null,
+    "all_instances_stopped": null,
+    "evidence_sha256": null
+  },
+  "cleanup": {
+    "deletion_disabled_until_capture": true,
+    "capture_before_every_delete": null,
+    "parent_cascade_four_owners_reviewed": null,
+    "writers_and_maintenance_required": true,
+    "procedure_evidence_sha256": null
+  },
+  "artifacts": []
+}

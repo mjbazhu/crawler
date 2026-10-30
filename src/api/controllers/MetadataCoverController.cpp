@@ -1,4 +1,5 @@
 #include "crawler/api/controllers/CrawlerController.h"
+#include "crawler/api/http/ResourceTransferError.h"
 
 #include "crawler/api/dto/MetadataCoverDto.h"
 
@@ -50,6 +51,47 @@ http::HttpResponse CrawlerController::handleProcessMiguCovers(http::HttpRequest 
 {
     const auto input = dto::MetadataCoverRequestDto::fromRequest(request);
     if (!input) return invalidCoverRequest();
+    if (legacy_transfers_) {
+        const auto processed = legacy_transfers_->covers(input->options, !input->async);
+        if (!processed.isSuccess()) return http::resourceTransferError(processed.error(), processed.message());
+        const auto &batch = *processed.data();
+        json body;
+        int status = 200;
+        if (input->async) {
+            status = 202;
+            body = {{"batch_id", batch.batch_id}, {"message", "metadata cover task accepted"}};
+        } else if (!batch.terminal || batch.timed_out) {
+            status = 503;
+            body = json::parse(http::resourceTransferError(application::result::ServiceErrorType::ExternalApiError, batch.timed_out ? "legacy_batch_timeout" : "legacy_completion_pending").body);
+            body["batch_id"] = batch.batch_id;
+        } else {
+            json items = json::array();
+            int success = 0, failed = 0, skipped = 0;
+            for (const auto &item : batch.covers) {
+                auto value = dto::metadataCoverToJson(item.record);
+                value["success"] = item.success;
+                value["skipped"] = item.skipped;
+                if (!item.result_code.empty()) {
+                    value["result_code"] = item.result_code;
+                    value["error_category"] = item.error_category;
+                    value["last_error"] = item.last_error;
+                }
+                items.push_back(std::move(value));
+                if (item.skipped)
+                    ++skipped;
+                else if (item.success)
+                    ++success;
+                else
+                    ++failed;
+            }
+            body = {{"items", std::move(items)}, {"success_count", success}, {"failed_count", failed}, {"skipped_count", skipped}};
+        }
+        auto response = http::HttpResponse::json(status, body.dump());
+        response.headers["X-Resource-Operation-Ids"] = json(batch.operation_ids).dump();
+        response.headers["X-Resource-Batch-Id"] = batch.batch_id;
+        response.headers["Access-Control-Expose-Headers"] = "X-Resource-Operation-Ids, X-Resource-Batch-Id";
+        return response;
+    }
     if (!cover_service_) return coverError(application::result::ServiceErrorType::InternalError, "metadata cover service is not configured");
     if (input->async) {
         const auto batch = cover_service_->start(input->options);

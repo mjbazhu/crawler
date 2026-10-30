@@ -118,6 +118,11 @@ bool initializeMySqlSchema(
 
 std::optional<PersistenceComponents> assemblePersistence(const ServerApplication::Config &config)
 {
+    // copyurl平台未知时在任何网络请求/上传之前拒绝，rclone并不等同于Google。
+    if (config.resource_pipeline.mode != "parallel" && normalizeBackend(config.resource_storage_backend) == "rclone" && config.resource_cloud_provider != "baidu" && config.resource_cloud_provider != "gdrive") {
+        logApp(logging::LogLevel::L_ERROR, "Legacy rclone requires an explicit resource cloud provider.");
+        return std::nullopt;
+    }
     PersistenceComponents components;
     if (isSqliteDebugBackend(config.persistence_backend)) {
         const int persistence_worker_count = (std::max)(1, config.persistence_worker_threads);
@@ -150,7 +155,10 @@ std::optional<PersistenceComponents> assemblePersistence(const ServerApplication
     components.singer_repository = std::make_shared<music::persistence::mysql::MySqlSingerRepository>(components.mysql_pool, makeSingerSqlPaths(config.mysql));
     components.batch_task_repository = std::make_shared<music::persistence::mysql::MySqlBatchTaskRepository>(components.mysql_pool);
     components.catalog_query_repository = std::make_shared<music::persistence::mysql::MySqlMusicCatalogQueryRepository>(components.mysql_pool);
-    components.song_resource_queue = std::make_shared<music::persistence::mysql::MySqlSongResourceQueue>(components.mysql_pool);
+    music::persistence::mysql::MySqlSongResourceQueue::SqlPaths resource_paths;
+    resource_paths.enforce_dispatch = true;
+    resource_paths.legacy_cloud_provider = config.resource_cloud_provider;
+    components.song_resource_queue = std::make_shared<music::persistence::mysql::MySqlSongResourceQueue>(components.mysql_pool, std::move(resource_paths));
     logApp(logging::LogLevel::L_INFO, "Persistence backend: mysql (native async repository).");
     return components;
 }

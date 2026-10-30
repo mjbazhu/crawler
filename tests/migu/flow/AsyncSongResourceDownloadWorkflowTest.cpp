@@ -4,6 +4,7 @@
 #include "crawler/application/ports/provider/MiguPacmtokenStore.h"
 #include "crawler/application/use_cases/AsyncSongResourceDownloadWorkflow.h"
 #include "crawler/infrastructure/music/migu/parser/MiguSongResourceParser.h"
+#include "migu/support/ResourceTransferAccessTestSupport.h"
 
 #include <algorithm>
 #include <atomic>
@@ -917,7 +918,7 @@ void testAsyncWorkflowUsesStableCodeForMissingDirectRelatedUrl()
 // 验证下载完成后的处理器不参与原始资源成功/失败回写。
 class CheckingPostProcessor final : public ports::ResourcePostProcessor {
 public:
-    bool throw_unknown = false; // 模拟非标准异常
+    bool throw_unknown = false;                        // 模拟非标准异常
     std::shared_ptr<FakeAsyncSongResourceQueue> queue; // 单目标测试中检查已完成写回
     bool fail = false;                                 // 模拟解密失败
     bool throw_error = false;                          // 模拟未知 adapter 故障
@@ -967,9 +968,54 @@ void testResourcePostProcessingIsolation()
 
 } // namespace
 
+// 已认领兼容入口也先判历史策略；正常批次维护关闭时不得认领或刷新 token。
+void testHistoricalAdmission()
+{
+    auto runtime = std::make_shared<ThreadedAsyncRuntime>();
+    auto queue = std::make_shared<FakeAsyncSongResourceQueue>();
+    auto provider = std::make_shared<SequenceAsyncSongResourceProvider>();
+    auto fetcher = std::make_shared<ScriptedAsyncContentFetcher>();
+    auto store = std::make_shared<MemoryAsyncBlobStore>();
+    auto access = std::make_shared<crawler::tests::TransferAccess>();
+    auto refresher = std::make_shared<FakePacmtokenRefresher>();
+    auto token_store = std::make_shared<FakePacmtokenStore>();
+    token_store->updatePacmtoken("fixture-token", 1);
+    ports::ResourceProcessingExtensions extensions;
+    extensions.transfer_access = access;
+    use_cases::AsyncSongResourceDownloadWorkflow workflow(runtime, queue, provider, std::make_shared<migu_parser::MiguSongResourceParser>(), fetcher, store, {}, refresher, token_store, nullptr, nullptr, nullptr, extensions);
+    const auto result = runtime->runForTest(workflow.processClaimed(audioTarget(), "historical"));
+    require(result.skipped && !result.ok && result.result_code == "skip_existing" && provider->requests.empty(), "historical skip invoked listen or became download success");
+    access->allowed = false;
+    queue->pending = {audioTarget()};
+    bool rejected = false;
+    try {
+        (void)runWorkflow(workflow, runtime, baseQuery("closed"));
+    } catch (const std::exception &) {
+        rejected = true;
+    }
+    require(rejected && queue->pending.size() == 1 && provider->requests.empty(), "closed bridge claimed or fetched resources");
+    access->allowed = true;
+    access->ready = false;
+    rejected = false;
+    try {
+        (void)runWorkflow(workflow, runtime, baseQuery("local-paused"));
+    } catch (const std::exception &) {
+        rejected = true;
+    }
+    require(rejected && queue->pending.size() == 1 && provider->requests.empty(), "paused local claimed work through another active destination");
+    access->ready = true;
+    auto skip_query = baseQuery("all-historical");
+    skip_query.options.auto_refresh_pacmtoken = true;
+    const auto skipped = runWorkflow(workflow, runtime, skip_query);
+    require(skipped.skipped_count == 1 && skipped.failed_count == 0 && refresher->calls.load() == 0 && provider->requests.empty(), "all-skip batch refreshed token or fetched content");
+    const auto empty = runWorkflow(workflow, runtime, skip_query);
+    require(empty.claimed_count == 0 && refresher->calls.load() == 0, "empty queue refreshed token");
+}
+
 int main()
 {
     try {
+        testHistoricalAdmission();
         testAsyncWorkflowHonorsConcurrency();
         testResourcePostProcessingIsolation();
         testAsyncWorkflowDeduplicatesRelatedResourcesUnderConcurrency();

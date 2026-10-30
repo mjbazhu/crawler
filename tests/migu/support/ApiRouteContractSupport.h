@@ -1,6 +1,7 @@
 #pragma once
 
 #include "crawler/api/routing/CrawlerRoutes.h"
+#include "crawler/api/routing/ResourceTransferRoutes.h"
 
 #include <nlohmann/json.hpp>
 
@@ -68,6 +69,7 @@ inline void verifyRegisteredRoutes(const nlohmann::json &document)
 {
     RouteInventory registered;
     api::routing::CrawlerRoutes(nullptr).registerRoutes(registered);
+    api::routing::ResourceTransferRoutes(nullptr).registerRoutes(registered);
     Operations documented;
     const std::set<std::string> methods {"get", "post", "put", "patch", "delete", "head", "trace"};
     const std::regex parameter_pattern(R"(\{([^}]+)\})");

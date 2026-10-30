@@ -89,7 +89,7 @@ std::shared_ptr<mysql::MySqlConnectionPool> migrateFixture(mysql::MySqlConfig co
     require(support::runOnExecutor(pool->executor(), pool->coInitializeSchema(), "ownership migration"), "ownership migration failed");
     require(scalar(pool, "SELECT COUNT(*) FROM album_source_refs WHERE source_album_id='ownership-missing' AND source_title_pinyin='daijianzhuanji'") == 1, "migration lost album pinyin");
     require(scalar(pool, "SELECT COUNT(*) FROM album_song_refs r JOIN album_source_refs a ON a.id=r.album_source_ref_id WHERE a.source_album_id='ownership-extra'") == 1, "migration lost relation-only album");
-    require(scalar(pool, "SELECT COUNT(*) FROM song_resources WHERE status=2 AND local_path='migu/songs/old.flac' AND cloud_path='old.flac'") == 1, "migration changed completed resources");
+    require(scalar(pool, "SELECT COUNT(*) FROM song_resources r JOIN resource_cloud_migration_audit a ON a.owner_type='song' AND a.resource_id=r.id AND a.run_id='schema-retirement-v2026102913' AND a.disposition='archived' WHERE r.status=2 AND r.local_path='migu/songs/old.flac' AND JSON_UNQUOTE(JSON_EXTRACT(a.old_values,'$.cloud_path'))='old.flac'") == 1, "migration changed completed resources");
     require(scalar(pool, "SELECT COUNT(*) FROM album_artist_refs") == 1, "migration lost album artist");
     require(scalar(pool, "SELECT COUNT(DISTINCT album_db_id) FROM album_source_refs WHERE source_album_id IN('ownership-old','ownership-alias')") == 2, "old name deduplication still shares identities across different source IDs");
     // MySQL DDL 不能整体回滚，重复执行验证中断后可以重跑。
@@ -112,7 +112,12 @@ boost::asio::awaitable<int> prepareRuntimeSql(const std::shared_ptr<mysql::MySql
         const auto path = entry.path();
         if (path.extension() != ".sql" || path.parent_path().filename() == "migrations" || path.filename() == "create.sql" || path.filename() == "catalog_view.sql" || path.parent_path().filename() == "transactions") continue;
         try {
-            for (const auto &statement : sql::SqlFileLoader::splitStatements(sql::SqlFileLoader::loadOrThrow(path.string()))) {
+            auto text = sql::SqlFileLoader::loadOrThrow(path.string());
+            // 分句器会去掉块注释；先替换表达式占位符，避免CAST空表达式。
+            for (const std::string token : {"/*__CLOUD_CURRENT__*/", "/*__CLOUD_STATUS__*/"}) {
+                for (auto offset = text.find(token); offset != std::string::npos; offset = text.find(token)) text.replace(offset, token.size(), "0");
+            }
+            for (auto statement : sql::SqlFileLoader::splitStatements(text)) {
                 auto prepared = co_await connection->async_prepare_statement(statement, boost::asio::use_awaitable);
                 co_await connection->async_close_statement(prepared, boost::asio::use_awaitable);
                 ++count;

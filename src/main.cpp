@@ -1,4 +1,5 @@
 #include "crawler/infrastructure/app/ServerApplication.h"
+#include "crawler/infrastructure/app/ResourcePipelineConfiguration.h"
 #include "crawler/infrastructure/observability/logging/Logger.h"
 #include "crawler/infrastructure/platform/Environment.h"
 #include "crawler/infrastructure/platform/PlatformUtils.h"
@@ -82,6 +83,7 @@ int main(int argc, char *argv[])
     config.resource_cloud_upload_enabled = env::Environment::getBoolOr("CRAWLER_RESOURCE_CLOUD_UPLOAD_ENABLED", config.resource_cloud_upload_enabled);
     config.resource_cloud_timeout_ms = env::Environment::getIntOr("CRAWLER_RESOURCE_CLOUD_TIMEOUT_MS", config.resource_cloud_timeout_ms);
     config.resource_cloud_upload_backend = env::Environment::getStringOr("CRAWLER_RESOURCE_CLOUD_UPLOAD_BACKEND", config.resource_cloud_upload_backend);
+    config.resource_cloud_provider = env::Environment::getStringOr("CRAWLER_RESOURCE_CLOUD_PROVIDER", config.resource_cloud_provider);
     // 歌曲原流程保持本地；歌手和专辑封面按云端开关自动上传。
     config.baidupcs.enabled = config.resource_cloud_upload_enabled;
     config.baidupcs.local_root = config.storage_path;
@@ -120,6 +122,12 @@ int main(int argc, char *argv[])
     config.mysql.retry_interval = std::chrono::seconds(env::Environment::getIntOr("CRAWLER_MYSQL_RETRY_INTERVAL_SECONDS", static_cast<int>(config.mysql.retry_interval.count())));
     config.mysql.ping_timeout = std::chrono::seconds(env::Environment::getIntOr("CRAWLER_MYSQL_PING_TIMEOUT_SECONDS", static_cast<int>(config.mysql.ping_timeout.count())));
 
+    try {
+        orchestrator::modules::crawler::infrastructure::app::readResourcePipelineEnvironment(config);
+    } catch (const std::exception &) {
+        std::cerr << "Invalid resource pipeline configuration\n";
+        return 1;
+    }
     orchestrator::modules::crawler::infrastructure::app::ServerApplication app(config);
 
     if (!app.initialize()) {

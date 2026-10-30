@@ -1,8 +1,18 @@
 #include "crawler/infrastructure/app/ServerApplication.h"
+#include "crawler/infrastructure/app/ResourceTransferComposition.h"
+#include "crawler/infrastructure/app/ResourcePipelineConfiguration.h"
+#include "crawler/infrastructure/music/persistence/mysql/MySqlResourceTransferJobs.h"
+#include "crawler/infrastructure/music/persistence/mysql/MySqlResourceTransferQueries.h"
+#include "crawler/infrastructure/music/persistence/mysql/MySqlResourceProducerTasks.h"
+#include "crawler/infrastructure/music/persistence/mysql/MySqlLegacyResourceTransfer.h"
+#include "crawler/application/use_cases/LegacyResourceTransferService.h"
+#include "crawler/api/routing/ResourceTransferRoutes.h"
+#include "crawler/api/routing/ResourceParallelLegacyRouteSink.h"
 
 #include "crawler/infrastructure/music/migu/provider/MiguRequestFactory.h"
 #include "crawler/api/controllers/CrawlerController.h"
 #include "crawler/api/routing/CrawlerRoutes.h"
+#include "crawler/api/routing/ResourceWriteRouteSink.h"
 #include "crawler/application/ports/parsing/MetadataParser.h"
 #include "crawler/application/ports/provider/IMusicProvider.h"
 #include "crawler/application/use_cases/CrawlerService.h"
@@ -12,6 +22,8 @@
 #include "crawler/infrastructure/app/MetadataCoverComposition.h"
 #include "crawler/infrastructure/app/CloudFileStoreComposition.h"
 #include "crawler/infrastructure/app/PersistenceAssembly.h"
+#include "crawler/infrastructure/app/ResourceTransferFactory.h"
+#include "crawler/infrastructure/music/persistence/mysql/MySqlResourceWriteInspector.h"
 #include "crawler/infrastructure/app/RuntimeSettingsSnapshotFactory.h"
 #include "crawler/infrastructure/execution/asio/AsioExecutionContext.h"
 #include "crawler/infrastructure/execution/asio/AsioAsyncRuntime.h"
@@ -23,6 +35,7 @@
 #include "crawler/infrastructure/music/migu/parser/MiguParser.h"
 #include "crawler/infrastructure/music/persistence/mysql/MySqlSongResourceQueue.h"
 #include "crawler/infrastructure/music/persistence/mysql/MySqlMetadataCoverQueue.h"
+#include "crawler/infrastructure/music/persistence/mysql/MySqlResourceTransferAccess.h"
 #include "crawler/infrastructure/music/migu/parser/MiguSongResourceParser.h"
 #include "crawler/infrastructure/music/migu/provider/MiguPacmtokenClient.h"
 #include "crawler/infrastructure/music/migu/provider/MiguAsyncSongResourceProvider.h"
@@ -31,9 +44,11 @@
 #include "crawler/infrastructure/observability/logging/ConsoleDiagnosticsSink.h"
 #include "crawler/infrastructure/observability/logging/Logger.h"
 #include "crawler/infrastructure/storage/filesystem/FileStorage.h"
+#include "crawler/infrastructure/storage/filesystem/MetadataCoverStore.h"
 #include "crawler/infrastructure/storage/rclone/RcloneRemoteCopier.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <cstdlib>
 #include <chrono>
 #include <cstddef>
@@ -44,6 +59,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace orchestrator::modules::crawler::infrastructure::app {
 
@@ -99,6 +115,9 @@ public:
     std::shared_ptr<http::client::AsioHttpClient> asio_http_client_;
     std::shared_ptr<http::client::AsioHttpClient> rclone_http_client_;
     std::shared_ptr<storage::filesystem::FileStorage> file_storage_;
+    ResourceTransferAssembly resource_targets_;                                                  // 固定配置装配的独立目标集合
+    std::shared_ptr<ResourceTransferRuntime> resource_runtime_;                                  // 正式逐端调度及关闭排空
+    std::shared_ptr<application::use_cases::ResourceTransferService> resource_transfer_service_; // v2 受理与历史查询
     std::shared_ptr<application::ports::SongResourceCloudUploader> song_resource_cloud_uploader_;
     std::shared_ptr<application::ports::SongResourceBatchCloudUploader> song_resource_batch_cloud_uploader_;
     std::shared_ptr<application::ports::AsyncSongResourceRemoteCopier> async_song_resource_remote_copier_;
@@ -124,6 +143,7 @@ public:
     std::shared_ptr<application::ports::BatchTaskRepository> batch_task_repository_;
     std::shared_ptr<application::ports::MusicCatalogQueryRepository> catalog_query_repository_;
     std::shared_ptr<application::ports::SongResourceQueue> song_resource_queue_;
+    std::shared_ptr<application::ports::ResourceTransferAccess> resource_access_; // 实时维护与历史跳过策略
 
     std::shared_ptr<application::use_cases::CrawlerService> crawler_service_;
     std::shared_ptr<application::use_cases::MiguPacmtokenService> migu_pacmtoken_service_;
@@ -135,11 +155,16 @@ public:
 ServerApplication::ServerApplication(const Config &config) : impl_(std::make_unique<Impl>(config))
 {}
 
-ServerApplication::~ServerApplication() = default;
+ServerApplication::~ServerApplication()
+{
+    stop();
+}
 
 bool ServerApplication::initialize()
 {
     try {
+        validateResourcePipelineConfiguration(impl_->config_);
+        const bool parallel = impl_->config_.resource_pipeline.mode == "parallel";
         logApp(logging::LogLevel::L_INFO, "Initializing crawler components...");
 
         const int parse_worker_count = (std::max)(1, impl_->config_.parse_worker_threads);
@@ -152,7 +177,19 @@ bool ServerApplication::initialize()
 
         impl_->asio_http_client_ = std::make_shared<http::client::AsioHttpClient>(makeHttpClientOptions(impl_->config_));
         impl_->http_client_ = impl_->asio_http_client_;
-        impl_->file_storage_ = std::make_shared<storage::filesystem::FileStorage>(impl_->config_.storage_path);
+        const ResourceTransferFactory transfer_factory(impl_->config_);
+        const auto legacy_provider = parallel ? std::optional<application::model::ResourceDestination> {} : transfer_factory.legacyProvider();
+        std::vector<ResourceCloudTarget> legacy_clouds;
+        if (impl_->config_.resource_cloud_upload_enabled && legacy_provider) legacy_clouds.push_back({*legacy_provider, std::filesystem::u8path(impl_->config_.storage_path)});
+        impl_->resource_targets_ = transfer_factory.build(true, legacy_clouds);
+        const auto legacy_cloud = parallel ? nullptr : legacy_provider ? impl_->resource_targets_.cloud(*legacy_provider) :
+                                                                         transfer_factory.legacyCloud();
+        if (!parallel && impl_->config_.resource_cloud_upload_enabled && !legacy_cloud) throw std::invalid_argument("legacy cloud configuration invalid");
+        impl_->file_storage_ = impl_->resource_targets_.local;
+        if (!impl_->file_storage_ || std::any_of(impl_->resource_targets_.clouds.begin(), impl_->resource_targets_.clouds.end(), [](const auto &target) { return !target.store; })) {
+            logApp(logging::LogLevel::L_ERROR, "Legacy resource destination configuration is invalid.");
+            return false;
+        }
         impl_->parser_ = std::make_shared<music::migu::parser::MiguParser>();
         impl_->song_resource_parser_ = std::make_shared<music::migu::parser::MiguSongResourceParser>();
         impl_->migu_pacmtoken_store_ = std::make_shared<music::migu::provider::MiguRuntimePacmtokenStore>();
@@ -180,18 +217,27 @@ bool ServerApplication::initialize()
         impl_->batch_task_repository_ = std::move(persistence_components->batch_task_repository);
         impl_->catalog_query_repository_ = std::move(persistence_components->catalog_query_repository);
         impl_->song_resource_queue_ = std::move(persistence_components->song_resource_queue);
-        if (auto queue = std::dynamic_pointer_cast<music::persistence::mysql::MySqlSongResourceQueue>(impl_->song_resource_queue_)) {
-            auto covers = std::make_shared<music::persistence::mysql::MySqlMetadataCoverQueue>(impl_->mysql_pool_);
-            const auto recovered = impl_->file_storage_->recoverOwnedResourceWrites([queue, covers](const std::string &owner, std::uint64_t resource, std::uint64_t generation, const std::string &path) {
-                if (owner == "singer" || owner == "album") return covers->inspectWrite(owner == "singer" ? application::model::CoverOwner::Singer : application::model::CoverOwner::Album, resource, generation, path);
-                return queue->inspectResourceWrite(resource, generation, path);
+        bool resource_writes_allowed = true;
+        bool local_writes_allowed = true;
+        if (impl_->mysql_pool_) {
+            impl_->resource_access_ = std::make_shared<music::persistence::mysql::MySqlResourceTransferAccess>(impl_->mysql_pool_);
+            const auto allowed = impl_->resource_access_->writesAllowed();
+            resource_writes_allowed = allowed.isSuccess() && *allowed.data();
+            const auto local_ready = impl_->resource_access_->destinationReady(application::model::ResourceDestination::Local);
+            local_writes_allowed = resource_writes_allowed && local_ready.isSuccess() && *local_ready.data();
+            if (!resource_writes_allowed) logApp(logging::LogLevel::L_INFO, "Resource maintenance: write admission and automatic recovery are paused.");
+        }
+        if (auto queue = std::dynamic_pointer_cast<music::persistence::mysql::MySqlSongResourceQueue>(impl_->song_resource_queue_); !parallel && queue && local_writes_allowed) {
+            auto inspector = std::make_shared<music::persistence::mysql::MySqlResourceWriteInspector>(impl_->mysql_pool_);
+            const auto recovered = impl_->file_storage_->recoverOwnedResourceWrites([inspector](const std::string &owner, std::uint64_t resource, std::uint64_t generation, const std::string &path) {
+                return inspector->inspect(owner, resource, generation, path);
             });
             if (recovered > 0) logApp(logging::LogLevel::L_INFO, "Recovered resource file journals: " + std::to_string(recovered));
         }
         auto blocking_storage_executor = impl_->persistence_worker_pool_ ? std::static_pointer_cast<application::ports::TaskExecutor>(impl_->persistence_worker_pool_) : std::static_pointer_cast<application::ports::TaskExecutor>(impl_->resource_worker_pool_);
         impl_->async_execution_context_ = std::make_shared<execution::asio::AsioExecutionContext>(static_cast<std::size_t>((std::max)(1, impl_->config_.outbound_http_io_threads)));
         impl_->async_runtime_ = std::make_shared<execution::asio::AsioAsyncRuntime>(impl_->async_execution_context_->executor(), blocking_storage_executor);
-        if (isRcloneBackend(impl_->config_.resource_storage_backend) || (impl_->config_.resource_cloud_upload_enabled && isRcloneBackend(impl_->config_.resource_cloud_upload_backend))) {
+        if (isRcloneBackend(impl_->config_.resource_storage_backend)) {
             if (impl_->config_.rclone.rc_url.empty() || impl_->config_.rclone.target_fs.empty()) {
                 logApp(logging::LogLevel::L_ERROR, "Rclone resource storage requires CRAWLER_RCLONE_RC_URL and CRAWLER_RCLONE_TARGET_FS.");
                 return false;
@@ -213,6 +259,7 @@ bool ServerApplication::initialize()
         impl_->diagnostics_ = std::make_shared<observability::logging::ConsoleDiagnosticsSink>();
 
         application::use_cases::CrawlerServiceDependencies crawler_dependencies;
+        crawler_dependencies.resource_processing.transfer_access = impl_->resource_access_;
         if (const char *mrc_key = std::getenv("CRAWLER_MIGU_MRC_KEY"); mrc_key && *mrc_key && !isRcloneBackend(impl_->config_.resource_storage_backend)) {
             crawler_dependencies.resource_processing.post_processor = makeMiguLyricProcessingWorkflow(impl_->config_.storage_path, mrc_key, impl_->mysql_pool_);
         }
@@ -274,37 +321,70 @@ bool ServerApplication::initialize()
             impl_->migu_pacmtoken_store_
         );
 
-        try {
-            application::model::MiguStaleRecoveryRequest recovery_request;
-            recovery_request.stale_after_seconds = (std::max)(60, impl_->config_.task_timeout_ms / 1000);
-            const auto recovered = impl_->crawler_service_->recoverMiguStale(std::move(recovery_request));
-            const int recovered_total = recovered.singer_songs_recovered + recovered.singer_albums_recovered + recovered.album_details_recovered + recovered.album_songs_recovered + recovered.resources_recovered + recovered.batches_recovered;
-            if (recovered_total > 0) {
-                std::ostringstream out;
-                out << "Recovered stale Migu running states: singer_songs=" << recovered.singer_songs_recovered
-                    << ", singer_albums=" << recovered.singer_albums_recovered
-                    << ", album_details=" << recovered.album_details_recovered
-                    << ", album_songs=" << recovered.album_songs_recovered
-                    << ", resources=" << recovered.resources_recovered
-                    << ", batches=" << recovered.batches_recovered;
-                logApp(logging::LogLevel::L_INFO, out.str());
+        if (!parallel && resource_writes_allowed && local_writes_allowed) {
+            try {
+                application::model::MiguStaleRecoveryRequest recovery_request;
+                recovery_request.stale_after_seconds = (std::max)(60, impl_->config_.task_timeout_ms / 1000);
+                const auto recovered = impl_->crawler_service_->recoverMiguStale(std::move(recovery_request));
+                const int recovered_total = recovered.singer_songs_recovered + recovered.singer_albums_recovered + recovered.album_details_recovered + recovered.album_songs_recovered + recovered.resources_recovered + recovered.batches_recovered;
+                if (recovered_total > 0) {
+                    std::ostringstream out;
+                    out << "Recovered stale Migu running states: singer_songs=" << recovered.singer_songs_recovered
+                        << ", singer_albums=" << recovered.singer_albums_recovered
+                        << ", album_details=" << recovered.album_details_recovered
+                        << ", album_songs=" << recovered.album_songs_recovered
+                        << ", resources=" << recovered.resources_recovered
+                        << ", batches=" << recovered.batches_recovered;
+                    logApp(logging::LogLevel::L_INFO, out.str());
+                }
+            } catch (const std::exception &e) {
+                logApp(logging::LogLevel::L_WARN, std::string("Stale Migu recovery skipped: ") + e.what());
             }
-        } catch (const std::exception &e) {
-            logApp(logging::LogLevel::L_WARN, std::string("Stale Migu recovery skipped: ") + e.what());
         }
 
+        auto cover_service = makeMetadataCoverService(impl_->mysql_pool_, impl_->file_storage_, impl_->http_client_, impl_->resource_worker_pool_, impl_->diagnostics_, impl_->batch_task_repository_, std::chrono::milliseconds(impl_->config_.task_timeout_ms), legacy_cloud, impl_->config_.resource_cloud_timeout_ms, impl_->resource_access_, legacy_provider);
         impl_->crawler_controller_ = std::make_shared<api::controllers::CrawlerController>(
             impl_->crawler_service_,
             makeReadonlySettingsSnapshot(impl_->config_),
             impl_->migu_pacmtoken_service_,
-            makeMetadataCoverService(impl_->mysql_pool_, impl_->file_storage_, impl_->http_client_, impl_->resource_worker_pool_, impl_->diagnostics_, impl_->batch_task_repository_, std::chrono::milliseconds(impl_->config_.task_timeout_ms), makeCloudFileStore(impl_->config_, impl_->rclone_http_client_), impl_->config_.resource_cloud_timeout_ms)
+            cover_service
         );
 
         impl_->http_server_ = std::make_unique<http::server::DrogonHttpServer>(impl_->config_.http_worker_threads, impl_->handler_worker_pool_);
         impl_->http_server_->bind(impl_->config_.host, impl_->config_.port);
 
+        if (impl_->mysql_pool_) {
+            auto jobs = std::make_shared<music::persistence::mysql::MySqlResourceTransferJobs>(impl_->mysql_pool_);
+            impl_->resource_runtime_ = makeResourceTransferRuntime(impl_->config_, impl_->mysql_pool_, jobs, impl_->migu_pacmtoken_store_);
+            auto queries = std::make_shared<music::persistence::mysql::MySqlResourceTransferQueries>(impl_->mysql_pool_);
+            auto producers = std::make_shared<music::persistence::mysql::MySqlResourceProducerTasks>(impl_->mysql_pool_);
+            impl_->resource_transfer_service_ = std::make_shared<application::use_cases::ResourceTransferService>(jobs, impl_->resource_access_, queries, impl_->resource_runtime_, producers);
+            auto compatibility_repository = std::make_shared<music::persistence::mysql::MySqlLegacyResourceTransfer>(impl_->mysql_pool_);
+            impl_->resource_transfer_service_->setLegacyRepository(compatibility_repository, parallel && !impl_->config_.resource_pipeline.legacy_view_provider.empty());
+            if (parallel && !impl_->config_.resource_pipeline.legacy_view_provider.empty()) {
+                const auto fixed_cloud = application::model::parseCloudProvider(impl_->config_.resource_pipeline.legacy_view_provider);
+                auto reader = std::make_shared<storage::filesystem::MetadataCoverStore>(impl_->http_client_, impl_->file_storage_, std::vector<std::string> {});
+                auto compatibility = std::make_shared<application::use_cases::LegacyResourceTransferService>(compatibility_repository, impl_->resource_runtime_, impl_->resource_access_, fixed_cloud, true, reader, impl_->config_.task_timeout_ms);
+                impl_->crawler_controller_->setLegacyResourceTransfers(compatibility);
+                if (cover_service) cover_service->setProjection(compatibility);
+                // Controller 持有 service；观察回调只在一次调用期间延长生命，避免 service/runtime 环。
+                impl_->resource_runtime_->addObserver([weak = std::weak_ptr<application::use_cases::LegacyResourceTransferService>(compatibility)] {
+                    const auto service = weak.lock();
+                    return service && service->pollNext();
+                });
+            }
+        }
         api::routing::CrawlerRoutes crawler_routes(impl_->crawler_controller_);
-        crawler_routes.registerRoutes(*impl_->http_server_);
+        if (parallel) {
+            api::routing::ResourceParallelLegacyRouteSink guarded(*impl_->http_server_, !impl_->config_.resource_pipeline.legacy_view_provider.empty(), impl_->resource_access_);
+            crawler_routes.registerRoutes(guarded);
+        } else if (impl_->resource_access_) {
+            api::routing::ResourceWriteRouteSink guarded(*impl_->http_server_, impl_->resource_access_);
+            crawler_routes.registerRoutes(guarded);
+        } else {
+            crawler_routes.registerRoutes(*impl_->http_server_);
+        }
+        api::routing::ResourceTransferRoutes(impl_->resource_transfer_service_).registerRoutes(*impl_->http_server_);
 
         logApp(logging::LogLevel::L_INFO, "Crawler initialization complete.");
         return true;
@@ -316,6 +396,7 @@ bool ServerApplication::initialize()
 
 void ServerApplication::run()
 {
+    if (impl_->resource_runtime_) impl_->resource_runtime_->start();
     if (impl_->http_server_) {
         impl_->http_server_->run();
     }
@@ -326,6 +407,7 @@ void ServerApplication::stop()
     if (impl_->http_server_) {
         impl_->http_server_->stop();
     }
+    if (impl_->resource_runtime_ && !impl_->resource_runtime_->shutdown()) logApp(logging::LogLevel::L_WARN, "Resource shutdown grace expired; pending attempts require recovery.");
     if (impl_->mysql_pool_) {
         impl_->mysql_pool_->cancel();
     }
@@ -334,9 +416,21 @@ void ServerApplication::stop()
 // 这个函数既支持 URL 直接爬取，也支持关键词搜索爬取
 bool ServerApplication::executeCrawl(const std::string &target)
 {
+    if (impl_->config_.resource_pipeline.mode == "parallel") {
+        logApp(logging::LogLevel::L_WARN, "CLI legacy writes are unavailable in parallel resource mode.");
+        return false;
+    }
     if (!impl_->crawler_service_) {
         logApp(logging::LogLevel::L_ERROR, "CrawlerService not initialized.");
         return false;
+    }
+
+    if (impl_->resource_access_) {
+        const auto allowed = impl_->resource_access_->writesAllowed();
+        if (!allowed.isSuccess() || !*allowed.data()) {
+            logApp(logging::LogLevel::L_WARN, "Resource maintenance: crawl command was not admitted.");
+            return false;
+        }
     }
 
     logApp(logging::LogLevel::L_INFO, "CLI Mode: Crawling " + target + "...");

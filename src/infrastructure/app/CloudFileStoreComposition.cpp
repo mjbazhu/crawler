@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -19,7 +20,7 @@ std::shared_ptr<application::ports::CloudFileStore> makeCloudFileStore(const Ser
     if (backend == "baidupcs") {
         auto baidu = config.baidupcs;
         baidu.enabled = true;
-        baidu.local_root = config.storage_path;
+        baidu.local_root = std::filesystem::u8path(config.storage_path);
         return std::make_shared<storage::baidupcs::BaiduCloudFileStore>(std::move(baidu), std::move(runner));
     }
     if (backend == "rclone") return std::make_shared<storage::rclone::RcloneCloudFileStore>(std::move(rclone_client), config.rclone);
