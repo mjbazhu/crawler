@@ -1,0 +1,1 @@
+SELECT request_snapshot FROM resource_transfer_operations WHERE operation_id=?

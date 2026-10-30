@@ -1,0 +1,1 @@
+UPDATE resource_destination_states SET max_queued_transfers=?,max_queued_producers=?,queue_limits_version=queue_limits_version+1,updated_at=UNIX_TIMESTAMP() WHERE destination=? AND queue_limits_version=?

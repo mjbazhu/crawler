@@ -1,0 +1,1 @@
+SELECT state FROM resource_transfer_tasks WHERE owner_type=? AND resource_id=? AND destination=? AND content_generation=? AND target_revision=? AND state IN ('pending','retry','running','succeeded','failed','uncertain','cancelled') ORDER BY task_id DESC LIMIT 1

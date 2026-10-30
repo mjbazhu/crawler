@@ -1,0 +1,1 @@
+SELECT target_revision,target_fingerprint,dispatch_state FROM resource_destination_states WHERE destination=?;

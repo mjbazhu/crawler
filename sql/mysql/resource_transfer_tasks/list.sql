@@ -1,0 +1,8 @@
+SELECT t.task_id,t.operation_id,t.owner_type,t.resource_id,t.destination,t.content_generation,t.target_revision,t.source_revision,t.source_identity,t.target_fingerprint,t.claim_generation,t.native_claim_generation,t.claimed_at,t.attempt_count,t.timeout_ms,t.retries,t.max_bytes,t.bytes_per_second,t.state,t.result_code,t.cancel_requested,t.busy_task_id,COALESCE(t.attempt_path,''),t.attempt_checksum,t.attempt_size_bytes,o.action
+,COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.request_snapshot,CONCAT('$.adapters.',t.destination))),'')
+,CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.request_snapshot,CONCAT('$.strict_sha256.',t.destination)))='true',0) AS UNSIGNED)
+,(SELECT CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.request_snapshot,'$.process_related_resources'))='true',0) AS UNSIGNED) FROM resource_transfer_operations o WHERE o.operation_id=t.operation_id)
+,(SELECT CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.request_snapshot,'$.source_options.pacmtoken_refresh_interval_seconds')),'300') AS SIGNED) FROM resource_transfer_operations o WHERE o.operation_id=t.operation_id)
+,(SELECT CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.request_snapshot,'$.source_options.auto_refresh_pacmtoken')),'true')='true' AS UNSIGNED) FROM resource_transfer_operations o WHERE o.operation_id=t.operation_id)
+,(SELECT CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(o.request_snapshot,'$.source_options.refresh_pacmtoken_on_440013')),'true')='true' AS UNSIGNED) FROM resource_transfer_operations o WHERE o.operation_id=t.operation_id)
+FROM resource_transfer_tasks t JOIN resource_transfer_operations o ON o.operation_id=t.operation_id WHERE t.operation_id=? ORDER BY t.task_id

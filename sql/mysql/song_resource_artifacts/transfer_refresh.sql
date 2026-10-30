@@ -1,0 +1,1 @@
+UPDATE song_resource_artifacts SET content_generation=content_generation+1,source_revision=source_revision+1,reference_sha256='',reference_size_bytes=0,claim_generation=claim_generation+1,running_batch_id='',status=IF(status=1,0,status),updated_at=UNIX_TIMESTAMP() WHERE id=?

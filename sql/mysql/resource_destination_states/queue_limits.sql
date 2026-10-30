@@ -1,0 +1,1 @@
+SELECT destination,max_queued_transfers,max_queued_producers,queue_limits_version FROM resource_destination_states WHERE destination=?

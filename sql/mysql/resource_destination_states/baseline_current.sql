@@ -1,0 +1,1 @@
+SELECT destination,baseline_ready,baseline_manifest FROM resource_destination_states ORDER BY destination

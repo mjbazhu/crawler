@@ -1,0 +1,1 @@
+UPDATE resource_destination_states SET dispatch_state=?,baseline_ready=1,baseline_manifest=?,updated_at=UNIX_TIMESTAMP() WHERE destination=? AND target_revision=? AND target_fingerprint=? AND dispatch_state='maintenance'

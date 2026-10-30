@@ -1,0 +1,2 @@
+INSERT INTO resource_transfer_tasks(operation_id,owner_type,resource_id,destination,content_generation,source_revision,source_identity,target_revision,target_fingerprint,state,timeout_ms,retries,max_bytes,bytes_per_second,busy_task_id,result_code,attempt_path,attempt_checksum,attempt_size_bytes,available_at,created_at,updated_at)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULLIF(?,''),?,?,UNIX_TIMESTAMP(),UNIX_TIMESTAMP(),UNIX_TIMESTAMP())

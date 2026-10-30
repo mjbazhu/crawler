@@ -1,0 +1,1 @@
+INSERT INTO governance_events(source,action,target_type,target_id,before_status,after_status,result_code,payload,created_at) VALUES('migu','resource.queue.capacity','destination',?,'configured','configured','ok',CAST(? AS JSON),UNIX_TIMESTAMP())

@@ -1,0 +1,1 @@
+UPDATE resource_cloud_receipts SET task_state=?,result_code=?,error_category=?,running_batch_id='',claimed_at=0,updated_at=UNIX_TIMESTAMP() WHERE owner_type=? AND resource_id=? AND cloud_provider=? AND claim_generation=? AND running_batch_id=?

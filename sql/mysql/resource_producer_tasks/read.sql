@@ -1,0 +1,2 @@
+SELECT producer_id,parent_operation_id,parent_task_id,destination,processor_version,schema_version,state,claim_generation,claimed_at,attempt_count,cancel_requested,timeout_ms,retries,max_bytes,bytes_per_second,result_code,child_operation_id
+FROM resource_producer_tasks WHERE producer_id=?

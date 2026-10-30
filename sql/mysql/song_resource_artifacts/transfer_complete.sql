@@ -1,0 +1,1 @@
+UPDATE song_resource_artifacts SET local_path=?,checksum=?,size_bytes=?,local_content_generation=?,local_target_revision=?,status=2,result_code='ok',running_batch_id='',updated_at=UNIX_TIMESTAMP() WHERE id=? AND claim_generation=? AND running_batch_id=? AND content_generation=? AND source_revision=? AND status=1

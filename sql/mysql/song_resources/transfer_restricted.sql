@@ -1,0 +1,1 @@
+UPDATE song_resources SET status=4,claim_generation=claim_generation+1,running_batch_id=NULL,result_code=?,error_category='copyright',last_error=NULL,updated_at=UNIX_TIMESTAMP() WHERE id=? AND content_generation=? AND source_revision=?

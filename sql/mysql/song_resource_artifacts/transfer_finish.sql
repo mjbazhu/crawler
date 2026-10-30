@@ -1,0 +1,1 @@
+UPDATE song_resource_artifacts SET running_batch_id='',status=IF(local_content_generation>0,2,3),result_code=?,claimed_at=0,updated_at=UNIX_TIMESTAMP() WHERE id=? AND claim_generation=? AND running_batch_id=? AND status=1

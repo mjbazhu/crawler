@@ -1,0 +1,1 @@
+UPDATE song_resource_artifacts SET reference_sha256=?,reference_size_bytes=?,updated_at=UNIX_TIMESTAMP() WHERE id=? AND content_generation=? AND source_revision=? AND (reference_sha256='' OR (reference_sha256=? AND reference_size_bytes=?))

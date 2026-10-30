@@ -1,0 +1,1 @@
+UPDATE resource_cloud_receipts SET task_state='running',content_generation=?,target_revision=?,claim_generation=claim_generation+1,running_batch_id=?,claimed_at=UNIX_TIMESTAMP(),attempt_count=attempt_count+1,cancel_requested=0,result_code='',error_category='',updated_at=UNIX_TIMESTAMP() WHERE owner_type=? AND resource_id=? AND cloud_provider=?
