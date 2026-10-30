@@ -1,0 +1,2 @@
+INSERT INTO resource_cloud_cleanup_candidates(receipt_id,owner_type,resource_id,content_generation,cloud_provider,target_revision,target_fingerprint,confirmed_content_generation,confirmed_target_revision,cloud_path,path_hash,object_key,size_bytes,checksum,verification,source_adapter,receipt_state,snapshot_hash,captured_at)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,UNIX_TIMESTAMP()) ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id)

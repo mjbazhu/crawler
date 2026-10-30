@@ -1,0 +1,22 @@
+CREATE TABLE IF NOT EXISTS resource_discovery_runs (
+ run_id VARCHAR(96) CHARACTER SET ascii COLLATE ascii_bin NOT NULL PRIMARY KEY,
+ definition_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+ definition JSON NOT NULL,
+ owner_type VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+ destination VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+ high_water_id BIGINT UNSIGNED NOT NULL,
+ cursor_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+ state VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+ claim_generation BIGINT UNSIGNED NOT NULL DEFAULT 0,
+ lease_until BIGINT UNSIGNED NOT NULL DEFAULT 0,
+ processed BIGINT UNSIGNED NOT NULL DEFAULT 0,
+ counts JSON NOT NULL,
+ result_code VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT '',
+ active_destination VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin GENERATED ALWAYS AS (CASE WHEN state='running' THEN destination ELSE NULL END) STORED,
+ created_at BIGINT UNSIGNED NOT NULL,
+ updated_at BIGINT UNSIGNED NOT NULL,
+ UNIQUE KEY uk_discovery_active_destination(active_destination),
+ KEY idx_discovery_state(state,destination,updated_at,run_id),
+ CONSTRAINT ck_discovery_scope CHECK(owner_type IN('song','singer','album','song_artifact') AND destination IN('baidu','gdrive')),
+ CONSTRAINT ck_discovery_state CHECK(state IN('running','paused','completed','cancelled') AND cursor_id<=high_water_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

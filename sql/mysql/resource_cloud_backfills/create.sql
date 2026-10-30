@@ -1,0 +1,25 @@
+-- 清单和游标持久化；终态 run 通过新关联 run 续跑，不覆写旧历史。
+CREATE TABLE IF NOT EXISTS resource_cloud_backfills (
+    run_id VARCHAR(128) NOT NULL,
+    parent_run_id VARCHAR(128) DEFAULT NULL,
+    manifest_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    database_identity VARCHAR(128) NOT NULL,
+    owner_type VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    cloud_provider VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    target_revision BIGINT UNSIGNED NOT NULL,
+    high_water_id BIGINT UNSIGNED NOT NULL,
+    last_committed_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    strategy VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+    state VARCHAR(24) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT 'paused',
+    processed_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    imported_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    conflict_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    last_error TEXT DEFAULT NULL,
+    created_at BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    updated_at BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    control_state VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT 'active',
+    control_generation BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    CONSTRAINT ck_cloud_backfill_control_state CHECK(control_state IN('active','paused','cancelled')),
+    PRIMARY KEY (run_id),
+    KEY idx_cloud_backfill_resume (state, cloud_provider, updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

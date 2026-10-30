@@ -1,0 +1,1 @@
+UPDATE resource_discovery_runs SET cursor_id=?,processed=processed+?,counts=CAST(? AS JSON),state=?,lease_until=0,result_code='',updated_at=UNIX_TIMESTAMP() WHERE run_id=? AND claim_generation=? AND cursor_id=? AND state='running' AND lease_until>UNIX_TIMESTAMP()

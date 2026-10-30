@@ -1,0 +1,1 @@
+INSERT INTO resource_discovery_runs(run_id,definition_hash,definition,owner_type,destination,high_water_id,state,counts,created_at,updated_at) VALUES(?,?,CAST(? AS JSON),?,?,?,?,CAST(? AS JSON),UNIX_TIMESTAMP(),UNIX_TIMESTAMP())

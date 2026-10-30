@@ -1,0 +1,1 @@
+SELECT definition_hash,definition,state,cursor_id,claim_generation,lease_until,processed,counts,result_code,owner_type,destination,high_water_id FROM resource_discovery_runs WHERE run_id=?

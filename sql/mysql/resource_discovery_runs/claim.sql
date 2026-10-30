@@ -1,0 +1,1 @@
+UPDATE resource_discovery_runs SET claim_generation=claim_generation+1,lease_until=UNIX_TIMESTAMP()+?,result_code='',updated_at=UNIX_TIMESTAMP() WHERE run_id=? AND state='running' AND lease_until<=UNIX_TIMESTAMP()
