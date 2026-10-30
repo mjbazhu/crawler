@@ -9,3 +9,9 @@
 CMakeLists.txt text eol=lf
 .clang-format text eol=lf
 .clangd text eol=lf
+
+# V2911 已按 CRLF 执行；保留原字节，避免检出后破坏历史 checksum。
+sql/mysql/migrations/V2026102911__resource_discovery_and_queue_capacity.sql -text diff whitespace=cr-at-eol
+
+# V2903 已执行时包含末尾空行；只豁免该文件的 EOF 空行检查，保持原 checksum。
+sql/mysql/migrations/V2026102903__resource_transfer_jobs.sql whitespace=-blank-at-eof

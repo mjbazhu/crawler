@@ -7,3 +7,7 @@ uploads
 .env.*
 !.env.example
 logs
+
+# Python 验证工具的本地缓存
+__pycache__/
+*.py[cod]
