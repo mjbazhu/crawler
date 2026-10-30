@@ -1,11 +1,29 @@
 #include "crawler/infrastructure/storage/rclone/RcloneRcSupport.h"
 
+#include "crawler/infrastructure/http/client/AsioHttpUrl.h"
+#include "crawler/infrastructure/storage/cloud/CloudFileSupport.h"
+
 #include <openssl/evp.h>
 
 #include <cctype>
+#include <cstddef>
+#include <algorithm>
 #include <stdexcept>
+#include <utility>
 
 namespace orchestrator::modules::crawler::infrastructure::storage::rclone::detail {
+
+RcloneConfig normalizeCloudConfig(RcloneConfig config)
+{
+    while (!config.rc_url.empty() && config.rc_url.back() == '/') config.rc_url.pop_back();
+    while (!config.target_fs.empty() && config.target_fs.back() == '/') config.target_fs.pop_back();
+    const auto url = http::client::detail::parseUrl(config.rc_url);
+    const auto colon = config.target_fs.find(':');
+    const bool name = colon != 0 && colon != std::string::npos && std::all_of(config.target_fs.begin(), config.target_fs.begin() + static_cast<std::ptrdiff_t>(colon), [](unsigned char c) { return std::isalnum(c) || c == '_' || c == '-' || c == '.'; });
+    const bool root = name && (colon + 1 == config.target_fs.size() || cloud::safeRelativePath(std::string_view(config.target_fs).substr(colon + 1)));
+    if (!url || url->host.find('@') != std::string::npos || config.rc_url.find_first_of("\r\n?#") != std::string::npos || !root) throw std::invalid_argument("invalid rclone cloud configuration");
+    return config;
+}
 
 std::vector<std::string> rcHeaders(const RcloneConfig &config, std::string_view content_type)
 {

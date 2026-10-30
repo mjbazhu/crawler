@@ -28,6 +28,6 @@ struct FetchResult {
 };
 
 // 支持最多三次跳转和整次超时，传输中断时不返回可保存字节。
-FetchResult fetch(http::client::HttpClient &client, std::string url, std::vector<std::string> headers, int timeout_ms, const std::function<bool()> &cancelled);
+FetchResult fetch(http::client::HttpClient &client, std::string url, std::vector<std::string> headers, int timeout_ms, const std::function<bool()> &cancelled, std::size_t max_bytes = maxCoverBytes);
 
 } // namespace orchestrator::modules::crawler::infrastructure::storage::filesystem::cover_io

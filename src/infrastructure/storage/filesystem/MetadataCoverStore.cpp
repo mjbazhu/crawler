@@ -53,7 +53,7 @@ application::model::MetadataResourceFile MetadataCoverStore::save(application::m
     if (!client_ || !files_ || !safeSegment(target.source) || !safeSegment(target.source_id)) {
         return failure("invalid_target", "invalid_cover_target", "invalid metadata cover target");
     }
-    auto fetched = cover_io::fetch(*client_, target.remote_url, headers_, input.timeout_ms, input.cancelled);
+    auto fetched = cover_io::fetch(*client_, target.remote_url, headers_, input.timeout_ms, input.cancelled, static_cast<std::size_t>((std::min)(input.max_bytes, std::uint64_t(cover_io::maxCoverBytes))));
     if (fetched.error.status == 3) return fetched.error;
     if (input.cancelled && input.cancelled()) return failure("resource", "cancelled", "cover processing cancelled");
     const auto stamp = std::chrono::system_clock::now().time_since_epoch().count();

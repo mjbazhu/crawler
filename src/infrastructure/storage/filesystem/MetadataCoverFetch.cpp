@@ -70,8 +70,10 @@ std::string imageMime(const std::string &extension)
     return extension == "jpg" ? "image/jpeg" : "image/" + extension;
 }
 
-FetchResult fetch(http::client::HttpClient &client, std::string url, std::vector<std::string> headers, int timeout_ms, const std::function<bool()> &cancelled)
+FetchResult fetch(http::client::HttpClient &client, std::string url, std::vector<std::string> headers, int timeout_ms, const std::function<bool()> &cancelled, std::size_t max_bytes)
 {
+    const auto limit = (std::min)(max_bytes, maxCoverBytes);
+    if (limit == 0) return failure("invalid_target", "invalid_cover_limit");
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds((std::clamp)(timeout_ms, 100, 600000));
     std::set<std::string> visited;
     for (int hop = 0; hop <= 3; ++hop) {
@@ -83,7 +85,7 @@ FetchResult fetch(http::client::HttpClient &client, std::string url, std::vector
         if (remaining.count() <= 0) return failure("timeout", "timeout");
         http::client::HttpRequestOptions options;
         options.request_timeout = remaining;
-        options.max_response_bytes = maxCoverBytes;
+        options.max_response_bytes = limit;
         http::client::HttpStreamInfo response;
         std::vector<char> bytes;
         bool oversized = false;
@@ -91,7 +93,7 @@ FetchResult fetch(http::client::HttpClient &client, std::string url, std::vector
         callbacks.on_response = [&](const auto &info) { response = info; return info.status_code >= 200 && info.status_code < 300; };
         callbacks.on_chunk = [&](std::string_view chunk) {
             if (cancelled && cancelled()) return false;
-            if (chunk.size() > maxCoverBytes - bytes.size()) {
+            if (chunk.size() > limit - bytes.size()) {
                 oversized = true;
                 return false;
             }

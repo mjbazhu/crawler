@@ -6,6 +6,7 @@
 #include <chrono>
 #include <functional>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -29,6 +30,7 @@ struct HttpResponse {
 struct HttpRequestOptions {
     std::chrono::milliseconds request_timeout {0}; // 单次请求超时；0 表示使用客户端默认值
     std::size_t max_response_bytes = 0;            // 最大响应体大小；0 表示使用客户端默认值
+    std::function<bool()> cancelled;               // 单请求非阻塞取消检查，不能在其中访问数据库
 };
 
 // HTTP 流式响应头信息，body 分片开始前回调。
@@ -53,6 +55,22 @@ struct HttpStreamResult {
     std::uint64_t bytes_received = 0; // 已交付给调用方的 body 字节数
     std::string result_code;          // 结果编码，例如 ok、network_failed、timeout
     std::string message;              // 脱敏后的诊断说明
+};
+
+// 请求体按需供给；read 返回空表示失败，0 表示结束，每次不超过给定缓冲。
+struct HttpUploadBody {
+    std::uint64_t size_bytes = 0;                                    // 已知完整长度，包含 multipart 头尾
+    std::function<std::optional<std::size_t>(std::span<char>)> read; // 不聚合整个文件
+    std::function<bool()> cancelled;                                 // 只停止本次连接
+    std::uint64_t bytes_per_second = 0;                              // 单次发送限速，0 无额外限制
+};
+
+// 保留是否已进入远端副作用边界，不将网络中断当作确定未上传。
+struct HttpUploadResult {
+    std::optional<HttpResponse> response; // 仅完整、有界响应可用
+    std::uint64_t bytes_sent = 0;         // 实际发送的请求体字节
+    bool request_started = false;         // 开始写请求头后即可能产生副作用
+    std::string result_code;              // 固定错误码，不携带 URL 或认证
 };
 
 class HttpClient {
@@ -86,6 +104,12 @@ public:
     {
         (void)options;
         return post(url, body, headers);
+    }
+
+    // 新能力默认失败关闭，旧客户端不得回退为全量聚合大文件。
+    virtual HttpUploadResult streamPostWithOptions(std::string_view, HttpUploadBody, const std::vector<std::string> &, const HttpRequestOptions &)
+    {
+        return {{}, 0, false, "stream_upload_unsupported"};
     }
 
     // 协程式 GET，请在调用方选择的 Asio executor 上 co_spawn。

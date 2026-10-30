@@ -29,6 +29,12 @@ public:
         return output_ && output_->is_open();
     }
 
+    // 路径在会话创建时已独占固定，不需要先 commit 才能登记意图。
+    std::string plannedPath() const override
+    {
+        return relative_path_;
+    }
+
     bool write(std::string_view chunk, std::string &error) override
     {
         if (committed_ || aborted_) {

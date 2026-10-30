@@ -50,6 +50,7 @@ public:
         std::size_t max_response_bytes = 10 * 1024 * 1024; // 最大响应体大小
         bool verify_tls = true;                            // 是否校验 HTTPS 证书
         std::optional<ProxyOptions> proxy;                 // 可选 HTTP 代理
+        std::function<bool()> cancelled;                   // 单次会话取消快照，默认无取消
     };
 
     AsioHttpClient();
@@ -69,6 +70,9 @@ public:
     std::optional<HttpResponse> post(std::string_view url, std::string_view body, const std::vector<std::string> &headers = {}) override;
     // 单次 POST 覆盖超时与响应上限，用于已下载文件云端上传。
     std::optional<HttpResponse> postWithOptions(std::string_view url, std::string_view body, const std::vector<std::string> &headers, const HttpRequestOptions &options) override;
+
+    // 固定缓冲流式 POST，支持单次限速、主动取消和有界响应。
+    HttpUploadResult streamPostWithOptions(std::string_view url, HttpUploadBody body, const std::vector<std::string> &headers, const HttpRequestOptions &options) override;
 
     // 返回内部 Asio executor，供外部用 co_spawn 启动 coGet/coPost。
     boost::asio::any_io_executor executor();

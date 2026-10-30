@@ -12,5 +12,7 @@ namespace orchestrator::modules::crawler::infrastructure::storage::rclone::detai
 std::vector<std::string> rcHeaders(const RcloneConfig &config, std::string_view content_type = "application/json");
 // 将 fs 和 remote 安全编码到 RC 查询参数。
 std::string queryEncode(std::string_view value);
+// 共用配置规范化，拒绝认证 URL、任意连接串和不受控根。
+RcloneConfig normalizeCloudConfig(RcloneConfig config);
 
 } // namespace orchestrator::modules::crawler::infrastructure::storage::rclone::detail

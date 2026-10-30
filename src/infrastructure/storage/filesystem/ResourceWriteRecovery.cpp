@@ -35,7 +35,7 @@ std::size_t FileStorage::recoverOwnedResourceWrites(const std::function<std::opt
         std::getline(record, previous);
         std::string owner;
         if (!std::getline(record, owner) || owner.empty()) owner = "song";
-        if (owner != "song" && owner != "singer" && owner != "album") continue;
+        if (owner != "song" && owner != "singer" && owner != "album" && owner != "song_artifact") continue;
         record.close();
         // 日志也作为外部数据检查，禁止损坏日志逃逸存储根目录。
         if (!file_detail::isSafeRelativePath(local_path) || !file_detail::isSafeRelativePath(temporary)) continue;

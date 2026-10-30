@@ -18,7 +18,8 @@ namespace orchestrator::modules::crawler::infrastructure::storage::filesystem {
 // 本地文件系统存储 adapter，支持旧 FileStore 和歌曲资源二进制存储 port。
 class FileStorage : public application::ports::FileStore, public application::ports::SongResourceBlobStore {
 public:
-    explicit FileStorage(std::filesystem::path root_dir);
+    // 只读桥接装配不创建根目录；真正写入仍由写会话创建其父目录。
+    explicit FileStorage(std::filesystem::path root_dir, bool create_root = true);
     ~FileStorage() override = default;
 
     // 原子写入文件

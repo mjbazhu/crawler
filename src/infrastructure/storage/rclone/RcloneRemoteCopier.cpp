@@ -386,6 +386,8 @@ application::model::SongResourceRemoteCopyResult RcloneRemoteCopier::copyUrlBloc
     SongResourceRemoteCopyResult result;
     result.ok = true;
     result.local_path = remote_path;
+    result.cloud_backend = "rclone";
+    result.cloud_path = remote_path;
     result.size_bytes = *size_bytes;
     result.checksum = objectChecksum(*item, *size_bytes);
     result.result_code = "ok";

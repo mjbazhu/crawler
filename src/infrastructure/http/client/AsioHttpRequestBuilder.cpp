@@ -153,10 +153,10 @@ std::string buildConnectRequest(const ParsedUrl &url, const AsioHttpClient::Prox
     return request.str();
 }
 
-std::string buildRequest(
+std::string buildRequestHead(
     std::string_view method,
     const ParsedUrl &url,
-    std::string_view body,
+    std::uint64_t body_size,
     const std::vector<std::string> &raw_headers,
     const AsioHttpClient::ProxyOptions *proxy
 )
@@ -189,11 +189,15 @@ std::string buildRequest(
     }
 
     if (method == "POST") {
-        request << "Content-Length: " << body.size() << "\r\n";
+        request << "Content-Length: " << body_size << "\r\n";
     }
     request << "\r\n";
-    request << body;
     return request.str();
+}
+
+std::string buildRequest(std::string_view method, const ParsedUrl &url, std::string_view body, const std::vector<std::string> &headers, const AsioHttpClient::ProxyOptions *proxy)
+{
+    return buildRequestHead(method, url, body.size(), headers, proxy) + std::string(body);
 }
 
 } // namespace orchestrator::modules::crawler::infrastructure::http::client::detail

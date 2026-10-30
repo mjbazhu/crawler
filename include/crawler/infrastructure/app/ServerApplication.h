@@ -3,6 +3,7 @@
 #include "crawler/infrastructure/music/persistence/mysql/MySqlConfig.h"
 #include "crawler/infrastructure/storage/baidupcs/BaiduPcsGoConfig.h"
 #include "crawler/infrastructure/storage/rclone/RcloneConfig.h"
+#include "crawler/infrastructure/app/ResourcePipelineConfig.h"
 
 #include <cstddef>
 #include <memory>
@@ -56,8 +57,10 @@ public:
         bool resource_cloud_upload_enabled = false;             // 本地保存后是否上传到网盘
         int resource_cloud_timeout_ms = 120000;                 // 单个封面上传及核验总超时
         std::string resource_cloud_upload_backend = "baidupcs"; // 封面云端后端：baidupcs 或 rclone（Google 等 remote）
+        std::string resource_cloud_provider;                    // 旧视图的平台归属；rclone 必须明确，不从工具或 remote 别名猜测
         storage::baidupcs::BaiduPcsGoConfig baidupcs;           // BaiduPCS-Go 本地文件上传配置
         storage::rclone::RcloneConfig rclone;                   // rclone 远端 copyurl 配置，保留旧方案
+        ResourcePipelineConfig resource_pipeline;               // 显式三路模式与逐端配置
 
         int outbound_http_io_threads = 4;                                // Asio 出站 I/O 线程数
         int outbound_http_timeout_ms = 30000;                            // 出站请求超时时间

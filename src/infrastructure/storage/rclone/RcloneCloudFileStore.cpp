@@ -17,15 +17,6 @@ namespace {
 namespace model = application::model;
 using json = nlohmann::json;
 
-// 只配置命名 remote，拒绝把含认证参数的 connection string 作为回执输出。
-bool namedRemote(const std::string &value)
-{
-    const auto colon = value.find(':');
-    if (colon == 0 || colon == std::string::npos) return false;
-    if (!std::all_of(value.begin(), value.begin() + static_cast<std::ptrdiff_t>(colon), [](unsigned char ch) { return std::isalnum(ch) || ch == '_' || ch == '-' || ch == '.'; })) return false;
-    return colon + 1 == value.size() || cloud::safeRelativePath(std::string_view(value).substr(colon + 1));
-}
-
 // 摘要字段名在不同 rclone 后端使用不同大小写。
 std::string lower(std::string value)
 {
@@ -34,12 +25,9 @@ std::string lower(std::string value)
 }
 } // namespace
 
-RcloneCloudFileStore::RcloneCloudFileStore(std::shared_ptr<http::client::HttpClient> client, RcloneConfig config) : client_(std::move(client)), config_(std::move(config))
+RcloneCloudFileStore::RcloneCloudFileStore(std::shared_ptr<http::client::HttpClient> client, RcloneConfig config) : client_(std::move(client)), config_(detail::normalizeCloudConfig(std::move(config)))
 {
-    while (!config_.rc_url.empty() && config_.rc_url.back() == '/') config_.rc_url.pop_back();
-    while (!config_.target_fs.empty() && config_.target_fs.back() == '/') config_.target_fs.pop_back();
-    const auto parsed = http::client::detail::parseUrl(config_.rc_url);
-    if (!client_ || !parsed || parsed->host.find('@') != std::string::npos || config_.rc_url.find_first_of("\r\n?#") != std::string::npos || !namedRemote(config_.target_fs)) throw std::invalid_argument("invalid rclone cloud file configuration");
+    if (!client_) throw std::invalid_argument("rclone client is required");
 }
 
 std::string RcloneCloudFileStore::backend() const

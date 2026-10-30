@@ -47,6 +47,7 @@ public:
     ) : strand_(asio::make_strand(io_context)),
         resolver_(strand_),
         timer_(strand_),
+        cancellation_timer_(strand_),
         stream_(makeSessionStream<Stream>(strand_, ssl_context)),
         url_(std::move(url)),
         request_(std::move(request)),
@@ -58,6 +59,7 @@ public:
     void start()
     {
         armTimeout();
+        armCancellation();
         const std::pair<std::string, std::string> endpoint = endpointTarget();
         resolver_.async_resolve(
             endpoint.first,
@@ -80,6 +82,25 @@ private:
         return {url_.host, url_.port};
     }
 
+    // 仅检查非阻塞标志；数据库轮询由调用线程之外的上下文监视器承担。
+    void armCancellation()
+    {
+        if (!options_.cancelled || completed_) return;
+        cancellation_timer_.expires_after(std::chrono::milliseconds(25));
+        cancellation_timer_.async_wait(asio::bind_executor(strand_, [self = this->shared_from_this()](const ErrorCode &ec) {
+            if (ec || self->completed_) return;
+            bool stopped = true;
+            try {
+                stopped = self->options_.cancelled();
+            } catch (...) {}
+            if (stopped) {
+                self->complete(std::nullopt);
+                return;
+            }
+            self->armCancellation();
+        }));
+    }
+
     void armTimeout()
     {
         timer_.expires_after(options_.request_timeout);
@@ -92,6 +113,7 @@ private:
 
     void onResolve(const ErrorCode &ec, const asio::ip::tcp::resolver::results_type &results)
     {
+        if (completed_) return;
         if (ec) {
             fail("[AsioHttpClient] Resolve failed: " + ec.message());
             return;
@@ -111,6 +133,7 @@ private:
 
     void onConnect(const ErrorCode &ec)
     {
+        if (completed_) return;
         if (ec) {
             fail("[AsioHttpClient] Connect failed: " + ec.message());
             return;
@@ -147,6 +170,7 @@ private:
 
     void onConnectRequestWritten(const ErrorCode &ec)
     {
+        if (completed_) return;
         if (ec) {
             fail("[AsioHttpClient] Proxy CONNECT write failed: " + ec.message());
             return;
@@ -171,6 +195,7 @@ private:
 
     void onConnectResponse(const ErrorCode &ec, std::size_t bytes_read)
     {
+        if (completed_) return;
         if (ec) {
             fail("[AsioHttpClient] Proxy CONNECT read failed: " + ec.message());
             return;
@@ -213,6 +238,7 @@ private:
 
     void onHandshake(const ErrorCode &ec)
     {
+        if (completed_) return;
         if (ec) {
             fail("[AsioHttpClient] TLS handshake failed: " + ec.message());
             return;
@@ -236,6 +262,7 @@ private:
 
     void onWrite(const ErrorCode &ec)
     {
+        if (completed_) return;
         if (ec) {
             fail("[AsioHttpClient] Write failed: " + ec.message());
             return;
@@ -258,6 +285,7 @@ private:
 
     void onRead(const ErrorCode &ec, std::size_t bytes_read)
     {
+        if (completed_) return;
         if (bytes_read > 0) {
             std::string error;
             if (!appendResponseChunk(raw_response_, read_buffer_.data(), bytes_read, options_.max_response_bytes, error)) {
@@ -294,6 +322,8 @@ private:
 
         ErrorCode ignored;
         timer_.cancel();
+        cancellation_timer_.cancel();
+        resolver_.cancel();
         stream_.lowest_layer().close(ignored);
 
         promise_->set_value(std::move(response));
@@ -302,6 +332,7 @@ private:
     IoStrand strand_;                                                    // 串行化单个请求的异步回调
     asio::ip::tcp::resolver resolver_;                                   // DNS 解析器
     asio::steady_timer timer_;                                           // 请求总超时控制
+    asio::steady_timer cancellation_timer_;                              // 独立取消轮询，和连接同 strand
     Stream stream_;                                                      // TCP 或 TLS 流
     ParsedUrl url_;                                                      // 已解析 URL
     std::string request_;                                                // 完整 HTTP 请求报文

@@ -20,8 +20,9 @@ namespace orchestrator::modules::crawler::infrastructure::storage::filesystem {
 
 using namespace file_detail; // 本 adapter 的路径和原子写入细节
 
-FileStorage::FileStorage(std::filesystem::path root_dir) : root_dir_(std::move(root_dir))
+FileStorage::FileStorage(std::filesystem::path root_dir, bool create_root) : root_dir_(std::move(root_dir))
 {
+    if (!create_root) return;
     // 构造时确保根目录存在
     std::error_code ec;
     if (!std::filesystem::exists(root_dir_, ec)) {

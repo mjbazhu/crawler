@@ -176,6 +176,7 @@ public:
     ) : strand_(asio::make_strand(io_context)),
         resolver_(strand_),
         timer_(strand_),
+        cancellation_timer_(strand_),
         stream_(makeStreamingSessionStream<Stream>(strand_, ssl_context)),
         url_(std::move(url)),
         request_(std::move(request)),
@@ -188,6 +189,7 @@ public:
     void start()
     {
         armTimeout();
+        armCancellation();
         const std::pair<std::string, std::string> endpoint = endpointTarget();
         resolver_.async_resolve(
             endpoint.first,
@@ -210,6 +212,25 @@ private:
         return {url_.host, url_.port};
     }
 
+    // 仅检查非阻塞标志；数据库轮询由调用线程之外的上下文监视器承担。
+    void armCancellation()
+    {
+        if (!options_.cancelled || completed_) return;
+        cancellation_timer_.expires_after(std::chrono::milliseconds(25));
+        cancellation_timer_.async_wait(asio::bind_executor(strand_, [self = this->shared_from_this()](const ErrorCode &ec) {
+            if (ec || self->completed_) return;
+            bool stopped = true;
+            try {
+                stopped = self->options_.cancelled();
+            } catch (...) {}
+            if (stopped) {
+                self->fail("cancelled", "http request cancelled");
+                return;
+            }
+            self->armCancellation();
+        }));
+    }
+
     void armTimeout()
     {
         timer_.expires_after(options_.request_timeout);
@@ -223,6 +244,7 @@ private:
 
     void onResolve(const ErrorCode &ec, const asio::ip::tcp::resolver::results_type &results)
     {
+        if (completed_) return;
         if (completed_) {
             return;
         }
@@ -245,6 +267,7 @@ private:
 
     void onConnect(const ErrorCode &ec)
     {
+        if (completed_) return;
         if (completed_) {
             return;
         }
@@ -283,6 +306,7 @@ private:
 
     void onConnectRequestWritten(const ErrorCode &ec)
     {
+        if (completed_) return;
         if (completed_) {
             return;
         }
@@ -310,6 +334,7 @@ private:
 
     void onConnectResponse(const ErrorCode &ec, std::size_t bytes_read)
     {
+        if (completed_) return;
         if (completed_) {
             return;
         }
@@ -354,6 +379,7 @@ private:
 
     void onHandshake(const ErrorCode &ec)
     {
+        if (completed_) return;
         if (completed_) {
             return;
         }
@@ -380,6 +406,7 @@ private:
 
     void onWrite(const ErrorCode &ec)
     {
+        if (completed_) return;
         if (completed_) {
             return;
         }
@@ -405,6 +432,7 @@ private:
 
     void onRead(const ErrorCode &ec, std::size_t bytes_read)
     {
+        if (completed_) return;
         if (completed_) {
             return;
         }
@@ -610,6 +638,7 @@ private:
 
     void onBodyEof()
     {
+        if (completed_) return;
         if (chunked_) {
             fail("network_failed", "[AsioHttpClient] Chunked response ended before final chunk");
             return;
@@ -652,6 +681,8 @@ private:
 
         ErrorCode ignored;
         timer_.cancel();
+        cancellation_timer_.cancel();
+        resolver_.cancel();
         stream_.lowest_layer().close(ignored);
 
         promise_->set_value(std::move(result_));
@@ -660,6 +691,7 @@ private:
     IoStrand strand_;                                         // 串行化单个请求的异步回调
     asio::ip::tcp::resolver resolver_;                        // DNS 解析器
     asio::steady_timer timer_;                                // 请求总超时控制
+    asio::steady_timer cancellation_timer_;                   // 独立取消轮询，和连接同 strand
     Stream stream_;                                           // TCP 或 TLS 流
     ParsedUrl url_;                                           // 已解析 URL
     std::string request_;                                     // 完整 HTTP 请求报文

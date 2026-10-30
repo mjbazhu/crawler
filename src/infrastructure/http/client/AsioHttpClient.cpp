@@ -1,6 +1,7 @@
 #include "crawler/infrastructure/http/client/AsioHttpClient.h"
 
 #include "AsioHttpTlsTrust.h"
+#include "AsioHttpUpload.h"
 #include "crawler/infrastructure/http/client/AsioHttpCoroutineRequest.h"
 #include "crawler/infrastructure/http/client/AsioHttpCoroutineStreamingRequest.h"
 #include "crawler/infrastructure/http/client/AsioHttpRequestBuilder.h"
@@ -95,6 +96,7 @@ public:
             effective_options.max_response_bytes = request_options.max_response_bytes;
         }
 
+        effective_options.cancelled = request_options.cancelled;
         const AsioHttpClient::ProxyOptions *proxy = proxyEnabled(effective_options) ? &*effective_options.proxy : nullptr;
         const std::string request_text = buildRequest(method, *parsed_url, body, headers, proxy);
 
@@ -125,6 +127,12 @@ public:
         return future.get();
     }
 
+    // 正文发送及取消状态由独立 helper 托管，门面不承载新协议流程。
+    HttpUploadResult upload(std::string url, HttpUploadBody body, std::vector<std::string> headers, HttpRequestOptions overrides)
+    {
+        return detail::performStreamUpload(executor(), ssl_context_, options_, std::move(url), std::move(body), std::move(headers), overrides);
+    }
+
     HttpStreamResult streamGet(
         std::string_view url,
         const std::vector<std::string> &headers,
@@ -149,6 +157,7 @@ public:
             effective_options.max_response_bytes = request_options.max_response_bytes;
         }
 
+        effective_options.cancelled = request_options.cancelled;
         const AsioHttpClient::ProxyOptions *proxy = proxyEnabled(effective_options) ? &*effective_options.proxy : nullptr;
         const std::string request_text = buildRequest("GET", *parsed_url, "", headers, proxy);
         auto promise = std::make_shared<std::promise<HttpStreamResult>>();
@@ -244,6 +253,7 @@ public:
             effective_options.max_response_bytes = request_options.max_response_bytes;
         }
 
+        effective_options.cancelled = request_options.cancelled;
         const AsioHttpClient::ProxyOptions *proxy = proxyEnabled(effective_options) ? &*effective_options.proxy : nullptr;
         std::string request_text = buildRequest("GET", *parsed_url, "", headers, proxy);
 
@@ -394,6 +404,11 @@ std::optional<HttpResponse> AsioHttpClient::postWithOptions(std::string_view url
 boost::asio::any_io_executor AsioHttpClient::executor()
 {
     return impl_->executor();
+}
+
+HttpUploadResult AsioHttpClient::streamPostWithOptions(std::string_view url, HttpUploadBody body, const std::vector<std::string> &headers, const HttpRequestOptions &options)
+{
+    return impl_->upload(std::string(url), std::move(body), headers, options);
 }
 
 AsioHttpClient::AwaitableResponse AsioHttpClient::coGet(std::string url, std::vector<std::string> headers)
