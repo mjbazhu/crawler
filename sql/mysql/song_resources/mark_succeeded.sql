@@ -1,7 +1,5 @@
 UPDATE song_resources
 SET local_path = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci,
-    cloud_backend = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci,
-    cloud_path = NULLIF(CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci, ''),
     size_bytes = ?,
     checksum = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci,
     status = 2,
@@ -12,7 +10,8 @@ SET local_path = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci,
     running_batch_id = NULL,
     last_processed_at = UNIX_TIMESTAMP(),
     fetched_at = UNIX_TIMESTAMP(),
-    cloud_uploaded_at = IF(CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci = '', 0, UNIX_TIMESTAMP()),
+    local_content_generation = 0,
+    local_target_revision = 0,
     updated_at = UNIX_TIMESTAMP()
 WHERE id = ?
   AND status = 1

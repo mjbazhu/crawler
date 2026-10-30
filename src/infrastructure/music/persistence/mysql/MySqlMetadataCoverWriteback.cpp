@@ -1,6 +1,7 @@
 #include "crawler/infrastructure/music/persistence/mysql/MySqlMetadataCoverQueue.h"
 
 #include "MySqlMetadataCoverSupport.h"
+#include "MySqlResourceTransferJobsSupport.h"
 
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/mysql/statement.hpp>
@@ -12,15 +13,23 @@ namespace model = application::model;
 // 仅成功路径替换回执，失败路径保留上次完整图片。
 boost::asio::awaitable<bool> finishCover(std::shared_ptr<MySqlConnectionPool> pool, model::MetadataCoverRecord target, model::MetadataResourceFile file, bool success)
 {
-    auto connection = co_await pool->coAcquire();
-    auto statement = co_await connection->async_prepare_statement(cover_detail::load(target.owner, success ? "cover_succeed" : "cover_fail"), boost::asio::use_awaitable);
-    boost::mysql::results result;
-    if (success) {
-        co_await connection->async_execute(statement.bind(file.local_path, file.size_bytes, file.checksum, target.resource_id, target.claim_generation, target.remote_url), result, boost::asio::use_awaitable);
-    } else {
-        co_await connection->async_execute(statement.bind(file.error_category, file.result_code, file.last_error, target.resource_id, target.claim_generation), result, boost::asio::use_awaitable);
-    }
-    co_return result.affected_rows() != 0;
+    if (success && (file.local_path.empty() || file.size_bytes == 0 || file.checksum.size() != 64)) co_return false;
+    auto work = [target = std::move(target), file = std::move(file), success](boost::mysql::pooled_connection &connection) -> boost::asio::awaitable<bool> {
+        auto statement = co_await connection->async_prepare_statement(cover_detail::load(target.owner, success ? "cover_succeed" : "cover_fail"), boost::asio::use_awaitable);
+        boost::mysql::results result;
+        if (success) {
+            co_await connection->async_execute(statement.bind(file.checksum, file.size_bytes, file.local_path, file.size_bytes, file.checksum, file.checksum, file.size_bytes, target.resource_id, target.claim_generation, target.remote_url), result, boost::asio::use_awaitable);
+        } else {
+            co_await connection->async_execute(statement.bind(file.error_category, file.result_code, file.last_error, target.resource_id, target.claim_generation), result, boost::asio::use_awaitable);
+        }
+        const bool written = result.affected_rows() != 0;
+        if (written && success) {
+            auto invalidate = co_await connection->async_prepare_statement(cover_detail::load(target.owner, "cover_invalidate_cloud_claims"), boost::asio::use_awaitable);
+            co_await connection->async_execute(invalidate.bind(target.resource_id), result, boost::asio::use_awaitable);
+        }
+        co_return written;
+    };
+    co_return co_await transfer_jobs::transaction<bool>(std::move(pool), std::move(work), true);
 }
 
 // 文件回执可能随专辑物料归一迁到另一资源主键，按路径核对是否仍被引用。

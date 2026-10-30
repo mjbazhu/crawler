@@ -770,7 +770,7 @@ boost::asio::awaitable<application::model::MiguSchemaStatus> MySqlMusicCatalogQu
 {
     application::model::MiguSchemaStatus status;
     status.checked_at = nowSeconds();
-    status.latest_available_version = 2026102901;
+    status.latest_available_version = 2026102913;
     auto connection = co_await pool_->coAcquire();
     boost::mysql::results result;
     co_await connection->async_execute(schema_status_sql_, result, boost::asio::use_awaitable);
@@ -802,10 +802,12 @@ boost::asio::awaitable<application::model::MiguSchemaStatus> MySqlMusicCatalogQu
             status.missing_tables.push_back(object_name);
         } else if (object_type == "column" && !present) {
             status.missing_columns.push_back(object_name);
+        } else if (object_type == "constraint" && !present) {
+            status.missing_constraints.push_back(object_name);
         }
     }
 
-    status.ok = status.schema_version >= 2026052001 && status.latest_applied_version >= status.latest_available_version && status.pending_migrations.empty() && status.checksum_mismatches.empty() && status.missing_tables.empty() && status.missing_columns.empty();
+    status.ok = status.schema_version >= 2026052001 && status.schema_version == status.latest_applied_version && status.latest_applied_version >= status.latest_available_version && status.pending_migrations.empty() && status.checksum_mismatches.empty() && status.missing_tables.empty() && status.missing_columns.empty() && status.missing_constraints.empty();
     co_return status;
 }
 

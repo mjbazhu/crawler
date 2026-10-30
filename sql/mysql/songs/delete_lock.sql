@@ -1,0 +1,1 @@
+SELECT id FROM songs WHERE id=? FOR UPDATE

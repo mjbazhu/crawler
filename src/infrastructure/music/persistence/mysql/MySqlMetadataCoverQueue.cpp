@@ -14,7 +14,7 @@ namespace {
 namespace model = application::model;
 
 // 在基础设施边界映射表级查询列，封面不会流入歌曲队列模型。
-model::MetadataCoverRecord readCover(boost::mysql::row_view row, model::CoverOwner owner)
+model::MetadataCoverRecord readCover(boost::mysql::row_view row, model::CoverOwner owner, model::ResourceDestination provider)
 {
     model::MetadataCoverRecord cover;
     cover.owner = owner;
@@ -42,20 +42,25 @@ model::MetadataCoverRecord readCover(boost::mysql::row_view row, model::CoverOwn
     cover.cloud.error_category = MySqlValueReader::stringAt(row, 24);
     cover.cloud.result_code = MySqlValueReader::stringAt(row, 25);
     cover.cloud.last_error = MySqlValueReader::stringAt(row, 26);
+    cover.cloud.provider = model::resourceDestinationName(provider);
+    cover.cloud.content_generation = MySqlValueReader::uint64At(row, 27);
+    cover.cloud.target_revision = MySqlValueReader::uint64At(row, 28);
+    cover.cloud.source_revision = MySqlValueReader::uint64At(row, 29);
     return cover;
 }
 
 // 页查询只在数据库执行器运行，文件可用性由读取 port 另外检查。
-boost::asio::awaitable<model::MetadataCoverPage> listCovers(std::shared_ptr<MySqlConnectionPool> pool, model::MetadataCoverQuery query)
+boost::asio::awaitable<model::MetadataCoverPage> listCovers(std::shared_ptr<MySqlConnectionPool> pool, model::MetadataCoverQuery query, model::ResourceDestination provider)
 {
     if (query.page < 1 || query.page_size < 1 || query.page_size > 200) throw std::invalid_argument("invalid cover page");
+    const std::string selected(model::resourceDestinationName(provider));
     auto connection = co_await pool->coAcquire();
     auto count = co_await connection->async_prepare_statement(cover_detail::filtered(query.owner, query.cloud_candidates ? "cover_process_count" : "cover_count", query), boost::asio::use_awaitable);
     boost::mysql::results rows;
     if (query.cloud_candidates)
-        co_await connection->async_execute(count.bind(query.source, query.cloud_backend, query.cloud_prefix), rows, boost::asio::use_awaitable);
+        co_await connection->async_execute(count.bind(selected, query.source, query.cloud_backend, query.cloud_prefix), rows, boost::asio::use_awaitable);
     else
-        co_await connection->async_execute(count.bind(query.source), rows, boost::asio::use_awaitable);
+        co_await connection->async_execute(count.bind(selected, query.source), rows, boost::asio::use_awaitable);
     model::MetadataCoverPage page;
     page.page = query.page;
     page.page_size = query.page_size;
@@ -63,10 +68,10 @@ boost::asio::awaitable<model::MetadataCoverPage> listCovers(std::shared_ptr<MySq
     auto select = co_await connection->async_prepare_statement(cover_detail::filtered(query.owner, query.cloud_candidates ? "cover_process_list" : "cover_list", query), boost::asio::use_awaitable);
     const auto offset = static_cast<std::uint64_t>(query.page - 1) * static_cast<std::uint64_t>(query.page_size);
     if (query.cloud_candidates)
-        co_await connection->async_execute(select.bind(query.source, query.cloud_backend, query.cloud_prefix, static_cast<std::uint64_t>(query.page_size), offset), rows, boost::asio::use_awaitable);
+        co_await connection->async_execute(select.bind(selected, query.source, query.cloud_backend, query.cloud_prefix, static_cast<std::uint64_t>(query.page_size), offset), rows, boost::asio::use_awaitable);
     else
-        co_await connection->async_execute(select.bind(query.source, static_cast<std::uint64_t>(query.page_size), offset), rows, boost::asio::use_awaitable);
-    for (auto row : rows.rows()) page.items.push_back(readCover(row, query.owner));
+        co_await connection->async_execute(select.bind(selected, query.source, static_cast<std::uint64_t>(query.page_size), offset), rows, boost::asio::use_awaitable);
+    for (auto row : rows.rows()) page.items.push_back(readCover(row, query.owner, provider));
     co_return page;
 }
 
@@ -86,14 +91,15 @@ boost::asio::awaitable<std::optional<model::MetadataCoverRecord>> claimCover(std
 
 } // namespace
 
-MySqlMetadataCoverQueue::MySqlMetadataCoverQueue(std::shared_ptr<MySqlConnectionPool> pool) : pool_(std::move(pool))
+MySqlMetadataCoverQueue::MySqlMetadataCoverQueue(std::shared_ptr<MySqlConnectionPool> pool, model::ResourceDestination legacy_cloud_provider) : pool_(std::move(pool)), cloud_provider_(legacy_cloud_provider)
 {
     if (!pool_) throw std::invalid_argument("metadata cover pool is required");
+    if (cloud_provider_ != model::ResourceDestination::Baidu && cloud_provider_ != model::ResourceDestination::Gdrive) throw std::invalid_argument("cloud cover provider must be baidu or gdrive");
 }
 
 application::result::ServiceResult<application::model::MetadataCoverPage> MySqlMetadataCoverQueue::list(const application::model::MetadataCoverQuery &query)
 {
-    return cover_detail::run(pool_, listCovers(pool_, query));
+    return cover_detail::run(pool_, listCovers(pool_, query, cloud_provider_));
 }
 
 application::result::ServiceResult<std::optional<application::model::MetadataCoverRecord>> MySqlMetadataCoverQueue::find(application::model::CoverOwner owner, std::uint64_t id)

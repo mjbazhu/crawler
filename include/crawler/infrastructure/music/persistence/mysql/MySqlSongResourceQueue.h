@@ -28,6 +28,8 @@ public:
         std::string mark_succeeded = "sql/mysql/song_resources/mark_succeeded.sql";             // 成功回写
         std::string mark_failed = "sql/mysql/song_resources/mark_failed.sql";                   // 失败回写
         std::string mark_skipped = "sql/mysql/song_resources/mark_skipped.sql";                 // 跳过回写
+        bool enforce_dispatch = false;                                                          // 正式组合根必须启用；旧独立 adapter 调用保留兼容
+        std::string legacy_cloud_provider;                                                      // 旧rclone平台必须显式声明baidu/gdrive
     };
 
     // 启动文件补偿核对，只返回归属事实，不直接操作文件系统。
@@ -53,13 +55,16 @@ public:
     boost::asio::awaitable<bool> coMarkFailed(application::model::SongResourceFailureUpdate update);
     boost::asio::awaitable<bool> coMarkSkipped(application::model::SongResourceSkipUpdate update);
 
+    // 同一投影供旧队列与独立来源读取复用，避免字段顺序漂移。
+    static application::model::SongResourceQueueTarget mapTarget(boost::mysql::row_view row);
+
 private:
     // 使用独立查询确认模糊的成功结果，返回 NULL 代表数据库暂时不可用。
     boost::asio::awaitable<std::optional<bool>> coConfirmSucceeded(application::model::SongResourceSuccessUpdate update);
 
-    static application::model::SongResourceQueueTarget mapTarget(boost::mysql::row_view row);
-
     std::shared_ptr<MySqlConnectionPool> pool_; // 线程安全 MySQL 连接池
+    bool enforce_dispatch_ = false;             // 在认领 SQL 本身核对持久维护及 local 目标状态
+    std::string legacy_cloud_provider_;         // 旧单云回写的平台归属，不从工具名推测
     std::string claim_select_sql_;              // 主资源认领候选查询 SQL
     std::string claim_update_sql_;              // 主资源认领更新 SQL
     std::string related_claim_update_sql_;      // 关联资源认领更新 SQL

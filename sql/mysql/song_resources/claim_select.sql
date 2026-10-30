@@ -50,5 +50,13 @@ WHERE r.source = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci
   AND (? = '' OR r.source_content_id = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci)
   AND (? = '' OR sr.format_type = CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci)
   AND sr.status IN (?, ?, ?, ?, ?)
+  AND NOT EXISTS (SELECT 1 FROM resource_baseline_blocks blocked WHERE blocked.owner_type='song' AND blocked.resource_id=sr.id AND blocked.content_generation=sr.content_generation)
+
+  AND NOT (sr.local_skip_generation=sr.content_generation AND sr.local_skip_target_revision=(SELECT target_revision FROM resource_destination_states WHERE destination='local') AND sr.local_skip_baseline<>'' AND sr.local_skip_reason<>'')
+  AND (?=0 OR (
+       NOT EXISTS (SELECT 1 FROM resource_transfer_slots slot WHERE slot.owner_type='song' AND slot.resource_id=sr.id AND slot.destination='local') AND
+       EXISTS (SELECT 1 FROM resource_destination_states d WHERE d.destination='local' AND d.dispatch_state='active' AND d.baseline_ready=1 AND d.target_fingerprint<>'' AND d.target_revision>0)
+       AND (SELECT COUNT(*) FROM resource_destination_states)=3
+       AND NOT EXISTS (SELECT 1 FROM resource_destination_states g WHERE g.dispatch_state='maintenance' OR (g.dispatch_state='active' AND (g.baseline_ready<>1 OR g.target_fingerprint='' OR g.target_revision=0)))))
 ORDER BY sr.updated_at ASC, sr.id ASC
 LIMIT ? OFFSET ?

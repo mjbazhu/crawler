@@ -72,6 +72,8 @@ MySqlSongResourceQueue::MySqlSongResourceQueue(std::shared_ptr<MySqlConnectionPo
 {}
 
 MySqlSongResourceQueue::MySqlSongResourceQueue(std::shared_ptr<MySqlConnectionPool> pool, SqlPaths paths) : pool_(std::move(pool)),
+                                                                                                            enforce_dispatch_(paths.enforce_dispatch),
+                                                                                                            legacy_cloud_provider_(std::move(paths.legacy_cloud_provider)),
                                                                                                             claim_select_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.claim_select)),
                                                                                                             claim_update_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.claim_update)),
                                                                                                             related_claim_update_sql_(sql_loader::SqlFileLoader::loadOrThrow(paths.related_claim_update)),
@@ -83,6 +85,7 @@ MySqlSongResourceQueue::MySqlSongResourceQueue(std::shared_ptr<MySqlConnectionPo
     if (!pool_) {
         throw std::invalid_argument("[MySqlSongResourceQueue] pool must not be null");
     }
+    if (!legacy_cloud_provider_.empty() && legacy_cloud_provider_ != "baidu" && legacy_cloud_provider_ != "gdrive") throw std::invalid_argument("invalid legacy cloud provider");
 }
 
 std::vector<application::model::SongResourceQueueTarget> MySqlSongResourceQueue::claimPending(application::model::SongResourceClaimQuery query)
@@ -114,7 +117,7 @@ boost::asio::awaitable<std::vector<application::model::SongResourceQueueTarget>>
                 }
                 boost::mysql::results result;
                 co_await connection->async_execute(
-                    select_statement.bind(query.source, resource_id, resource_id, "", "", "", "", "", "", statuses[0], statuses[1], statuses[2], statuses[3], statuses[4], static_cast<std::uint64_t>(1), static_cast<std::uint64_t>(0)),
+                    select_statement.bind(query.source, resource_id, resource_id, "", "", "", "", "", "", statuses[0], statuses[1], statuses[2], statuses[3], statuses[4], int(enforce_dispatch_), static_cast<std::uint64_t>(1), static_cast<std::uint64_t>(0)),
                     result,
                     boost::asio::use_awaitable
                 );
@@ -124,7 +127,7 @@ boost::asio::awaitable<std::vector<application::model::SongResourceQueueTarget>>
                 application::model::SongResourceQueueTarget target = mapTarget(result.rows().front());
                 boost::mysql::results claim_result;
                 co_await connection->async_execute(
-                    claim_statement.bind(query.batch_id, target.resource_id, statuses[0], statuses[1], statuses[2], statuses[3], statuses[4], target.claim_generation),
+                    claim_statement.bind(query.batch_id, target.resource_id, statuses[0], statuses[1], statuses[2], statuses[3], statuses[4], target.claim_generation, int(enforce_dispatch_)),
                     claim_result,
                     boost::asio::use_awaitable
                 );
@@ -139,7 +142,7 @@ boost::asio::awaitable<std::vector<application::model::SongResourceQueueTarget>>
 
         boost::mysql::results result;
         co_await connection->async_execute(
-            select_statement.bind(query.source, static_cast<std::uint64_t>(0), static_cast<std::uint64_t>(0), query.resource_kind, query.resource_kind, query.source_content_id, query.source_content_id, query.format_type, query.format_type, statuses[0], statuses[1], statuses[2], statuses[3], statuses[4], static_cast<std::uint64_t>(query.limit), static_cast<std::uint64_t>(query.offset)),
+            select_statement.bind(query.source, static_cast<std::uint64_t>(0), static_cast<std::uint64_t>(0), query.resource_kind, query.resource_kind, query.source_content_id, query.source_content_id, query.format_type, query.format_type, statuses[0], statuses[1], statuses[2], statuses[3], statuses[4], int(enforce_dispatch_), static_cast<std::uint64_t>(query.limit), static_cast<std::uint64_t>(query.offset)),
             result,
             boost::asio::use_awaitable
         );
@@ -148,7 +151,7 @@ boost::asio::awaitable<std::vector<application::model::SongResourceQueueTarget>>
             application::model::SongResourceQueueTarget target = mapTarget(row);
             boost::mysql::results claim_result;
             co_await connection->async_execute(
-                claim_statement.bind(query.batch_id, target.resource_id, statuses[0], statuses[1], statuses[2], statuses[3], statuses[4], target.claim_generation),
+                claim_statement.bind(query.batch_id, target.resource_id, statuses[0], statuses[1], statuses[2], statuses[3], statuses[4], target.claim_generation, int(enforce_dispatch_)),
                 claim_result,
                 boost::asio::use_awaitable
             );
@@ -174,7 +177,7 @@ boost::asio::awaitable<std::optional<application::model::SongResourceQueueTarget
         boost::mysql::pooled_connection connection = co_await pool_->coAcquire();
         boost::mysql::statement claim_statement = co_await connection->async_prepare_statement(related_claim_update_sql_, boost::asio::use_awaitable);
         boost::mysql::results claim_result;
-        co_await connection->async_execute(claim_statement.bind(request.song_source_ref_id, request.resource_kind, request.batch_id, request.song_source_ref_id), claim_result, boost::asio::use_awaitable);
+        co_await connection->async_execute(claim_statement.bind(request.song_source_ref_id, request.resource_kind, request.batch_id, request.song_source_ref_id, request.resource_kind, int(enforce_dispatch_)), claim_result, boost::asio::use_awaitable);
         if (claim_result.affected_rows() == 0) {
             co_return std::nullopt;
         }

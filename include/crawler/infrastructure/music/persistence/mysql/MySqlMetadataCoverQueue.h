@@ -5,6 +5,7 @@
 #include "crawler/application/ports/persistence/MetadataCoverQueue.h"
 #include "crawler/application/ports/persistence/MetadataCoverCloudQueue.h"
 #include "crawler/application/model/SongResourceFile.h"
+#include "crawler/application/model/ResourceTransfer.h"
 #include "crawler/application/result/ServiceResult.h"
 #include "crawler/infrastructure/music/persistence/mysql/MySqlConnectionPool.h"
 
@@ -20,7 +21,7 @@ namespace orchestrator::modules::crawler::infrastructure::music::persistence::my
 class MySqlMetadataCoverQueue final : public application::ports::MetadataCoverQueue, public application::ports::MetadataCoverCloudQueue {
 public:
     // 保存线程安全连接池。
-    explicit MySqlMetadataCoverQueue(std::shared_ptr<MySqlConnectionPool> pool);
+    explicit MySqlMetadataCoverQueue(std::shared_ptr<MySqlConnectionPool> pool, application::model::ResourceDestination legacy_cloud_provider = application::model::ResourceDestination::Baidu);
     // 查询分页及总数。
     application::result::ServiceResult<application::model::MetadataCoverPage> list(const application::model::MetadataCoverQuery &query) override;
     // 按资源身份查找。
@@ -45,7 +46,8 @@ public:
     std::optional<application::model::ResourceWriteDisposition> inspectWrite(application::model::CoverOwner owner, std::uint64_t id, std::uint64_t generation, const std::string &path);
 
 private:
-    std::shared_ptr<MySqlConnectionPool> pool_; // 连接生命周期由组合根管理
+    std::shared_ptr<MySqlConnectionPool> pool_;              // 连接生命周期由组合根管理
+    application::model::ResourceDestination cloud_provider_; // 兼容单端视图的明确平台
 };
 
 } // namespace orchestrator::modules::crawler::infrastructure::music::persistence::mysql

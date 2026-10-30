@@ -6,8 +6,6 @@ ON DUPLICATE KEY UPDATE
     local_path = IF(VALUES(status) = 3 AND status = 2 AND source_checksum = VALUES(source_checksum) AND processor_version = VALUES(processor_version), local_path, VALUES(local_path)),
     size_bytes = IF(VALUES(status) = 3 AND status = 2 AND source_checksum = VALUES(source_checksum) AND processor_version = VALUES(processor_version), size_bytes, VALUES(size_bytes)),
     checksum = IF(VALUES(status) = 3 AND status = 2 AND source_checksum = VALUES(source_checksum) AND processor_version = VALUES(processor_version), checksum, VALUES(checksum)),
-    cloud_path = IF(source_checksum = VALUES(source_checksum) AND processor_version = VALUES(processor_version), cloud_path, NULL),
-    cloud_backend = IF(source_checksum = VALUES(source_checksum) AND processor_version = VALUES(processor_version), cloud_backend, ''),
     result_code = IF(VALUES(status) = 3 AND status = 2 AND source_checksum = VALUES(source_checksum) AND processor_version = VALUES(processor_version), result_code, VALUES(result_code)),
     status = IF(VALUES(status) = 3 AND status = 2 AND source_checksum = VALUES(source_checksum) AND processor_version = VALUES(processor_version), status, VALUES(status)),
     source_checksum = VALUES(source_checksum),

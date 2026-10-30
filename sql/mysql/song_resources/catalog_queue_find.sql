@@ -11,8 +11,8 @@ SELECT
     sr.format_type,
     '',
     COALESCE(sr.local_path, ''),
-    COALESCE(sr.cloud_backend, ''),
-    COALESCE(sr.cloud_path, ''),
+    COALESCE(legacy_cloud.source_adapter, ''),
+    COALESCE(legacy_cloud.cloud_path, ''),
     sr.size_bytes,
     COALESCE(sr.checksum, ''),
     sr.status,
@@ -24,10 +24,18 @@ SELECT
     COALESCE(sr.running_batch_id, ''),
     sr.last_processed_at,
     sr.fetched_at,
-    sr.cloud_uploaded_at,
+    CAST(COALESCE(legacy_cloud.uploaded_at,CAST(JSON_UNQUOTE(JSON_EXTRACT(legacy_cloud.evidence,'$.retired_legacy.cloud_uploaded_at')) AS UNSIGNED),0) AS UNSIGNED),
     sr.created_at,
     sr.updated_at
 FROM song_resources sr
+
+LEFT JOIN resource_cloud_receipts legacy_cloud ON legacy_cloud.id=(
+    SELECT MIN(receipt.id) FROM resource_cloud_receipts receipt
+    WHERE receipt.owner_type='song' AND receipt.resource_id=sr.id AND COALESCE(receipt.cloud_path,'')<>''
+      AND (EXISTS(SELECT 1 FROM resource_legacy_profiles profile WHERE profile.profile_key='migu' AND profile.cloud_provider=receipt.cloud_provider)
+        OR (NOT EXISTS(SELECT 1 FROM resource_legacy_profiles profile WHERE profile.profile_key='migu')
+          AND (SELECT COUNT(*) FROM resource_cloud_receipts known WHERE known.owner_type='song' AND known.resource_id=sr.id AND COALESCE(known.cloud_path,'')<>'')=1))
+)
 JOIN song_source_refs r ON r.id = sr.song_source_ref_id
 JOIN songs s ON s.id = r.song_db_id
 WHERE sr.id = ?

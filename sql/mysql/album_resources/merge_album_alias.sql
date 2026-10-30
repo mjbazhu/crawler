@@ -1,11 +1,7 @@
-INSERT INTO album_resources (album_source_ref_id, resource_kind, remote_url, local_path, size_bytes, checksum, status, error_category, result_code, last_error, fetched_at, created_at, updated_at,
-    cloud_backend,cloud_path,cloud_size_bytes,cloud_checksum,cloud_status,cloud_uploaded_at,cloud_error_category,cloud_result_code,cloud_last_error)
+INSERT INTO album_resources (album_source_ref_id, resource_kind, remote_url, local_path, size_bytes, checksum, status, error_category, result_code, last_error, fetched_at, created_at, updated_at)
 SELECT ?, previous.resource_kind, previous.remote_url, previous.local_path, previous.size_bytes, previous.checksum,
        IF(previous.status=1, IF(NULLIF(previous.local_path,'') IS NULL,0,2), previous.status),
-       previous.error_category, previous.result_code, previous.last_error, previous.fetched_at, previous.created_at, UNIX_TIMESTAMP(),
-       previous.cloud_backend,previous.cloud_path,previous.cloud_size_bytes,previous.cloud_checksum,
-       IF(previous.cloud_status=1,0,previous.cloud_status),previous.cloud_uploaded_at,
-       previous.cloud_error_category,previous.cloud_result_code,previous.cloud_last_error
+       previous.error_category, previous.result_code, previous.last_error, previous.fetched_at, previous.created_at, UNIX_TIMESTAMP()
 FROM album_resources AS previous WHERE previous.album_source_ref_id = ?
 ON DUPLICATE KEY UPDATE
     remote_url = COALESCE(NULLIF(album_resources.remote_url, ''), VALUES(remote_url)),
@@ -16,18 +12,5 @@ ON DUPLICATE KEY UPDATE
     result_code = IF(album_resources.status IN (1,2), album_resources.result_code, VALUES(result_code)),
     last_error = IF(album_resources.status IN (1,2), album_resources.last_error, VALUES(last_error)),
     fetched_at = IF(album_resources.status IN (1,2), album_resources.fetched_at, VALUES(fetched_at)),
-    cloud_backend = IF(album_resources.status IN (1,2),album_resources.cloud_backend,VALUES(cloud_backend)),
-    cloud_path = IF(album_resources.status IN (1,2),album_resources.cloud_path,VALUES(cloud_path)),
-    cloud_size_bytes = IF(album_resources.status IN (1,2),album_resources.cloud_size_bytes,VALUES(cloud_size_bytes)),
-    cloud_checksum = IF(album_resources.status IN (1,2),album_resources.cloud_checksum,VALUES(cloud_checksum)),
-    cloud_status = IF(album_resources.status IN (1,2),album_resources.cloud_status,VALUES(cloud_status)),
-    cloud_uploaded_at = IF(album_resources.status IN (1,2),album_resources.cloud_uploaded_at,VALUES(cloud_uploaded_at)),
-    cloud_error_category = IF(album_resources.status IN (1,2),album_resources.cloud_error_category,VALUES(cloud_error_category)),
-    cloud_result_code = IF(album_resources.status IN (1,2),album_resources.cloud_result_code,VALUES(cloud_result_code)),
-    cloud_last_error = IF(album_resources.status IN (1,2),album_resources.cloud_last_error,VALUES(cloud_last_error)),
-    cloud_claim_generation = IF(album_resources.status IN (1,2),album_resources.cloud_claim_generation,album_resources.cloud_claim_generation+1),
-    cloud_claimed_at = IF(album_resources.status IN (1,2),album_resources.cloud_claimed_at,0),
-    cloud_running_batch_id = IF(album_resources.status IN (1,2),album_resources.cloud_running_batch_id,NULL),
-    cloud_attempt = IF(album_resources.status IN (1,2),album_resources.cloud_attempt,NULL),
     status = IF(album_resources.status IN (1,2), album_resources.status, VALUES(status)),
     updated_at = VALUES(updated_at);

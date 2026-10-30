@@ -1,5 +1,7 @@
 #include "crawler/infrastructure/music/persistence/mysql/MySqlMigrationRunner.h"
 
+#include "MySqlMigrationRecovery.h"
+
 #include "crawler/infrastructure/music/persistence/mysql/MySqlValueReader.h"
 #include "crawler/infrastructure/music/persistence/sql/SqlFileLoader.h"
 
@@ -152,7 +154,7 @@ boost::asio::awaitable<void> recordMigration(boost::mysql::pooled_connection &co
 // 执行一个 migration 文件中的所有语句。
 boost::asio::awaitable<void> executeMigration(boost::mysql::pooled_connection &connection, const MigrationFile &migration)
 {
-    const auto statements = sql_loader::SqlFileLoader::splitStatements(migration.script);
+    const auto statements = sql_loader::SqlFileLoader::splitMigrationStatements(migration.script);
     if (statements.empty()) {
         throw std::runtime_error("[MySqlMigrationRunner] migration has no executable statements: " + migration.path);
     }
@@ -183,6 +185,9 @@ boost::asio::awaitable<bool> MySqlMigrationRunner::coRun(
 
         co_await ensureMigrationTable(connection);
         auto applied = co_await loadAppliedMigrations(connection);
+        if (!applied.empty() && applied.rbegin()->first > migrations.back().version) {
+            throw std::runtime_error("[MySqlMigrationRunner] database has migrations newer than available files");
+        }
 
         for (const auto &migration : migrations) {
             const auto found = applied.find(migration.version);
@@ -194,11 +199,14 @@ boost::asio::awaitable<bool> MySqlMigrationRunner::coRun(
             }
 
             const auto started = std::chrono::steady_clock::now();
-            co_await executeMigration(connection, migration);
+            const bool reconciled = co_await migration_recovery::reconcileCompletedDdl(connection, migration.version, migration.checksum);
+            if (!reconciled) co_await executeMigration(connection, migration);
             const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
             co_await recordMigration(connection, migration, static_cast<std::uint64_t>((std::max<long long>)(0, elapsed)));
-            std::cout << "[MySqlMigrationRunner] applied V" << migration.version << "__" << migration.name << std::endl;
+            std::cout << "[MySqlMigrationRunner] " << (reconciled ? "reconciled V" : "applied V") << migration.version << "__" << migration.name << std::endl;
         }
+
+        co_await migration_recovery::synchronizeComponent(connection, migrations.back().version, migrations.back().name);
 
         co_await releaseMigrationLock(connection);
         co_return true;

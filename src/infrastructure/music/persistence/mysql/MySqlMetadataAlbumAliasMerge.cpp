@@ -1,4 +1,6 @@
 #include "MySqlMetadataWriteSession.h"
+#include "MySqlResourceCloudCleanupCapture.h"
+#include "MySqlResourceTransferJobsSupport.h"
 
 #include <set>
 #include <stdexcept>
@@ -25,6 +27,18 @@ boost::asio::awaitable<void> MetadataWriteSession::mergeAlbumAliases()
         if (alias_id == 0) continue;
         if (canonical_id == 0) throw std::invalid_argument("canonical album source is missing");
 
+        auto guarded = co_await statement("album_resources/alias_transfer_guard");
+        boost::mysql::results guard_rows;
+        co_await connection_->async_execute(guarded.bind(alias_id, canonical_id), guard_rows, boost::asio::use_awaitable);
+        for (const auto row : guard_rows.rows())
+            if (MySqlValueReader::intAt(row, 1)) throw std::logic_error("album alias transfer requires reconciliation");
+
+        // 旧来源随后级联删除；统一回执及旧字段证据先随本事务保存。
+        const auto retiring = co_await transfer_jobs::query(connection_, "album_resources/delete_scope", alias_id);
+        std::vector<application::model::ResourceIdentity> retiring_resources;
+        for (const auto row : retiring.rows()) retiring_resources.push_back({application::model::ResourceOwner::Album, MySqlValueReader::uint64At(row, 0)});
+        if (!retiring_resources.empty()) (void)co_await cleanup::captureOnConnection(connection_, std::move(retiring_resources), cleanup::CaptureReason::AlbumAlias);
+
         co_await write("albums/merge_alias_metadata", alias_album, canonical_album);
         co_await write("album_source_refs/merge_alias_metadata", alias_id, canonical_id);
         co_await write("album_artist_refs/merge_album_alias", canonical_id, alias_id);
@@ -42,6 +56,18 @@ boost::asio::awaitable<void> MetadataWriteSession::mergeAlbumAliases()
             }
         }
         co_await write("album_resources/merge_album_alias", canonical_id, alias_id);
+        // 只有同一完整内容参考才迁移逐端事实；其他事实归档并阻止隐式重下。
+        co_await write("album_resources/alias_transfer_reference", alias_id, canonical_id);
+        const auto archived = co_await write("album_resources/alias_transfer_archive", canonical_id, alias_id);
+        co_await write("album_resources/alias_transfer_receipts", canonical_id, alias_id);
+        co_await write("album_resources/alias_transfer_skip", alias_id, canonical_id);
+        co_await write("album_resources/alias_transfer_block", canonical_id, alias_id);
+        if (archived) {
+            auto retained = co_await statement("album_resources/find_current");
+            boost::mysql::results retained_rows;
+            co_await connection_->async_execute(retained.bind(alias_id), retained_rows, boost::asio::use_awaitable);
+            if (!retained_rows.rows().empty()) previous_paths.erase(MySqlValueReader::stringAt(retained_rows.rows().front(), 0));
+        }
         auto current = co_await statement("album_resources/find_current");
         boost::mysql::results result;
         co_await connection_->async_execute(current.bind(canonical_id), result, boost::asio::use_awaitable);

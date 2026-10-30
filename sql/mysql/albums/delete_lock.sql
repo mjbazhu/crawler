@@ -1,0 +1,1 @@
+SELECT id FROM albums WHERE id=? FOR UPDATE

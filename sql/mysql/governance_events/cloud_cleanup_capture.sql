@@ -1,0 +1,1 @@
+INSERT INTO governance_events(source,action,target_type,target_id,result_code,payload,created_at) VALUES('migu','resource.cloud.cleanup.capture','cloud_cleanup','explicit_scope','captured',CAST(? AS JSON),UNIX_TIMESTAMP())

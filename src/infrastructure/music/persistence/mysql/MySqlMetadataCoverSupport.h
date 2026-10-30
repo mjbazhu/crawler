@@ -53,13 +53,19 @@ std::string inList(const std::string &column, const std::vector<T> &values)
     return filter + ')';
 }
 
+// 将统一逐端状态投影到旧封面状态码，不能把历史skip或旧代次确认伪装为本次成功。
+inline std::string cloudStatus()
+{
+    return "CASE c.task_state WHEN 'running' THEN 1 WHEN 'uncertain' THEN 4 WHEN 'failed' THEN 3 WHEN 'succeeded' THEN IF(c.confirmed_content_generation=r.content_generation AND c.confirmed_target_revision=d.target_revision AND c.size_bytes=r.size_bytes AND BINARY c.checksum=BINARY COALESCE(r.checksum,''),2,0) ELSE 0 END";
+}
+
 // 含字符串的来源条件仍通过 prepared statement 绑定。
 inline std::string filtered(model::CoverOwner owner, const std::string &name, const model::MetadataCoverQuery &query, bool statuses = true)
 {
     auto statement = load(owner, name);
     const std::string ref = owner == model::CoverOwner::Singer ? "r.singer_source_ref_id" : "r.album_source_ref_id";
     std::string filter = inList("r.id", query.resource_ids) + inList(ref, query.source_ref_ids);
-    if (statuses) filter += inList("r.status", query.statuses) + inList("r.cloud_status", query.cloud_statuses);
+    if (statuses) filter += inList("r.status", query.statuses) + inList(cloudStatus(), query.cloud_statuses);
     constexpr std::string_view placeholder = "/*__FILTERS__*/";
     const auto marker = statement.find(placeholder);
     if (marker == std::string::npos) throw std::logic_error("cover filter marker missing");

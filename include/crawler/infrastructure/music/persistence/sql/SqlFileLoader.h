@@ -22,6 +22,9 @@ public:
 
     // 将 SQL 脚本拆成单条语句，忽略注释和字符串里的分号。
     static std::vector<std::string> splitStatements(std::string_view script);
+
+    // 迁移专用分句，支持独立行 DELIMITER 和复合触发器；格式错误时拒绝整个脚本。
+    static std::vector<std::string> splitMigrationStatements(std::string_view script);
 };
 
 } // namespace orchestrator::modules::crawler::infrastructure::music::persistence::sql

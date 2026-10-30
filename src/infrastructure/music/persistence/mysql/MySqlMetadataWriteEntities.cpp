@@ -64,14 +64,22 @@ boost::asio::awaitable<void> MetadataWriteSession::saveSong(const application::m
 {
     if (song.source.empty() || song.title.empty() || (song.source_content_id.empty() && song.source_song_id.empty())) throw std::invalid_argument("song source is missing identity or title");
     const auto common = co_await write("songs/upsert_metadata", song.title, song.normalized_title.empty() ? song.title : song.normalized_title);
-    const auto id = co_await write("song_source_refs/upsert", common, song.source, song.source_song_id, song.source_content_id, song.source_resource_type, song.source_title_pinyin, song.source_duration_seconds, song.copyright_id);
-    song_ids_[{song.source, song.source_song_id, song.source_content_id}] = id;
-    // 同一 songId 的不同入口可能携带另一 contentId；以锁内读取的既有绑定为准。
-    auto prepared = co_await statement("song_source_refs/select_metadata_identity");
+    const auto reported_id = co_await write("song_source_refs/upsert", common, song.source, song.source_song_id, song.source_content_id, song.source_resource_type, song.source_title_pinyin, song.source_duration_seconds, song.copyright_id);
+    // 触发器及无变化更新的响应主键不能代替真实身份；按输入业务键锁内核对。
+    auto prepared = co_await statement("song_source_refs/select_metadata_identity_by_input");
     boost::mysql::results identity;
-    co_await connection_->async_execute(prepared.bind(id), identity, boost::asio::use_awaitable);
+    co_await connection_->async_execute(prepared.bind(song.source, song.source_song_id, song.source_song_id, song.source_content_id, song.source_content_id), identity, boost::asio::use_awaitable);
     if (identity.rows().empty()) throw std::runtime_error("saved song source identity is missing");
-    const application::model::PersistedSongSource saved {id, song.source, MySqlValueReader::stringAt(identity.rows().front(), 0), MySqlValueReader::stringAt(identity.rows().front(), 1)};
+    auto row = identity.rows().front();
+    if (identity.rows().size() > 1) {
+        const auto matched = std::find_if(identity.rows().begin(), identity.rows().end(), [reported_id](const auto candidate) { return MySqlValueReader::uint64At(candidate, 0) == reported_id; });
+        if (matched == identity.rows().end()) throw std::logic_error("saved song source identity is ambiguous");
+        row = *matched;
+    }
+    const auto id = MySqlValueReader::uint64At(row, 0);
+    song_ids_[{song.source, song.source_song_id, song.source_content_id}] = id;
+    // 冲突入口不能重新绑定 contentId，继续返回数据库实际保留的身份。
+    const application::model::PersistedSongSource saved {id, song.source, MySqlValueReader::stringAt(row, 1), MySqlValueReader::stringAt(row, 2)};
     const auto previous = std::find_if(saved_songs_.begin(), saved_songs_.end(), [id](const auto &value) { return value.source_ref_id == id; });
     if (previous == saved_songs_.end())
         saved_songs_.push_back(saved);

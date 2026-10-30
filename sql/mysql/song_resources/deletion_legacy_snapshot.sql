@@ -1,0 +1,4 @@
+-- 只读不可变旧云档案，原资源表不再含单端云字段；当前回执另行捕获。
+SELECT COALESCE(CASE WHEN JSON_TYPE(JSON_EXTRACT(retired.old_values,'$.cloud_backend'))='NULL' THEN NULL ELSE JSON_UNQUOTE(JSON_EXTRACT(retired.old_values,'$.cloud_backend')) END,''),COALESCE(CASE WHEN JSON_TYPE(JSON_EXTRACT(retired.old_values,'$.cloud_path'))='NULL' THEN NULL ELSE JSON_UNQUOTE(JSON_EXTRACT(retired.old_values,'$.cloud_path')) END,''),IF(retired.content_generation=r.content_generation,COALESCE(r.checksum,''),''),CAST(IF(retired.content_generation=r.content_generation,r.size_bytes,0) AS UNSIGNED),retired.content_generation,retired.source_identity
+FROM song_resources r JOIN resource_cloud_migration_audit retired ON retired.run_id='schema-retirement-v2026102913' AND retired.owner_type='song' AND retired.resource_id=r.id AND retired.disposition='archived'
+WHERE r.id=? FOR UPDATE

@@ -1,0 +1,10 @@
+INSERT INTO resource_cloud_receipts(owner_type,resource_id,cloud_provider,album_resource_id,task_state,content_generation,target_revision,cloud_path,size_bytes,checksum,confirmed_content_generation,confirmed_target_revision,uploaded_at,verified_at,verification,verification_method,remote_hash_algorithm,remote_hash_value,source_adapter,evidence,transfer_policy,policy_content_generation,policy_target_revision,baseline_id,skip_reason,path_unresolved,created_at,updated_at)
+SELECT 'album',canonical.id,c.cloud_provider,canonical.id,IF(c.transfer_policy='skip' AND c.policy_content_generation=old.content_generation,'skipped',c.task_state),canonical.content_generation,c.target_revision,c.cloud_path,c.size_bytes,c.checksum,
+ IF(c.confirmed_content_generation=old.content_generation,canonical.content_generation,0),c.confirmed_target_revision,c.uploaded_at,c.verified_at,c.verification,c.verification_method,c.remote_hash_algorithm,c.remote_hash_value,c.source_adapter,c.evidence,
+ c.transfer_policy,IF(c.policy_content_generation=old.content_generation,canonical.content_generation,0),c.policy_target_revision,c.baseline_id,c.skip_reason,c.path_unresolved,UNIX_TIMESTAMP(),UNIX_TIMESTAMP()
+FROM album_resources old JOIN album_resources canonical ON canonical.album_source_ref_id=? AND canonical.resource_kind=old.resource_kind
+JOIN resource_cloud_receipts c ON c.owner_type='album' AND c.resource_id=old.id
+WHERE old.album_source_ref_id=? AND LENGTH(canonical.reference_sha256)=64 AND canonical.reference_sha256=old.reference_sha256 AND canonical.reference_size_bytes=old.reference_size_bytes
+ AND NOT EXISTS(SELECT 1 FROM resource_cloud_receipts current WHERE current.owner_type='album' AND current.resource_id=canonical.id AND current.cloud_provider=c.cloud_provider)
+ AND c.task_state NOT IN ('running','uncertain')
+ AND ((c.confirmed_content_generation=old.content_generation AND c.checksum=canonical.reference_sha256 AND c.size_bytes=canonical.reference_size_bytes) OR (c.transfer_policy='skip' AND c.policy_content_generation=old.content_generation))

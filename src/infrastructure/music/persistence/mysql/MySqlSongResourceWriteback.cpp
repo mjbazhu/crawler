@@ -2,6 +2,7 @@
 
 #include "crawler/infrastructure/music/persistence/mysql/MySqlValueReader.h"
 #include "MySqlResourceQueueSupport.h"
+#include "MySqlSongCloudWriteback.h"
 #include "crawler/infrastructure/music/persistence/mysql/MySqlWriteRunner.h"
 #include "crawler/infrastructure/music/persistence/sql/SqlFileLoader.h"
 
@@ -62,40 +63,16 @@ boost::asio::awaitable<std::optional<bool>> MySqlSongResourceQueue::coConfirmSuc
         update.result_code = "ok";
     }
 
+    const auto selected = song_writeback::provider(update, legacy_cloud_provider_);
+    if (!selected) co_return false;
     try {
-        boost::mysql::pooled_connection connection = co_await pool_->coAcquire();
-        boost::mysql::statement statement = co_await connection->async_prepare_statement(mark_succeeded_sql_, boost::asio::use_awaitable);
-        boost::mysql::results result;
-        const std::string cloud_backend = update.cloud_backend;
-        co_await connection->async_execute(
-            statement.bind(
-                update.local_path,
-                std::move(update.cloud_backend),
-                std::move(update.cloud_path),
-                update.size_bytes,
-                update.checksum,
-                std::move(update.result_code),
-                std::move(update.batch_id),
-                cloud_backend,
-                update.resource_id,
-                update.claim_generation
-            ),
-            result,
-            boost::asio::use_awaitable
-        );
-        if (result.affected_rows() > 0) co_return true;
-    } catch (const std::exception &e) {
-        logResourceQueueError("coMarkSucceeded", e);
+        co_return co_await song_writeback::persist(pool_, update, *selected, mark_succeeded_sql_);
+    } catch (const std::exception &error) {
+        logResourceQueueError("coMarkSucceeded", error);
     }
-    // UPDATE 的响应丢失不能直接解释为未提交；同一行锁读取会等待在途事务结束。
+    // 同时核对本地和本次云端报告；本地相同不能代替云端事务提交确认。
     try {
-        auto connection = co_await pool_->coAcquire();
-        auto statement = co_await connection->async_prepare_statement(sql::SqlFileLoader::loadOrThrow("sql/mysql/song_resources/find_write_receipt.sql"), boost::asio::use_awaitable);
-        boost::mysql::results actual;
-        co_await connection->async_execute(statement.bind(update.resource_id), actual, boost::asio::use_awaitable);
-        if (actual.rows().empty()) co_return false;
-        const auto row = actual.rows().front();
-        co_return MySqlValueReader::intAt(row, 0) == 2 && MySqlValueReader::uint64At(row, 1) == update.claim_generation &&MySqlValueReader::stringAt(row, 2) == update.local_path;
+        co_return co_await song_writeback::inspect(pool_, update, *selected);
     } catch (const std::exception &) {
         co_return std::nullopt;
     }

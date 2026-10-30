@@ -1,4 +1,6 @@
 #include "MySqlMetadataWriteSession.h"
+#include "MySqlResourceDeletion.h"
+#include "MySqlResourceTransferJobsSupport.h"
 
 #include <algorithm>
 #include <stdexcept>
@@ -80,8 +82,14 @@ boost::asio::awaitable<void> MetadataWriteSession::saveSongRelations(const appli
     }
     if (!has_audio)
         co_await write("song_resources/upsert_missing_audio", owner);
-    else
+    else {
+        // 占位音频也可能持有旧回执/派生产物，不能直接级联丢失证据。
+        const auto retiring = co_await transfer_jobs::query(connection_, "song_resources/delete_missing_audio_scope", owner);
+        std::vector<application::model::ResourceIdentity> retiring_resources;
+        for (const auto row : retiring.rows()) retiring_resources.push_back({application::model::ResourceOwner::Song, MySqlValueReader::uint64At(row, 0)});
+        co_await cleanup::captureResourceTree(connection_, std::move(retiring_resources));
         co_await write("song_resources/delete_missing_audio", owner);
+    }
     for (const auto &[kind, url] : {
              std::pair<std::string, std::string> {"cover", song.cover_url}, {"lyric", song.lyric_url}, {"mrc", song.mrc_url}, {"trc", song.trc_url}
          }) {

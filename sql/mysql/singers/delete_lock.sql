@@ -1,0 +1,1 @@
+SELECT id FROM singers WHERE id=? FOR UPDATE

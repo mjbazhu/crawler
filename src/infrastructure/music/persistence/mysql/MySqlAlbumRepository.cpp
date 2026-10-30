@@ -1,5 +1,6 @@
 #include "crawler/infrastructure/music/persistence/mysql/MySqlAlbumRepository.h"
 
+#include "MySqlResourceDeletion.h"
 #include "crawler/infrastructure/music/persistence/mysql/MySqlValueReader.h"
 #include "crawler/infrastructure/music/persistence/mysql/MySqlWriteRunner.h"
 #include "crawler/infrastructure/music/persistence/sql/SqlFileLoader.h"
@@ -103,14 +104,11 @@ boost::asio::awaitable<bool> MySqlAlbumRepository::coUpdate(const domain::Album 
 
 boost::asio::awaitable<bool> MySqlAlbumRepository::coDeleteById(const std::uint64_t &id)
 {
+    if (id <= 0) co_return false;
     try {
-        auto connection = co_await pool_->coAcquire();
-        auto statement = co_await connection->async_prepare_statement(delete_sql_, boost::asio::use_awaitable);
-        boost::mysql::results result;
-        co_await connection->async_execute(statement.bind(id), result, boost::asio::use_awaitable);
-        co_return hasAffectedRows(result);
-    } catch (const std::exception &e) {
-        std::cerr << "[MySqlAlbumRepository] coDeleteById failed: " << e.what() << std::endl;
+        co_return co_await cleanup::deleteEntity(pool_, application::model::ResourceOwner::Album, static_cast<std::uint64_t>(id), delete_sql_);
+    } catch (const std::exception &) {
+        std::cerr << "[MySqlAlbumRepository] deletion failed or requires reconciliation" << std::endl;
         co_return false;
     }
 }
